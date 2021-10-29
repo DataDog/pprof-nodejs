@@ -70,7 +70,7 @@ prebuild-linux-ia32-base: &prebuild-linux-ia32-base
 
 prebuild-darwin-base: &prebuild-darwin-base
   macos:
-    xcode: "10.2.0"
+    xcode: "12.2.0"
   working_directory: ~/dd-pprof
   steps:
     - checkout
