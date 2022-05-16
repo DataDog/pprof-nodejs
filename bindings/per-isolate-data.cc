@@ -6,10 +6,13 @@ namespace dd {
 
 static std::unordered_map<v8::Isolate*, PerIsolateData*> per_isolate_data_;
 
-PerIsolateData::PerIsolateData(v8::Isolate* isolate) {
+PerIsolateData::PerIsolateData(v8::Isolate* isolate)
+  : isolate_(isolate) {
   per_isolate_data_[isolate] = this;
   node::AddEnvironmentCleanupHook(isolate, [](void* data) {
-    delete static_cast<PerIsolateData*>(data);
+    auto perIsolateData = static_cast<PerIsolateData*>(data);
+    per_isolate_data_.erase(perIsolateData->isolate_);
+    delete perIsolateData;
   }, this);
 }
 
