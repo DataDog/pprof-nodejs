@@ -18,8 +18,13 @@ CpuProfiler::CpuProfiler()
     samples(Nan::New<v8::Array>()),
     sampler_running(false) {
   // TODO: Move symbolizer worker to a separate class?
+  // Initialize libuv async worker to process samples when JS thread is idle
   uv_async_init(Nan::GetCurrentEventLoop(), async, Run);
+  // Unref the async worker so it won't hold the loop open when there are no
+  // other tasks. This allows it to clean itself up automatically.
   uv_unref(reinterpret_cast<uv_handle_t*>(async));
+  // The async worker needs a reference to the profiler instance so it can get
+  // the pending sample and the vector to push symbolized samples to.
   async->data = static_cast<void*>(this);
   uv_sem_init(&sampler_thread_done, 1);
 }
