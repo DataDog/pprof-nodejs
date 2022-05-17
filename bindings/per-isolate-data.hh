@@ -13,9 +13,9 @@ class PerIsolateData {
   Nan::Global<v8::Function> location_constructor;
   Nan::Global<v8::Function> sample_constructor;
 
- public:
   PerIsolateData(v8::Isolate* isolate);
 
+ public:
   static PerIsolateData* For(v8::Isolate* isolate);
 
   Nan::Global<v8::Function>& CpuProfilerConstructor();

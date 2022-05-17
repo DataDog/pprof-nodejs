@@ -4,25 +4,27 @@
 
 namespace dd {
 
-static std::unordered_map<v8::Isolate*, PerIsolateData*> per_isolate_data_;
+static std::unordered_map<v8::Isolate*, PerIsolateData> per_isolate_data_;
 
 PerIsolateData::PerIsolateData(v8::Isolate* isolate)
-  : isolate_(isolate) {
-  per_isolate_data_[isolate] = this;
-  node::AddEnvironmentCleanupHook(isolate, [](void* data) {
-    auto perIsolateData = static_cast<PerIsolateData*>(data);
-    per_isolate_data_.erase(perIsolateData->isolate_);
-    delete perIsolateData;
-  }, this);
-}
+  : isolate_(isolate) {}
 
 PerIsolateData* PerIsolateData::For(v8::Isolate* isolate) {
   auto maybe = per_isolate_data_.find(isolate);
   if (maybe != per_isolate_data_.end()) {
-    return maybe->second;
+    return &maybe->second;
   }
 
-  return new PerIsolateData(isolate);
+  per_isolate_data_.emplace(std::make_pair(isolate, PerIsolateData(isolate)));
+
+  auto pair = per_isolate_data_.find(isolate);
+  auto perIsolateData = &pair->second;
+
+  node::AddEnvironmentCleanupHook(isolate, [](void* data) {
+    per_isolate_data_.erase(static_cast<v8::Isolate*>(data));
+  }, isolate);
+
+  return perIsolateData;
 }
 
 Nan::Global<v8::Function>& PerIsolateData::CpuProfilerConstructor() {
