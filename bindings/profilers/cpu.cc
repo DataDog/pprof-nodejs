@@ -218,6 +218,16 @@ NAN_METHOD(CpuProfiler::Stop) {
   profiler->Stop();
 }
 
+NAN_METHOD(CpuProfiler::CaptureSample) {
+  auto profiler = Nan::ObjectWrap::Unwrap<CpuProfiler>(info.Holder());
+  profiler->CaptureSample(info.GetIsolate());
+}
+
+NAN_METHOD(CpuProfiler::ProcessSample) {
+  auto profiler = Nan::ObjectWrap::Unwrap<CpuProfiler>(info.Holder());
+  profiler->ProcessSample();
+}
+
 NAN_GETTER(CpuProfiler::GetLabels) {
   auto profiler = Nan::ObjectWrap::Unwrap<CpuProfiler>(info.Holder());
   info.GetReturnValue().Set(profiler->GetLabels());
@@ -261,6 +271,8 @@ NAN_MODULE_INIT(CpuProfiler::Init) {
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
+  Nan::SetPrototypeMethod(tpl, "captureSample", CaptureSample);
+  Nan::SetPrototypeMethod(tpl, "processSample", ProcessSample);
   Nan::SetPrototypeMethod(tpl, "samples", GetSamples);
   Nan::SetPrototypeMethod(tpl, "profile", GetProfile);
 

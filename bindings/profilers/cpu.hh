@@ -37,6 +37,12 @@ class CpuProfiler : public Nan::ObjectWrap {
   ~CpuProfiler();
   static CpuProfiler* New();
 
+  // Disable copies and moves
+  CpuProfiler(const CpuProfiler& other) = delete;
+  CpuProfiler(CpuProfiler&& other) = delete;
+  CpuProfiler& operator=(const CpuProfiler& other) = delete;
+  CpuProfiler& operator=(CpuProfiler&& other) = delete;
+
   v8::Local<v8::Number> GetFrequency();
 
   void SetLastSample(std::unique_ptr<Sample> sample);
@@ -61,6 +67,8 @@ class CpuProfiler : public Nan::ObjectWrap {
   static NAN_SETTER(SetLabels);
   static NAN_METHOD(Start);
   static NAN_METHOD(Stop);
+  static NAN_METHOD(CaptureSample);
+  static NAN_METHOD(ProcessSample);
   static NAN_METHOD(GetSamples);
   static NAN_METHOD(GetProfile);
 
