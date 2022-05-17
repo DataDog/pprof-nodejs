@@ -1,0 +1,14 @@
+{
+  "name": "profiler",
+  "run": "node index.js",
+  "cachegrind": true,
+  "iterations": 10,
+  "variants": {
+    "control": {},
+    "with-cpu-profiler": {
+      "env": {
+        "ENABLE_PROFILER": "true"
+      }
+    }
+  }
+}
