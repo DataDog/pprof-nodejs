@@ -3,7 +3,7 @@
 const { default: CpuProfiler } = require('../../../out/src/cpu-profiler')
 
 let profiler
-if (process.env.ENABLE_PROFILER) {
+if (process.env.ENABLE_PROFILER === 'true') {
   profiler = new CpuProfiler()
 }
 
@@ -15,6 +15,4 @@ function recurse(n) {
   profiler.processSample()
 }
 
-for (let i = 0; i < 1000; i++) {
-  recurse(i)
-}
+recurse(Number(process.env.DEPTH || '100'))
