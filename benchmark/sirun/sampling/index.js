@@ -7,7 +7,7 @@ if (process.env.ENABLE_PROFILER === 'true') {
   profiler = new CpuProfiler()
 }
 
-function recurse(n) {
+function recurse (n) {
   if (n !== 0) return recurse(--n)
   if (!profiler) return
 
