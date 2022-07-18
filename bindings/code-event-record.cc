@@ -4,22 +4,22 @@
 
 namespace dd {
 
-  CodeEventRecord::CodeEventRecord(uintptr_t address,
-                                   uintptr_t previousAddress,
-                                   size_t size,
-                                   int line,
-                                   int column,
-                                   std::string comment,
-                                   std::string functionName,
-                                   std::string scriptName)
-      : address(address),
-        previousAddress(previousAddress),
-        size(size),
-        line(line),
-        column(column),
-        comment(comment),
-        functionName(functionName),
-        scriptName(scriptName) {}
+CodeEventRecord::CodeEventRecord(uintptr_t address,
+                                 uintptr_t previousAddress,
+                                 size_t size,
+                                 int line,
+                                 int column,
+                                 std::string comment,
+                                 std::string functionName,
+                                 std::string scriptName)
+  : address(address),
+    previousAddress(previousAddress),
+    size(size),
+    line(line),
+    column(column),
+    comment(comment),
+    functionName(functionName),
+    scriptName(scriptName) {}
 
 std::string safe_string(const char* maybe_string) {
   return maybe_string == nullptr ? "" : maybe_string;
