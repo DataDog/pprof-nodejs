@@ -15,7 +15,7 @@ jobs:
       cache: true # enable caching of dependencies based on lockfile
 
   publish:
-    if: github.ref == 'v1.x'
+    if: github.ref_name == 'v1.x'
     needs: build
     runs-on: ubuntu-latest
     environment: npm
