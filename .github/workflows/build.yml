@@ -13,26 +13,3 @@ jobs:
       target-name: 'dd_pprof' # target name in binding.gyp
       package-manager: 'npm' # npm or yarn
       cache: true # enable caching of dependencies based on lockfile
-
-  publish:
-    if: github.ref_name == 'v1.x'
-    needs: build
-    runs-on: ubuntu-latest
-    environment: npm
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/download-artifact@v3
-      - uses: actions/setup-node@v3
-        with:
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm install --ignore-scripts
-      - run: npm publish
-      - id: pkg
-        run: |
-          content=`cat ./package.json | tr '\n' ' '`
-          echo "::set-output name=json::$content"
-      - run: |
-          git tag v${{ fromJson(steps.pkg.outputs.json).version }}
-          git push origin v${{ fromJson(steps.pkg.outputs.json).version }}
