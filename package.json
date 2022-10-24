@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "pprof support for Node.js",
   "repository": "datadog/pprof-nodejs",
   "main": "out/src/index.js",
