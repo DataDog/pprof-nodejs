@@ -60,6 +60,7 @@
     "mocha": "^9.2.2",
     "nan": "^2.17.0",
     "nyc": "^15.0.0",
+    "protobufjs": "^7.1.2",
     "protobufjs-cli": "^1.0.2",
     "rimraf": "^3.0.2",
     "semver": "^7.3.5",

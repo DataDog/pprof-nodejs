@@ -18,6 +18,7 @@ import * as pify from 'pify';
 import {gunzip as gunzipPromise, gunzipSync} from 'zlib';
 
 import {Profile} from 'pprof-format';
+import {loadSync} from 'protobufjs';
 import {encode, encodeSync} from '../src/profile-encoder';
 
 import {decodedTimeProfile, timeProfile} from './profiles-for-tests';
@@ -32,6 +33,18 @@ describe('profile-encoded', () => {
       const unzipped = await gunzip(encoded);
       const decoded = Profile.decode(unzipped);
       assert.deepEqual(decoded, decodedTimeProfile);
+    });
+    it('should be compatible with protobufjs', async () => {
+      const root = loadSync('./ts/test/profile.proto');
+      const ProtoProfile = root.lookupType('Profile');
+      ProtoProfile.decode(await encode(timeProfile));
+    });
+  });
+  describe('decode', () => {
+    it('should be compatible with protobufjs', async () => {
+      const root = loadSync('./ts/test/profile.proto');
+      const ProtoProfile = root.lookupType('Profile');
+      Profile.decode(ProtoProfile.encode(timeProfile).finish());
     });
   });
   describe('encodeSync', () => {
