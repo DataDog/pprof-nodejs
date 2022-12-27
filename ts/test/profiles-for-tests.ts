@@ -33,6 +33,15 @@ if (desc) {
 import {Function, Location, Profile, Sample, ValueType} from 'pprof-format';
 
 import {TimeProfile} from '../src/v8-types';
+import {StringTable} from 'pprof-format';
+
+function buildStringTable(values: string[]): StringTable {
+  const table = new StringTable();
+  for (const value of values) {
+    table.dedup(value);
+  }
+  return table;
+}
 
 const timeLeaf1 = {
   name: 'function1',
@@ -176,7 +185,7 @@ export const timeProfile = new Profile({
   ],
   location: timeLocations,
   function: timeFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'sample',
     'count',
     'wall',
@@ -185,7 +194,7 @@ export const timeProfile = new Profile({
     'script2',
     'function1',
     'script1',
-  ],
+  ]),
   timeNanos: 0,
   durationNanos: 10 * 1000 * 1000 * 1000,
   periodType: new ValueType({type: 3, unit: 4}),
@@ -330,7 +339,7 @@ export const heapProfile = new Profile({
   ],
   location: heapLocations,
   function: heapFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'objects',
     'count',
     'space',
@@ -340,7 +349,7 @@ export const heapProfile = new Profile({
     'script1',
     'function3',
     'function2',
-  ],
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -441,7 +450,7 @@ export const heapProfileWithExternal = new Profile({
   ],
   location: heapLocationsWithExternal,
   function: heapFunctionsWithExternal,
-  stringTable: [
+  stringTable: buildStringTable([
     'objects',
     'count',
     'space',
@@ -452,7 +461,7 @@ export const heapProfileWithExternal = new Profile({
     'script1',
     'function3',
     'function2',
-  ],
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -516,7 +525,14 @@ export const anonymousFunctionHeapProfile = new Profile({
   ],
   location: anonymousFunctionHeapLocations,
   function: anonymousFunctionHeapFunctions,
-  stringTable: ['objects', 'count', 'space', 'bytes', '(anonymous)', 'main'],
+  stringTable: buildStringTable([
+    'objects',
+    'count',
+    'space',
+    'bytes',
+    '(anonymous)',
+    'main',
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -579,14 +595,14 @@ export const anonymousFunctionTimeProfile = new Profile({
   ],
   location: anonymousFunctionTimeLocations,
   function: anonymousFunctionTimeFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'sample',
     'count',
     'wall',
     'nanoseconds',
     '(anonymous)',
     'main',
-  ],
+  ]),
   timeNanos: 0,
   durationNanos: 10 * 1000 * 1000 * 1000,
   periodType: new ValueType({type: 3, unit: 4}),
@@ -733,7 +749,7 @@ export const heapProfileIncludePath = new Profile({
   ],
   location: heapIncludePathLocations,
   function: heapIncludePathFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'objects',
     'count',
     'space',
@@ -746,7 +762,7 @@ export const heapProfileIncludePath = new Profile({
     'foo1',
     'node_modules/@google-cloud/profiler/profiler.ts',
     'bar.ts',
-  ],
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -799,7 +815,15 @@ export const heapProfileExcludePath = new Profile({
   ],
   location: heapExcludePathLocations,
   function: heapExcludePathFunctions,
-  stringTable: ['objects', 'count', 'space', 'bytes', 'baz', 'foo.ts', 'foo2'],
+  stringTable: buildStringTable([
+    'objects',
+    'count',
+    'space',
+    'bytes',
+    'baz',
+    'foo.ts',
+    'foo2',
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -955,7 +979,7 @@ export const heapSourceProfile = new Profile({
   ],
   location: heapSourceLocations,
   function: heapSourceFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'objects',
     'count',
     'space',
@@ -967,7 +991,7 @@ export const heapSourceProfile = new Profile({
     path.join(mapDirPath, 'bar.js'),
     'baz',
     path.join(mapDirPath, 'baz.ts'),
-  ],
+  ]),
   timeNanos: 0,
   periodType: new ValueType({type: 3, unit: 4}),
   period: 524288,
@@ -1093,7 +1117,7 @@ export const timeSourceProfile = new Profile({
   ],
   location: timeSourceLocations,
   function: timeSourceFunctions,
-  stringTable: [
+  stringTable: buildStringTable([
     'sample',
     'count',
     'wall',
@@ -1105,7 +1129,7 @@ export const timeSourceProfile = new Profile({
     path.join(mapDirPath, 'bar.js'),
     'baz',
     path.join(mapDirPath, 'baz.ts'),
-  ],
+  ]),
   timeNanos: 0,
   durationNanos: 10 * 1000 * 1000 * 1000,
   periodType: new ValueType({type: 3, unit: 4}),

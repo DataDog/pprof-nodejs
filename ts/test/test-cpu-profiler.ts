@@ -23,7 +23,7 @@ const assert = require('assert');
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function str(profile: Profile, index: any) {
-  return profile.stringTable![index as number];
+  return profile.stringTable.strings![index as number];
 }
 
 function verifyValueType(profile: Profile, valueType: ValueType, name: string) {

@@ -1,7 +1,7 @@
 // eslint-disable-next-line node/no-unsupported-features/node-builtins
 import {Worker, isMainThread} from 'worker_threads';
 import {time} from '../src/index';
-import {Profile, ValueType} from 'pprof-format';
+import {Profile, StringTable, ValueType} from 'pprof-format';
 
 const assert = require('assert');
 
@@ -30,9 +30,17 @@ function getAndVerifyPresence(list: any[], id: number, zeroIndex = false) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getAndVerifyString(stringTable: string[], source: any, field: string) {
+function getAndVerifyString(
+  stringTable: StringTable,
+  source: any,
+  field: string
+) {
   assert.ok(hasOwnProperty.call(source, field), 'has id field');
-  const str = getAndVerifyPresence(stringTable, source[field] as number, true);
+  const str = getAndVerifyPresence(
+    stringTable.strings,
+    source[field] as number,
+    true
+  );
   assert.strictEqual(typeof str, 'string', 'is a string');
   return str;
 }
