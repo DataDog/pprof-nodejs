@@ -250,7 +250,7 @@ async function createFromMapFiles(mapFiles: string[]): Promise<SourceMapper> {
 }
 
 async function getMapFiles(baseDir: string): Promise<string[]> {
-  const fileStats = await scanner.scan(false, baseDir, /.js.map$/);
+  const fileStats = await scanner.scan(false, false, baseDir, /.js.map$/);
   const mapFiles = fileStats.selectFiles(/.js.map$/, process.cwd());
   return mapFiles;
 }

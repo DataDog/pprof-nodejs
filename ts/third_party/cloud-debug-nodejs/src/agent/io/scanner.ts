@@ -28,7 +28,7 @@ const split: () => fs.WriteStream = require('split');
 export interface FileStats {
   // TODO: Verify that this member should actually be optional.
   hash?: string;
-  lines: number;
+  lines?: number;
 }
 
 // TODO: Update the code so that `undefined  is not a possible property value
@@ -101,11 +101,12 @@ class ScanResultsImpl implements ScanResults {
 
 export async function scan(
   shouldHash: boolean,
+  countLines: boolean,
   baseDir: string,
   regex: RegExp
 ): Promise<ScanResults> {
   const fileList = await findFiles(baseDir, regex);
-  return computeStats(fileList, shouldHash);
+  return computeStats(fileList, shouldHash, countLines);
 }
 
 /**
@@ -121,7 +122,8 @@ export async function scan(
 // call signature
 function computeStats(
   fileList: string[],
-  shouldHash: boolean
+  shouldHash: boolean,
+  countLines: boolean
 ): Promise<ScanResults> {
   // eslint-disable-next-line no-async-promise-executor
   return new Promise<ScanResults>(async resolve => {
@@ -138,7 +140,7 @@ function computeStats(
 
     for (const filename of fileList) {
       try {
-        const fileStats = await statsForFile(filename, shouldHash);
+        const fileStats = await statsForFile(filename, shouldHash, countLines);
         if (shouldHash) {
           hashes.push(fileStats.hash);
         }
@@ -218,7 +220,8 @@ function findFiles(baseDir: string, regex: RegExp): Promise<string[]> {
  */
 function statsForFile(
   filename: string,
-  shouldHash: boolean
+  shouldHash: boolean,
+  countLines: boolean
 ): Promise<FileStats> {
   return new Promise<FileStats>((resolve, reject) => {
     const reader = fs.createReadStream(filename);
@@ -229,6 +232,8 @@ function statsForFile(
       let shasum: crypto.Hash;
       if (shouldHash) {
         shasum = crypto.createHash('sha1');
+      } else if (!countLines) {
+        resolve({hash: undefined, lines: undefined})
       }
 
       let lines = 0;
