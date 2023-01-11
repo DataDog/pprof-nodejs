@@ -248,8 +248,7 @@ async function createFromMapFiles(mapFiles: string[]): Promise<SourceMapper> {
 }
 
 function isErrnoException(e: unknown): e is NodeJS.ErrnoException {
-  if (e instanceof Error && 'code' in e) return true;
-  else return false;
+  return e instanceof Error && 'code' in e;
 }
 
 function isNonFatalError(error: unknown) {
