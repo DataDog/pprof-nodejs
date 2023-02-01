@@ -40,8 +40,11 @@ class CodeMap : public v8::CodeEventHandler {
   void Add(uintptr_t address, std::shared_ptr<CodeEventRecord> record);
   void Remove(uintptr_t address);
   void Clear();
-
   void Handle(v8::CodeEvent* code_event) override;
+
+  using RecordRange = std::pair<CodeEntries::iterator, CodeEntries::iterator>;
+  RecordRange OverlappingRange(uintptr_t start_address, uintptr_t end_address);
+
   std::shared_ptr<CodeEventRecord> Lookup(uintptr_t address);
 };
 

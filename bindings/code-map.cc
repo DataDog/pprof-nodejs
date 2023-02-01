@@ -146,6 +146,11 @@ void CodeMap::Handle(v8::CodeEvent* code_event) {
 }
 
 void CodeMap::Add(uintptr_t address, std::shared_ptr<CodeEventRecord> record) {
+  auto rng = OverlappingRange(address, address + record->size);
+  if (rng.first != rng.second) {
+    code_entries_.erase(rng.first, rng.second);
+    fprintf(stderr, "Removing overlapping code at 0x%lx (code_entries_.size=%zu)\n", address, code_entries_.size());
+  }
   code_entries_.insert(std::make_pair(address, std::move(record)));
   fprintf(stderr, "Inserting code at 0x%lx (code_entries_.size=%zu)\n", address, code_entries_.size());
 }
@@ -168,6 +173,19 @@ std::shared_ptr<CodeEventRecord> CodeMap::Lookup(uintptr_t address) {
   uintptr_t code_end = start_address + entry->size;
   if (address >= code_end) return nullptr;
   return entry;
+}
+
+CodeMap::RecordRange CodeMap::OverlappingRange(uintptr_t start_address, uintptr_t end_address) {
+  auto first = code_entries_.upper_bound(start_address);
+  if (first != code_entries_.begin()) {
+    auto p = std::prev(first);
+    if (p->first + p->second->size > start_address) {
+      first = p;
+    }
+  }
+  auto last = (first == code_entries_.end() || first->first >= end_address) ? first : code_entries_.lower_bound(end_address);
+  return {first, last};
+
 }
 
 }; // namespace dd
