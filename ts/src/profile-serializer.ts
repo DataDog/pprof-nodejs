@@ -269,17 +269,21 @@ function computeTotalHitCount(root: TimeProfileNode): number {
  */
 export function serializeTimeProfile(
   prof: TimeProfile,
-  intervalMicros?: number,
-  sourceMapper?: SourceMapper
+  intervalMicros: number,
+  sourceMapper?: SourceMapper,
+  recomputeSamplingInterval = false
 ): Profile {
-  // If intervalMicros is not defined, recompute it from profile duration and total number of hits,
+  // If requested, recompute sampling interval it from profile duration and total number of hits,
   // since profile duration should be #hits x interval
-  // Moreover recomputing an average interval is more accurate, since in practice intervals between
+  // Recomputing an average interval is more accurate, since in practice intervals between
   // samples are larger than the requested sampling interval (eg. 12.5ms vs 10ms requested).
-  if (!intervalMicros) {
-    intervalMicros = Math.floor(
-      (prof.endTime - prof.startTime) / computeTotalHitCount(prof.topDownRoot)
-    );
+  if (recomputeSamplingInterval) {
+    const totalHitCount = computeTotalHitCount(prof.topDownRoot);
+    if (totalHitCount > 0) {
+      intervalMicros = Math.floor(
+        (prof.endTime - prof.startTime) / computeTotalHitCount(prof.topDownRoot)
+      );
+    }
   }
   const intervalNanos = intervalMicros * 1000;
   const appendTimeEntryToSamples: AppendEntryToSamples<TimeProfileNode> = (
