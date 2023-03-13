@@ -162,9 +162,9 @@ export function monitorOutOfMemory(
       'Heap profiler must already be started to call monitorOutOfMemory'
     );
   }
-  let new_callback;
+  let newCallback;
   if (typeof callback !== 'undefined') {
-    new_callback = (profile: AllocationProfileNode) => {
+    newCallback = (profile: AllocationProfileNode) => {
       callback(convertProfile(profile));
     };
   }
@@ -173,7 +173,7 @@ export function monitorOutOfMemory(
     maxHeapLimitExtensionCount,
     dumpHeapProfileOnSdterr,
     exportCommand || [],
-    new_callback,
+    newCallback,
     typeof callbackMode !== 'undefined' ? callbackMode : CallbackMode.Async
   );
 }
