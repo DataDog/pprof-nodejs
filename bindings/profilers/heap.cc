@@ -17,6 +17,7 @@
 #include "heap.hh"
 
 #include "../per-isolate-data.hh"
+#include "defer.hh"
 
 #include <chrono>
 #include <memory>
@@ -25,9 +26,6 @@
 #include <node.h>
 #include <v8-profiler.h>
 
-#if defined(__linux__) || defined(__APPLE__)
-#include <sys/wait.h>
-#endif
 
 namespace dd {
 
@@ -54,9 +52,7 @@ struct HeapProfilerState {
   uint32_t       current_heap_extension_count;
   uv_async_t     async;
   std::shared_ptr<Node> profile;
-  uv_process_t   child_req;
   std::vector<std::string> export_command;
-  uv_loop_t*     event_loop;
   bool           dumpProfileOnStderr;
   Nan::Callback  callback;
   uint32_t       callbackMode;
@@ -166,43 +162,119 @@ static void dumpAllocationProfileAsJSON(FILE* file, Node* node) {
 static void InterruptCallback(v8::Isolate* isolate, void* data);
 static void AsyncCallback(uv_async_t* handle);
 
+static void OnExit(uv_process_t *req, int64_t, int) {
+  if (req->data) {
+    uv_timer_stop(reinterpret_cast<uv_timer_t*>(req->data));
+  }
+  uv_close((uv_handle_t*) req, nullptr);
+}
+
+static void TimerCallback(uv_timer_t *handle) {
+  uv_process_t *proc = reinterpret_cast<uv_process_t*>(handle->data);
+  uv_process_kill(proc, SIGKILL);
+}
+
+static void CloseLoop(uv_loop_t & loop) {
+  uv_run(&loop, UV_RUN_DEFAULT);
+  uv_walk(
+      &loop, [](uv_handle_t *handle, void *arg)
+      {
+        if (!uv_is_closing(handle)) {
+          uv_close(handle, nullptr);
+        }
+      },
+      nullptr);
+  int r;
+  do {
+    r = uv_run(&loop, UV_RUN_ONCE);
+  } while(r != 0);
+
+  if (uv_loop_close(&loop)) {
+    fprintf(stderr, "Failed to close event loop\n");
+  }
+}
+
+static int CreateTempFile(uv_loop_t& loop, std::string& filepath) {
+  char buf[PATH_MAX];
+  size_t sz = sizeof(buf);
+  int r;
+  if ((r = uv_os_tmpdir(buf, &sz)) != 0) {
+    fprintf(stderr, "Failed to retrieve temp directory: %s\n", uv_strerror(r));
+    return -1;
+  }
+  std::string tmpl = std::string{buf, sz} + "/heap_profile_XXXXXX";
+
+// uv_fs_mkstemp is available in libuv >= 1.34.0
+#if UV_VERSION_HEX >= 0x012200
+  uv_fs_t req;
+  if ((r = uv_fs_mkstemp(&loop, &req, tmpl.c_str(), nullptr)) < 0) {
+    fprintf(stderr, "Failed to create temp file error: %s\n", uv_strerror(r));
+    return -1;
+  }
+  filepath = req.path;
+  uv_fs_req_cleanup(&req);
+  return req.result;
+#elif defined(__linux__) ||  defined(__APPLE__)
+  filepath = tmpl;
+  return mkstemp(&filepath[0]);
+#else
+  return -1;
+#endif
+}
+
 static void ExportProfile(HeapProfilerState& state) {
-  char filename[L_tmpnam];
-  // tmpnam is not the recommended way to create a temporary file
-  // mkstemp would be better but is not available on windows
-  // libuv has some platform independent API but requires the
-  // event loop to be active
-  if (!std::tmpnam(filename)) {
+  const int64_t timeoutMs = 5000;
+  uv_loop_t loop;
+  int r;
+
+  if ((r = uv_loop_init(&loop)) != 0) {
+     fprintf(stderr, "Failed to init new event loop: %s\n", uv_strerror(r));
     return;
   }
-  FILE* file = fopen(filename, "w");
-  if (!file) {
+
+  defer { CloseLoop(loop); };
+
+  std::string filepath;
+  int fd;
+  if ((fd = CreateTempFile(loop, filepath)) < 0) {
     return;
   }
+  FILE* file = fdopen(fd, "w");
   dumpAllocationProfileAsJSON(file, state.profile.get());
   fclose(file);
   std::vector<char*> args;
   for(auto& arg: state.export_command) {
     args.push_back(const_cast<char*>(arg.data()));
   }
-  args.push_back(filename);
+  args.push_back(&filepath[0]);
   args.push_back(nullptr);
   uv_process_options_t options = {};
   options.flags = UV_PROCESS_DETACHED;
   options.file = args[0];
   options.args = args.data();
+  options.exit_cb = &OnExit;
+  uv_process_t child_req;
+  uv_timer_t timer;
+  timer.data = &child_req;
+  child_req.data = &timer;
+
   fprintf(stderr, "Spawning export process:");
   for(auto arg: args) {
     fprintf(stderr, " %s", arg ? arg : "\n");
   }
-  int r;
-  if ((r = uv_spawn(state.event_loop, &state.child_req, &options))) {
-      fprintf(stderr, "uv_spawn error: %s\n", uv_strerror(r));
+  if ((r = uv_spawn(&loop, &child_req, &options))) {
+      fprintf(stderr, "Failed to spawn export process: %s\n", uv_strerror(r));
+      return;
   }
-  uv_unref((uv_handle_t*) &state.child_req);
-#if defined(__linux__) || defined(__APPLE__)
-  waitpid(state.child_req.pid, nullptr, 0);
-#endif
+  if ((r = uv_timer_init(&loop, &timer)) != 0) {
+    fprintf(stderr, "Failed to init timer: %s\n", uv_strerror(r));
+    return;
+  }
+  if ((r = uv_timer_start(&timer, &TimerCallback, timeoutMs, 0))) {
+    fprintf(stderr, "Failed to start timer: %s\n", uv_strerror(r));
+    return;
+  }
+  uv_run(&loop, UV_RUN_DEFAULT);
 }
 
 static size_t NearHeapLimit(void* data, size_t current_heap_limit,
@@ -350,7 +422,6 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
 
   auto & state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   state = std::make_shared<HeapProfilerState>();
-  state->event_loop = node::GetCurrentEventLoop(isolate);
   state->heap_extension_size = info[0].As<v8::Integer>()->Value();
   state->max_heap_extension_count = info[1].As<v8::Integer>()->Value();
   state->dumpProfileOnStderr = info[2].As<v8::Boolean>()->Value();
