@@ -25,6 +25,7 @@
 
 #include <node.h>
 #include <v8-profiler.h>
+// #include <sys/prctl.h>
 
 
 namespace dd {
@@ -163,6 +164,11 @@ static void InterruptCallback(v8::Isolate* isolate, void* data);
 static void AsyncCallback(uv_async_t* handle);
 
 static void OnExit(uv_process_t *req, int64_t, int) {
+  uv_timeval64_t tv;
+  uv_gettimeofday(&tv);
+  uint64_t ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+
+  fprintf(stderr, "[%lu]OnExit triggered\n", ms);
   if (req->data) {
     uv_timer_stop(reinterpret_cast<uv_timer_t*>(req->data));
   }
@@ -170,6 +176,11 @@ static void OnExit(uv_process_t *req, int64_t, int) {
 }
 
 static void TimerCallback(uv_timer_t *handle) {
+  uv_timeval64_t tv;
+  uv_gettimeofday(&tv);
+  uint64_t ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+
+  fprintf(stderr, "[%lu]Timeout triggered\n", ms);
   uv_process_t *proc = reinterpret_cast<uv_process_t*>(handle->data);
   uv_process_kill(proc, SIGKILL);
 }
@@ -256,9 +267,22 @@ static void ExportProfile(HeapProfilerState& state) {
   uv_process_t child_req;
   uv_timer_t timer;
   timer.data = &child_req;
+
+    uv_timeval64_t tv;
+  uv_gettimeofday(&tv);
+  uint64_t ms = tv.tv_sec*1000 + tv.tv_usec/1000;
   child_req.data = &timer;
 
-  fprintf(stderr, "Spawning export process:");
+  options.stdio_count = 3;
+    uv_stdio_container_t child_stdio[3];
+    child_stdio[0].flags = UV_IGNORE;
+    child_stdio[1].flags = UV_INHERIT_FD;
+    child_stdio[2].flags = UV_INHERIT_FD;
+    child_stdio[2].data.fd = 2;
+    child_stdio[1].data.fd = 1;
+    options.stdio = child_stdio;
+    
+  fprintf(stderr, "[%lu]Spawning export process:", ms);
   for(auto arg: args) {
     fprintf(stderr, " %s", arg ? arg : "\n");
   }
@@ -279,6 +303,9 @@ static void ExportProfile(HeapProfilerState& state) {
   // Delete temp file
   uv_fs_t fs_req;
   uv_fs_unlink(&loop, &fs_req, filepath.c_str(), nullptr);
+  uv_gettimeofday(&tv);
+  ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+  fprintf(stderr, "[%zu]Export done\n", ms);
 }
 
 static size_t NearHeapLimit(void* data, size_t current_heap_limit,
@@ -286,8 +313,11 @@ static size_t NearHeapLimit(void* data, size_t current_heap_limit,
   auto isolate = v8::Isolate::GetCurrent();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   ++state->current_heap_extension_count;
-  fprintf(stderr, "NearHeapLimit(count=%d): current_heap_limit=%zu, initial_heap_limit=%zu\n",
-         state->current_heap_extension_count, current_heap_limit, initial_heap_limit);
+  uv_timeval64_t tv;
+  uv_gettimeofday(&tv);
+  uint64_t ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+  fprintf(stderr, "[%lu]NearHeapLimit(count=%d): current_heap_limit=%zu, initial_heap_limit=%zu\n",
+         ms, state->current_heap_extension_count, current_heap_limit, initial_heap_limit);
 
   auto n = isolate->NumberOfTrackedHeapObjectTypes();
   v8::HeapObjectStatistics stats;
@@ -317,6 +347,12 @@ static size_t NearHeapLimit(void* data, size_t current_heap_limit,
     ExportProfile(*state);
   }
 
+  uv_gettimeofday(&tv);
+  ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+  fprintf(stderr, "[%zu]Returning from NearHeapLimit\n", ms);
+  // fprintf(stderr, "[%zu]Aborting\n", ms);
+  // // prctl(PR_SET_DUMPABLE, 0);
+  // abort();
   return current_heap_limit + ((state->current_heap_extension_count <= state->max_heap_extension_count) ? state->heap_extension_size : 0);
 }
 
