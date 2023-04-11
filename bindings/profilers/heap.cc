@@ -56,6 +56,7 @@ struct HeapProfilerState {
   bool           dumpProfileOnStderr;
   Nan::Callback  callback;
   uint32_t       callbackMode;
+  bool           installed;
 };
 
 std::shared_ptr<Node> TranslateAllocationProfileToCpp(v8::AllocationProfile::Node* node) {
@@ -317,10 +318,12 @@ static size_t NearHeapLimit(void* data, size_t current_heap_limit,
     ExportProfile(*state);
   }
 
+  size_t new_heap_limit = current_heap_limit + ((state->current_heap_extension_count <= state->max_heap_extension_count) ? state->heap_extension_size : 0);
   if (state->current_heap_extension_count >= state->max_heap_extension_count) {
     isolate->RemoveNearHeapLimitCallback(&NearHeapLimit, 0);
+    state->installed = false;
   }
-  return current_heap_limit + ((state->current_heap_extension_count <= state->max_heap_extension_count) ? state->heap_extension_size : 0);
+  return new_heap_limit;
 }
 
 v8::Local<v8::Value> TranslateAllocationProfile(v8::AllocationProfile::Node* node) {
@@ -387,7 +390,9 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
   isolate->GetHeapProfiler()->StopSamplingHeapProfiler();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state) {
-    isolate->RemoveNearHeapLimitCallback(&NearHeapLimit, 0);
+    if (state->installed) {
+      isolate->RemoveNearHeapLimitCallback(&NearHeapLimit, 0);
+    }
     state.reset();
   }
 }
@@ -433,7 +438,7 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   state->max_heap_extension_count = info[1].As<v8::Integer>()->Value();
   state->dumpProfileOnStderr = info[2].As<v8::Boolean>()->Value();
   state->callbackMode = info[5].As<v8::Integer>()->Value();
-
+  state->installed = true;
   if (!info[4]->IsNullOrUndefined() && state->callbackMode != kNoCallback) {
     state->callback.Reset(Nan::To<v8::Function>(info[4]).ToLocalChecked());
 
