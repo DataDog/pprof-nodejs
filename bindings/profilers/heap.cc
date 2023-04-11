@@ -317,6 +317,9 @@ static size_t NearHeapLimit(void* data, size_t current_heap_limit,
     ExportProfile(*state);
   }
 
+  if (state->current_heap_extension_count >= state->max_heap_extension_count) {
+    isolate->RemoveNearHeapLimitCallback(&NearHeapLimit, 0);
+  }
   return current_heap_limit + ((state->current_heap_extension_count <= state->max_heap_extension_count) ? state->heap_extension_size : 0);
 }
 
