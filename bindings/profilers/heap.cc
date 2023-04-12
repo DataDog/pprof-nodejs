@@ -88,6 +88,14 @@ struct HeapProfilerState {
     uv_unref(reinterpret_cast<uv_handle_t*>(async));
   }
 
+  void OnNewProfile() {
+    profile.reset();
+    if (!callbackInstalled) {
+      // Reinstall NearHeapLimit callback if it was removed before
+      InstallNearHeapLimitCallback();
+    }
+  }
+
   v8::Isolate*   isolate = nullptr;
   uint32_t       heap_extension_size = 0;
   uint32_t       max_heap_extension_count = 0;
@@ -344,6 +352,10 @@ size_t NearHeapLimit(void* data, size_t current_heap_limit,
     dumpAllocationProfile(stderr, state->profile.get());
   }
 
+  if (!state->export_command.empty()) {
+    ExportProfile(*state);
+  }
+
   if (!state->callback.IsEmpty()) {
     if (state->callbackMode & kInterruptCallback) {
       isolate->RequestInterrupt(InterruptCallback, nullptr);
@@ -351,10 +363,8 @@ size_t NearHeapLimit(void* data, size_t current_heap_limit,
     if (state->callbackMode & kAsyncCallback) {
       uv_async_send(state->async);
     }
-  }
-
-  if (!state->export_command.empty()) {
-    ExportProfile(*state);
+  } else {
+    state->profile.reset();
   }
 
   size_t new_heap_limit = current_heap_limit + ((state->current_heap_extension_count <= state->max_heap_extension_count) ? state->heap_extension_size : 0);
@@ -439,9 +449,8 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
       isolate->GetHeapProfiler()->GetAllocationProfile());
   v8::AllocationProfile::Node* root = profile->GetRootNode();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
-  if (state && !state->callbackInstalled) {
-    // Reinstall NearHeapLimit callback if it was removed before
-    state->InstallNearHeapLimitCallback();
+  if (state) {
+    state->OnNewProfile();
   }
   info.GetReturnValue().Set(TranslateAllocationProfile(root));
 }
@@ -515,6 +524,9 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
 void InterruptCallback(v8::Isolate* isolate, void* data) {
   v8::HandleScope scope(isolate);
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (!state->profile) {
+    return;
+  }
   v8::Local<v8::Value> argv[1] = { dd::TranslateAllocationProfile(state->profile.get()) };
   Nan::AsyncResource resource("NearHeapLimit");
   state->callback.Call(1, argv, &resource);
