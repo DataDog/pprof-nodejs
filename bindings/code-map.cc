@@ -98,8 +98,8 @@ void CodeMap::Clear() {
   code_entries_.clear();
 }
 
-std::shared_ptr<CodeEventRecord> CodeMap::Lookup(uintptr_t address) {
-  CodeEntries::iterator it = code_entries_.upper_bound(address);
+std::shared_ptr<CodeEventRecord> CodeMap::Lookup(uintptr_t address) const {
+  CodeEntries::const_iterator it = code_entries_.upper_bound(address);
   if (it == code_entries_.begin()) return nullptr;
   --it;
   uintptr_t start_address = it->first;

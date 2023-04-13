@@ -42,7 +42,7 @@ class CodeMap : public v8::CodeEventHandler {
   void Clear();
 
   void Handle(v8::CodeEvent* code_event) override;
-  std::shared_ptr<CodeEventRecord> Lookup(uintptr_t address);
+  std::shared_ptr<CodeEventRecord> Lookup(uintptr_t address) const;
 };
 
 }; // namespace dd

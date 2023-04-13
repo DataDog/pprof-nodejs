@@ -11,17 +11,27 @@
 
 namespace dd {
 
-static constexpr size_t k_sample_buffer_size = 100;
-
 static void cleanupProfiler(void* data) {
    delete static_cast<CpuProfiler *>(data);
+}
+
+// static is wrong here
+static CpuProfiler * profiler;
+static void     (*old_handler)(int, siginfo_t *, void *);
+
+static void timer_handler(int sig, siginfo_t *info, void * context) {
+  // printf("<timer_handler\n");
+  profiler->CaptureSample2(context);
+  if (old_handler) {
+    old_handler(sig, info, context);
+  }
+  // printf("timer_handler>\n");
 }
 
 CpuProfiler::CpuProfiler()
   : isolate_(v8::Isolate::GetCurrent()),
     async(new uv_async_t()),
     code_map(CodeMap::For(isolate_)),
-    last_samples(k_sample_buffer_size),
     samples(Nan::New<v8::Array>()),
     sampler_running(false) {
   // TODO: Move symbolizer worker to a separate class?
@@ -34,6 +44,10 @@ CpuProfiler::CpuProfiler()
   // the pending sample and the vector to push symbolized samples to.
   async->data = static_cast<void*>(this);
   uv_sem_init(&sampler_thread_done, 1);
+
+  use_signals = true;
+  use_sigprof_from_v8 = false;
+  signum = SIGUSR1;
 
   // Add cleanup hook to stop profiler upon Node process exit, otherwise
   // SamplingThread could cause crashes by calling `Isolate::RequestInterrupt`
@@ -62,40 +76,45 @@ v8::Local<v8::Number> CpuProfiler::GetFrequency() {
   return Nan::New<v8::Number>(frequency);
 }
 
-// NOTE: last sample must be a unique_ptr to ensure it is cleaned up
-// when no longer referenced. However when `ProcessSample()` is called
-// it will be released from the unique_ptr as it will become owned by
-// the JavaScript thread which creates a corresponding handle object,
-// making it garbage-collectable.
-void CpuProfiler::SetLastSample(std::unique_ptr<Sample> sample) {
-  if (!last_samples.full()) {
-    last_samples.push_back(std::move(sample));
+void CpuProfiler::CaptureSample(v8::Isolate* isolate, void* context) {
+  if (!samples_buffer_.Full()) {
+    auto sample = samples_buffer_.Reserve();
+    auto cpu = cpu_time.Diff();
+    sample->timestamp = uv_hrtime();
+    GetStackSample(isolate, context, sample);
+    if (sample->frame_count) {
+      sample->cpu_time = cpu + unaccounted_cpu_time;
+      // sample->cpu_time = 1000'000'000 / 99;
+      samples_buffer_.Push();
+    } else {
+      // Idle frame: drop sample and report CPU on next sample
+      // Another strategy would be to keep track of total cpu time
+      // and rescale all samples before profile export.
+      unaccounted_cpu_time += cpu;
+    }
   }
 }
 
-// NOTE: For test/debug purposes only
-Sample* CpuProfiler::GetLastSample() {
-  return last_samples.empty() ? nullptr : last_samples.front().get();
-}
-
-void CpuProfiler::CaptureSample(v8::Isolate* isolate) {
-  auto diff = cpu_time.Diff();
-  SetLastSample(
-    std::make_unique<Sample>(isolate, labels_, diff));
+void CpuProfiler::CaptureSample2(void* context) {
+  CaptureSample(isolate_, context);
+  // Notify symbolizer worker that we have a new sample
+  uv_async_send(async);
 }
 
 // TODO: Make sampler thread a separate class?
 void CpuProfiler::SamplerThread(double hz) {
   std::chrono::duration<double> interval(1.0 / hz);
   while (sampler_running) {
-    isolate_->RequestInterrupt([](v8::Isolate* isolate, void* data) {
-      auto profiler = static_cast<CpuProfiler*>(data);
-      profiler->CaptureSample(isolate);
-
-      // Notify symbolizer worker that we have a new sample
-      uv_async_send(profiler->async);
-    }, this);
-
+    if (use_signals) {
+      if (!use_sigprof_from_v8) {
+        pthread_kill(js_thread, signum);
+      }
+    } else {
+      isolate_->RequestInterrupt([](v8::Isolate* isolate, void* data) {
+        auto profiler = static_cast<CpuProfiler*>(data);
+        profiler->CaptureSample2(isolate);
+      }, this);
+    }
     std::this_thread::sleep_for(interval);
   }
   uv_sem_post(&sampler_thread_done);
@@ -104,20 +123,19 @@ void CpuProfiler::SamplerThread(double hz) {
 void CpuProfiler::ProcessSample() {
   v8::HandleScope scope(isolate_);
 
-  while (!last_samples.empty()) {
-    auto last_sample = last_samples.pop_front();
-    Sample* sample = last_sample.release();
+  while (!samples_buffer_.Empty()) {
+    RawSample* raw_sample = samples_buffer_.Peek();
 
-    if (!sample) continue;
-    if (!sample->Symbolize(code_map)->Length()) {
-      delete sample;
-      continue;
+    auto sample = SymbolizeSample(*raw_sample, *code_map);
+    samples_buffer_.Remove();
+
+    if (sample) {
+      // Append the newly processed sample to the samples array
+      auto arr = samples.Get(isolate_);
+      arr->Set(isolate_->GetCurrentContext(), arr->Length(),
+        sample->ToObject(isolate_)).Check();
+      sample.release();
     }
-
-    // Append the newly processed sample to the samples array
-    auto arr = samples.Get(isolate_);
-    arr->Set(isolate_->GetCurrentContext(), arr->Length(),
-      sample->ToObject(isolate_)).Check();
   }
 }
 
@@ -129,6 +147,39 @@ void CpuProfiler::Run(uv_async_t* handle) {
 void CpuProfiler::Start(double hz) {
   if (sampler_running) return;
 
+  if (use_signals) {
+    js_thread = pthread_self();
+    struct sigaction sa, old_sa;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sa.sa_sigaction = timer_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaddset(&sa.sa_mask, SIGPROF);
+    use_sigprof_from_v8 = false;
+    signum = SIGUSR1;
+
+    if (use_sigprof_from_v8) {
+      if (sigaction(SIGPROF, &sa, &old_sa) == -1) {
+
+      }
+      old_handler = old_sa.sa_sigaction;
+    } else {
+      if (sigaction(signum, &sa, nullptr) == -1) {
+
+      }
+      old_handler = nullptr;
+    }
+    profiler = this;
+  }
+
+  // On Linux, we could use timer_create:
+  // timer_t timerid;
+  // struct sigevent sev;
+  // sev.sigev_notify = SIGEV_SIGNAL;
+  // sev.sigev_signo = signum;
+  // sev.sigev_value.sival_ptr = &timerid;
+  // timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &timerid);
+
+  unaccounted_cpu_time = 0;
   frequency = hz;
   sampler_running = true;
   uv_sem_init(&sampler_thread_done, 0);
@@ -142,6 +193,8 @@ void CpuProfiler::Start(double hz) {
 
 void CpuProfiler::Stop() {
   if (!sampler_running) return;
+
+  // \fixme Remove signal handler
 
   frequency = 0;
   sampler_running = false;

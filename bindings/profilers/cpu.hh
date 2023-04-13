@@ -14,64 +14,49 @@
 
 namespace dd {
 
-class SampleBuffer
+template<typename T, size_t Size>
+class RingBuffer
 {
 public:
-  using SamplePtr = std::unique_ptr<Sample>;
+  RingBuffer() : size_(0),
+                 back_index_(0),
+                 front_index_(0) {}
 
-  explicit SampleBuffer(size_t size) : samples_(std::make_unique<SamplePtr[]>(size)),
-                                        capacity_(size),
-                                        size_(0),
-                                        back_index_(0),
-                                        front_index_(0) {}
+  RingBuffer(const RingBuffer&) = delete;
+  RingBuffer& operator=(const RingBuffer&) = delete;
 
-  bool full() const { return size_ == capacity_; }
-  bool empty() const { return size_ == 0; }
+  bool Full() const { return size_ == Size; }
+  bool Empty() const { return size_ == 0; }
 
-  SamplePtr &front()
-  {
-    return samples_[front_index_];
-  }
-
-  const SamplePtr &front() const
-  {
-    return samples_[front_index_];
-  }
-
-  void push_back(SamplePtr ptr)
-  {
-    if (full())
-    {
-      if (empty())
-      {
-        return;
-      }
-      increment(back_index_);
-      front_index_ = back_index_;
+  T* Reserve() {
+    if (Full()) {
+      return nullptr;
     }
-    else
-    {
-      samples_[back_index_] = std::move(ptr);
-      increment(back_index_);
-      ++size_;
-    }
+    return &elements_[back_index_];
   }
 
-  SamplePtr pop_front()
+  void Push() {
+    increment(back_index_);
+    ++size_;
+  }
+
+  T* Peek() {
+    return Full() ? nullptr : &elements_[front_index_];
+  }
+
+  void Remove()
   {
-    auto idx = front_index_;
     increment(front_index_);
     --size_;
-    return std::move(samples_[idx]);
   }
 
 private:
   void increment(size_t &idx) const
   {
-    idx = idx + 1 == capacity_ ? 0 : idx + 1;
+    idx = idx + 1 == Size ? 0 : idx + 1;
   }
-  std::unique_ptr<SamplePtr[]> samples_;
-  size_t capacity_;
+
+  std::array<T, Size> elements_;
   size_t size_;
   size_t back_index_;
   size_t front_index_;
@@ -81,11 +66,14 @@ class CpuProfiler : public Nan::ObjectWrap {
   friend class CodeMap;
 
  private:
+   static constexpr size_t k_sample_buffer_size = 100;
+
   v8::Isolate* isolate_;
   uv_async_t* async;
   std::shared_ptr<CodeMap> code_map;
   CpuTime cpu_time;
-  SampleBuffer last_samples;
+  int64_t unaccounted_cpu_time = 0;
+  RingBuffer<RawSample, k_sample_buffer_size> samples_buffer_;
   std::shared_ptr<LabelWrap> labels_;
   double frequency = 0;
   Nan::Global<v8::Array> samples;
@@ -93,6 +81,10 @@ class CpuProfiler : public Nan::ObjectWrap {
   uv_sem_t sampler_thread_done;
   uv_thread_t sampler_thread;
   std::atomic_bool sampler_running;
+  pthread_t js_thread;
+  bool use_signals;
+  bool use_sigprof_from_v8;
+  int signum;
 
  public:
   CpuProfiler();
@@ -108,7 +100,8 @@ class CpuProfiler : public Nan::ObjectWrap {
 
   void SetLastSample(std::unique_ptr<Sample> sample);
   Sample* GetLastSample();
-  void CaptureSample(v8::Isolate* isolate);
+  void CaptureSample(v8::Isolate* isolate, void* context = nullptr);
+  void CaptureSample2(void *context);
   void SamplerThread(double hz);
 
   void ProcessSample();
