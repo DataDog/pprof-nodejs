@@ -81,7 +81,7 @@ describe('Time Profiler', () => {
     });
 
     it('should be able to restart when stopping', async () => {
-      const stop = time.start(PROFILE_OPTIONS.intervalMicros);
+      const {stop} = time.start(PROFILE_OPTIONS.intervalMicros);
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stop.resetHistory();
       timeProfilerStub.dispose.resetHistory();
