@@ -29,6 +29,21 @@ using namespace v8;
 
 namespace dd {
 
+// Should not be static but per isolate ?
+static WallProfiler* s_profiler;
+
+static void (*old_handler)(int, siginfo_t *, void *) = nullptr;
+
+static void sighandler(int sig, siginfo_t *info, void * context) {
+  if (s_profiler) {
+    s_profiler->PushContext();
+  }
+  if (old_handler) {
+    old_handler(sig, info, context);
+  }
+}
+
+
 Local<Object> CreateTimeNode(Local<String> name,
                              Local<String> scriptName,
                              Local<Integer> scriptId,
@@ -263,7 +278,7 @@ NAN_METHOD(WallProfiler::Start) {
 
   // Sample counts and timestamps are not used, so we do not need to record
   // samples.
-  const bool recordSamples = false;
+  const bool recordSamples = true;
 
   if (includeLines) {
     profiler->StartProfiling(
@@ -271,6 +286,19 @@ NAN_METHOD(WallProfiler::Start) {
   } else {
     profiler->StartProfiling(name, recordSamples);
   }
+
+  struct sigaction sa, old_sa;
+  sa.sa_flags = SA_SIGINFO | SA_RESTART;
+  sa.sa_sigaction = &sighandler;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGPROF, &sa, &old_sa);
+
+  // At the end of a cycle start is called before stop,
+  // at this point old_sa.sa_sigaction is sighandler !
+  if (!old_handler) {
+    old_handler = old_sa.sa_sigaction;
+  }
+  s_profiler = wallProfiler;
 }
 
 NAN_METHOD(WallProfiler::Stop) {
@@ -307,6 +335,10 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   tpl->SetClassName(className);
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
+   Nan::SetAccessor(tpl->InstanceTemplate(),
+    Nan::New("labels").ToLocalChecked(),
+    GetLabels, SetLabels);
+
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
@@ -327,6 +359,34 @@ v8::CpuProfiler* WallProfiler::GetProfiler() {
     cpuProfiler->SetSamplingInterval(samplingInterval);
   }
   return cpuProfiler;
+}
+
+v8::Local<v8::Value> WallProfiler::GetLabels() {
+  return Nan::Undefined();
+}
+
+void WallProfiler::SetLabels(v8::Local<v8::Value> value) {
+  labels_ = std::make_shared<LabelWrap>(value);
+}
+
+NAN_GETTER(WallProfiler::GetLabels) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  info.GetReturnValue().Set(profiler->GetLabels());
+}
+
+NAN_SETTER(WallProfiler::SetLabels) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  profiler->SetLabels(value);
+}
+
+void WallProfiler::PushContext() {
+  // Be carefull this is called in a signal handler context
+  // therefore all operations must be async signal safe
+  // (in particular no allocations)
+  if (contexts_.size() < contexts_.capacity()) {
+    int64_t timestamp = 0; // need to figure out the timestamp
+    contexts_.push_back({labels_, timestamp});
+  }
 }
 
 }  // namespace dd

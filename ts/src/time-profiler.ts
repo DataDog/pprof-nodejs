@@ -45,7 +45,7 @@ export interface TimeProfilerOptions {
 }
 
 export async function profile(options: TimeProfilerOptions) {
-  const stop = start(
+  const {stop} = start(
     options.intervalMicros || DEFAULT_INTERVAL_MICROS,
     options.name,
     options.sourceMapper,
@@ -68,7 +68,7 @@ export function start(
 ) {
   const profiler = new TimeProfiler(intervalMicros);
   let runName = start();
-  return majorVersion < 16 ? stopOld : stop;
+  return { stop: majorVersion < 16 ? stopOld : stop, setLabels };
 
   function start() {
     const runName = ensureRunName(name);
@@ -102,5 +102,9 @@ export function start(
     }
     if (!restart) profiler.dispose();
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
+  }
+
+  function setLabels(labels: any) {
+    profiler.labels = labels
   }
 }
