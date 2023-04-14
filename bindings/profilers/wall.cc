@@ -380,7 +380,7 @@ NAN_SETTER(WallProfiler::SetLabels) {
 }
 
 void WallProfiler::PushContext() {
-  // Be carefull this is called in a signal handler context
+  // Be careful this is called in a signal handler context
   // therefore all operations must be async signal safe
   // (in particular no allocations)
   if (contexts_.size() < contexts_.capacity()) {
