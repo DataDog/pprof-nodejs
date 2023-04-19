@@ -31,10 +31,11 @@ namespace dd {
 
 // Should not be static but per isolate ?
 static WallProfiler* s_profiler;
+static std::unordered_map<const CpuProfileNode*, Local<Array>> labelSetsByNode;
 
-static void (*old_handler)(int, siginfo_t *, void *) = nullptr;
+static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
-static void sighandler(int sig, siginfo_t *info, void * context) {
+static void sighandler(int sig, siginfo_t* info, void* context) {
   if (s_profiler) {
     s_profiler->PushContext();
   }
@@ -43,6 +44,16 @@ static void sighandler(int sig, siginfo_t *info, void * context) {
   }
 }
 
+Local<Array> getLabelSetsForNode(const CpuProfileNode* node) {
+  auto it = labelSetsByNode.find(node);
+  if (it != labelSetsByNode.end()) {
+    auto retval = it->second;
+    labelSetsByNode.erase(it);
+    return retval;
+  } else {
+    return Nan::New<Array>(0);
+  }
+}
 
 Local<Object> CreateTimeNode(Local<String> name,
                              Local<String> scriptName,
@@ -50,7 +61,8 @@ Local<Object> CreateTimeNode(Local<String> name,
                              Local<Integer> lineNumber,
                              Local<Integer> columnNumber,
                              Local<Integer> hitCount,
-                             Local<Array> children) {
+                             Local<Array> children,
+                             Local<Array> labelSets) {
   Local<Object> js_node = Nan::New<Object>();
   Nan::Set(js_node, Nan::New<String>("name").ToLocalChecked(), name);
   Nan::Set(
@@ -62,6 +74,7 @@ Local<Object> CreateTimeNode(Local<String> name,
       js_node, Nan::New<String>("columnNumber").ToLocalChecked(), columnNumber);
   Nan::Set(js_node, Nan::New<String>("hitCount").ToLocalChecked(), hitCount);
   Nan::Set(js_node, Nan::New<String>("children").ToLocalChecked(), children);
+  Nan::Set(js_node, Nan::New<String>("labelSets").ToLocalChecked(), labelSets);
 
   return js_node;
 }
@@ -69,14 +82,14 @@ Local<Object> CreateTimeNode(Local<String> name,
 Local<Object> TranslateLineNumbersTimeProfileNode(const CpuProfileNode* parent,
                                                   const CpuProfileNode* node);
 
-Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* parent,
-                                              const CpuProfileNode* node) {
+Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* node) {
   unsigned int index = 0;
   Local<Array> children;
   int32_t count = node->GetChildrenCount();
 
   unsigned int hitLineCount = node->GetHitLineCount();
   unsigned int hitCount = node->GetHitCount();
+  auto labelSets = getLabelSetsForNode(node);
   if (hitLineCount > 0) {
     std::vector<CpuProfileNode::LineTick> entries(hitLineCount);
     node->GetLineTicks(&entries[0], hitLineCount);
@@ -90,7 +103,8 @@ Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* parent,
                               Nan::New<Integer>(entry.line),
                               Nan::New<Integer>(0),
                               Nan::New<Integer>(entry.hit_count),
-                              Nan::New<Array>(0)));
+                              Nan::New<Array>(0),
+                              labelSets));
     }
   } else if (hitCount > 0) {
     // Handle nodes for pseudo-functions like "process" and "garbage collection"
@@ -104,7 +118,8 @@ Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* parent,
                             Nan::New<Integer>(node->GetLineNumber()),
                             Nan::New<Integer>(node->GetColumnNumber()),
                             Nan::New<Integer>(hitCount),
-                            Nan::New<Array>(0)));
+                            Nan::New<Array>(0),
+                            labelSets));
   } else {
     children = Nan::New<Array>(count);
   }
@@ -126,7 +141,8 @@ Local<Object> TranslateLineNumbersTimeProfileNode(const CpuProfileNode* parent,
                         Nan::New<Integer>(node->GetLineNumber()),
                         Nan::New<Integer>(node->GetColumnNumber()),
                         Nan::New<Integer>(0),
-                        GetLineNumberTimeProfileChildren(parent, node));
+                        GetLineNumberTimeProfileChildren(node),
+                        getLabelSetsForNode(node));
 }
 
 // In profiles with line level accurate line numbers, a node's line number
@@ -137,7 +153,7 @@ Local<Value> TranslateLineNumbersTimeProfileRoot(const CpuProfileNode* node) {
   std::vector<Local<Array>> childrenArrs(count);
   int32_t childCount = 0;
   for (int32_t i = 0; i < count; i++) {
-    Local<Array> c = GetLineNumberTimeProfileChildren(node, node->GetChild(i));
+    Local<Array> c = GetLineNumberTimeProfileChildren(node->GetChild(i));
     childCount = childCount + c->Length();
     childrenArrs[i] = c;
   }
@@ -158,7 +174,8 @@ Local<Value> TranslateLineNumbersTimeProfileRoot(const CpuProfileNode* node) {
                         Nan::New<Integer>(node->GetLineNumber()),
                         Nan::New<Integer>(node->GetColumnNumber()),
                         Nan::New<Integer>(0),
-                        children);
+                        children,
+                        getLabelSetsForNode(node));
 }
 
 Local<Value> TranslateTimeProfileNode(const CpuProfileNode* node) {
@@ -174,7 +191,8 @@ Local<Value> TranslateTimeProfileNode(const CpuProfileNode* node) {
                         Nan::New<Integer>(node->GetLineNumber()),
                         Nan::New<Integer>(node->GetColumnNumber()),
                         Nan::New<Integer>(node->GetHitCount()),
-                        children);
+                        children,
+                        getLabelSetsForNode(node));
 }
 
 Local<Value> TranslateTimeProfile(const CpuProfile* profile,
@@ -205,10 +223,84 @@ Local<Value> TranslateTimeProfile(const CpuProfile* profile,
   Nan::Set(js_profile,
            Nan::New<String>("endTime").ToLocalChecked(),
            Nan::New<Number>(profile->GetEndTime()));
+
   return js_profile;
 }
 
-WallProfiler::WallProfiler(int interval) : samplingInterval(interval) {}
+bool isIdleSample(const CpuProfileNode* sample) {
+  return
+#if NODE_MODULE_VERSION > NODE_12_0_MODULE_VERSION
+      sample->GetParent() == nullptr &&
+#endif
+      sample->GetChildrenCount() == 0 &&
+      strncmp("(idle)", sample->GetFunctionNameStr(), 7) == 0;
+}
+
+void WallProfiler::AddLabelSetsByNode(CpuProfile* profile) {
+  auto halfInterval = samplingInterval * 1000 / 2;
+
+  if (contexts.empty()) {
+    return;
+  }
+  SampleContext sampleContext = contexts.pop_front();
+
+  uint64_t time_diff = last_start - profile->GetStartTime() * 1000;
+
+  for (int i = 0; i < profile->GetSamplesCount(); i++) {
+    auto sample = profile->GetSample(i);
+    if (isIdleSample(sample)) {
+      continue;
+    }
+
+    // Translate from profiler micros to uv_hrtime nanos
+    auto sampleTimestamp = profile->GetSampleTimestamp(i) * 1000 + time_diff;
+
+    // This loop will drop all contexts that are too old to be associated with
+    // the current sample; associate those (normally one) that are close enough
+    // to it in time, and stop as soon as it sees a context that's too recent
+    // for this sample.
+    for (;;) {
+      auto contextTimestamp = sampleContext.timestamp;
+      if (contextTimestamp < sampleTimestamp - halfInterval) {
+        // Current sample context is too old, discard it and fetch the next one
+        if (contexts.empty()) {
+          return;
+        }
+        sampleContext = contexts.pop_front();
+      } else if (contextTimestamp >= sampleTimestamp + halfInterval) {
+        // Current sample context is too recent, we'll try to match it to the
+        // next sample
+        break;
+      } else {
+        // This context timestamp is in the goldilocks zone around the sample
+        // timestamp, so associate its labels with the sample.
+        auto it = labelSetsByNode.find(sample);
+        Local<Array> array;
+        if (it == labelSetsByNode.end()) {
+          array = Nan::New<Array>();
+          labelSetsByNode.emplace(sample, array);
+        } else {
+          array = it->second;
+        }
+        Nan::Set(array, array->Length(), sampleContext.labels.get()->handle());
+        // Sample context was consumed, fetch the next one
+        if (contexts.empty()) {
+          return;
+        }
+        sampleContext = contexts.pop_front();
+      }
+    }
+  }
+  // Push the last popped sample context back into the ring to be used by the
+  // next profile
+  contexts.push_front(std::move(sampleContext));
+}
+
+static Nan::Persistent<v8::Function> constructor;
+
+WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
+    : samplingInterval(intervalMicros),
+      contexts(durationMicros * 2 / intervalMicros) {}
 
 WallProfiler::~WallProfiler() {
   Dispose();
@@ -229,19 +321,36 @@ NAN_METHOD(WallProfiler::Dispose) {
 }
 
 NAN_METHOD(WallProfiler::New) {
-  if (info.Length() != 1) {
-    return Nan::ThrowTypeError("WallProfiler must have one argument.");
+  if (info.Length() != 2) {
+    return Nan::ThrowTypeError("WallProfiler must have two arguments.");
   }
   if (!info[0]->IsNumber()) {
     return Nan::ThrowTypeError("Sample rate must be a number.");
+  }
+
+  if (!info[0]->IsNumber()) {
+    return Nan::ThrowTypeError("Duration must be a number.");
   }
 
   if (info.IsConstructCall()) {
     int interval = Nan::MaybeLocal<Integer>(info[0].As<Integer>())
                        .ToLocalChecked()
                        ->Value();
+    int duration = Nan::MaybeLocal<Integer>(info[1].As<Integer>())
+                       .ToLocalChecked()
+                       ->Value();
 
-    WallProfiler* obj = new WallProfiler(interval);
+    if (interval <= 0) {
+      return Nan::ThrowTypeError("Sample rate must be positive.");
+    }
+    if (duration <= 0) {
+      return Nan::ThrowTypeError("Duration must be positive.");
+    }
+    if (duration < interval) {
+      return Nan::ThrowTypeError("Duration must not be less than sample rate.");
+    }
+
+    WallProfiler* obj = new WallProfiler(interval, duration);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
@@ -274,18 +383,7 @@ NAN_METHOD(WallProfiler::Start) {
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
-  auto profiler = wallProfiler->GetProfiler();
-
-  // Sample counts and timestamps are not used, so we do not need to record
-  // samples.
-  const bool recordSamples = true;
-
-  if (includeLines) {
-    profiler->StartProfiling(
-        name, CpuProfilingMode::kCallerLineNumbers, recordSamples);
-  } else {
-    profiler->StartProfiling(name, recordSamples);
-  }
+  wallProfiler->StartImpl(name, includeLines);
 
   struct sigaction sa, old_sa;
   sa.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -301,10 +399,19 @@ NAN_METHOD(WallProfiler::Start) {
   s_profiler = wallProfiler;
 }
 
-NAN_METHOD(WallProfiler::Stop) {
-  WallProfiler* wallProfiler =
-      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+void WallProfiler::StartImpl(Local<String> name, bool includeLines) {
+  if (includeLines) {
+    GetProfiler()->StartProfiling(
+        name, CpuProfilingMode::kCallerLineNumbers, true);
+  } else {
+    GetProfiler()->StartProfiling(name, true);
+  }
 
+  last_start = current_start;
+  current_start = uv_hrtime();
+}
+
+NAN_METHOD(WallProfiler::Stop) {
   if (info.Length() != 2) {
     return Nan::ThrowTypeError("Start must have two arguments.");
   }
@@ -321,8 +428,12 @@ NAN_METHOD(WallProfiler::Stop) {
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
+  WallProfiler* wallProfiler =
+      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+
   auto profiler = wallProfiler->GetProfiler();
   auto v8_profile = profiler->StopProfiling(name);
+  wallProfiler->AddLabelSetsByNode(v8_profile);
   Local<Value> profile = TranslateTimeProfile(v8_profile, includeLines);
   v8_profile->Delete();
 
@@ -335,13 +446,15 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   tpl->SetClassName(className);
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-   Nan::SetAccessor(tpl->InstanceTemplate(),
-    Nan::New("labels").ToLocalChecked(),
-    GetLabels, SetLabels);
+  Nan::SetAccessor(tpl->InstanceTemplate(),
+                   Nan::New("labels").ToLocalChecked(),
+                   GetLabels,
+                   SetLabels);
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
+  Nan::SetPrototypeMethod(tpl, "unsetLabels", UnsetLabels);
 
   PerIsolateData::For(Isolate::GetCurrent())
       ->WallProfilerConstructor()
@@ -362,11 +475,16 @@ v8::CpuProfiler* WallProfiler::GetProfiler() {
 }
 
 v8::Local<v8::Value> WallProfiler::GetLabels() {
-  return Nan::Undefined();
+  if (!labels_) return Nan::Undefined();
+  return labels_->handle();
 }
 
 void WallProfiler::SetLabels(v8::Local<v8::Value> value) {
   labels_ = std::make_shared<LabelWrap>(value);
+}
+
+void WallProfiler::UnsetLabels() {
+  labels_.reset();
 }
 
 NAN_GETTER(WallProfiler::GetLabels) {
@@ -379,13 +497,17 @@ NAN_SETTER(WallProfiler::SetLabels) {
   profiler->SetLabels(value);
 }
 
+NAN_METHOD(WallProfiler::UnsetLabels) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  profiler->UnsetLabels();
+}
+
 void WallProfiler::PushContext() {
-  // Be careful this is called in a signal handler context
-  // therefore all operations must be async signal safe
-  // (in particular no allocations)
-  if (contexts_.size() < contexts_.capacity()) {
-    int64_t timestamp = 0; // need to figure out the timestamp
-    contexts_.push_back({labels_, timestamp});
+  // Be careful this is called in a signal handler context therefore all
+  // operations must be async signal safe (in particular no allocations). Our
+  // ring buffer avoids allocations.
+  if (labels_) {
+    contexts.push_back(SampleContext(labels_, uv_hrtime()));
   }
 }
 

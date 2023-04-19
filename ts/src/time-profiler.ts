@@ -21,6 +21,7 @@ import {SourceMapper} from './sourcemapper/sourcemapper';
 import {TimeProfiler} from './time-profiler-bindings';
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
+const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
 
 const majorVersion = process.version.slice(1).split('.').map(Number)[0];
 
@@ -47,6 +48,7 @@ export interface TimeProfilerOptions {
 export async function profile(options: TimeProfilerOptions) {
   const {stop} = start(
     options.intervalMicros || DEFAULT_INTERVAL_MICROS,
+    options.durationMillis,
     options.name,
     options.sourceMapper,
     options.lineNumbers
@@ -62,13 +64,14 @@ function ensureRunName(name?: string) {
 // NOTE: refreshing doesn't work if giving a profile name.
 export function start(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
+  durationMillis: Milliseconds = DEFAULT_DURATION_MILLIS,
   name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
-  const profiler = new TimeProfiler(intervalMicros);
+  const profiler = new TimeProfiler(intervalMicros, durationMillis * 1000);
   let runName = start();
-  return { stop: majorVersion < 16 ? stopOld : stop, setLabels };
+  return { stop: majorVersion < 16 ? stopOld : stop, setLabels, unsetLabels }
 
   function start() {
     const runName = ensureRunName(name);
@@ -106,5 +109,9 @@ export function start(
 
   function setLabels(labels: any) {
     profiler.labels = labels
+  }
+
+  function unsetLabels() {
+    profiler.unsetLabels();
   }
 }
