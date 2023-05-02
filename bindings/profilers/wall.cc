@@ -28,6 +28,21 @@ using namespace v8;
 
 namespace dd {
 
+namespace {
+struct AddonData {
+   explicit AddonData(Isolate* isolate) {
+    // Ensure this per-addon-instance data is deleted at environment cleanup.
+    node::AddEnvironmentCleanupHook(isolate, DeleteInstance, this);
+  }
+
+  static void DeleteInstance(void* data) {
+    delete static_cast<AddonData*>(data);
+  }
+
+  Nan::Persistent<v8::Function> constructor;
+};
+}
+
 Local<Object> CreateTimeNode(Local<String> name, Local<String> scriptName,
                              Local<Integer> scriptId, Local<Integer> lineNumber,
                              Local<Integer> columnNumber,
@@ -172,8 +187,6 @@ Local<Value> TranslateTimeProfile(const CpuProfile* profile,
   return js_profile;
 }
 
-static Nan::Persistent<v8::Function> constructor;
-
 WallProfiler::WallProfiler(int interval)
   : samplingInterval(interval) {}
 
@@ -213,7 +226,9 @@ NAN_METHOD(WallProfiler::New) {
   } else {
     const int argc = 1;
     v8::Local<v8::Value> argv[argc] = {info[0]};
-    v8::Local<v8::Function> cons = Nan::New(constructor);
+    AddonData* addon_data =
+      static_cast<AddonData*>(info.Data().As<External>()->Value());
+    v8::Local<v8::Function> cons = Nan::New(addon_data->constructor);
     info.GetReturnValue().Set(Nan::NewInstance(cons, argc, argv).ToLocalChecked());
   }
 }
@@ -281,7 +296,10 @@ NAN_METHOD(WallProfiler::Stop) {
 }
 
 NAN_MODULE_INIT(WallProfiler::Init) {
-  Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(New);
+  auto isolate = v8::Isolate::GetCurrent();
+  auto data = new AddonData{isolate};
+  Local<External> external = External::New(isolate, data);
+  Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(New, external);
   Local<String> className = Nan::New("TimeProfiler").ToLocalChecked();
   tpl->SetClassName(className);
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
@@ -290,7 +308,7 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
 
-  constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
+  data->constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
   Nan::Set(target, className, Nan::GetFunction(tpl).ToLocalChecked());
 }
 
