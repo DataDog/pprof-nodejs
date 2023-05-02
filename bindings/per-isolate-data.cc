@@ -40,6 +40,10 @@ Nan::Global<v8::Function>& PerIsolateData::SampleConstructor() {
   return sample_constructor;
 }
 
+Nan::Global<v8::Function>& PerIsolateData::WallProfilerConstructor() {
+  return wall_profiler_constructor;
+}
+
 std::shared_ptr<HeapProfilerState>& PerIsolateData::GetHeapProfilerState() {
   return heap_profiler_state;
 }
