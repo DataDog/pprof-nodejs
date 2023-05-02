@@ -1,3 +1,4 @@
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 
@@ -6,8 +7,10 @@
 namespace dd {
 
 static std::unordered_map<v8::Isolate*, PerIsolateData> per_isolate_data_;
+static std::mutex mutex;
 
 PerIsolateData* PerIsolateData::For(v8::Isolate* isolate) {
+  const std::lock_guard<std::mutex> lock(mutex);
   auto maybe = per_isolate_data_.find(isolate);
   if (maybe != per_isolate_data_.end()) {
     return &maybe->second;
@@ -21,6 +24,7 @@ PerIsolateData* PerIsolateData::For(v8::Isolate* isolate) {
   node::AddEnvironmentCleanupHook(
       isolate,
       [](void* data) {
+        const std::lock_guard<std::mutex> lock(mutex);
         per_isolate_data_.erase(static_cast<v8::Isolate*>(data));
       },
       isolate);
