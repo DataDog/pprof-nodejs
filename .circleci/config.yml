@@ -60,8 +60,8 @@ node-bench-sirun-base: &node-bench-sirun-base
     - run:
         name: Run sirun
         command: |
-          cd benchmark/sirun/${<< parameters.benchmark-type >>}
-          node /root/dd-pprof/benchmark/sirun/run-all-variants.js | tee ../$CIRCLE_JOB-${<< parameters.benchmark-type >>}-sirun-output.ndjson
+          cd benchmark/sirun/<< parameters.benchmark-type >>
+          node /root/dd-pprof/benchmark/sirun/run-all-variants.js | tee ../$CIRCLE_JOB-<< parameters.benchmark-type >>-sirun-output.ndjson
     - persist_to_workspace:
         root: ~/dd-pprof
         paths:
