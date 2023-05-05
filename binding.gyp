@@ -1,94 +1,62 @@
 {
   "variables": {
-    "asan%": 0,
-    "lsan%": 0,
-    "ubsan%": 0,
+    "sanitizer%": 0, # enable address + undefined behaviour sanitizer
+    "thread_sanitizer%": 0, # enable thread sanitizer
   },
-  "conditions": [
-    ["OS == 'mac'", {
-      "xcode_settings": {
-        "MACOSX_DEPLOYMENT_TARGET": "10.10",
-        'CLANG_CXX_LIBRARY': 'libc++',
-        "OTHER_CFLAGS": [
-          "-std=c++17",
-          "-stdlib=libc++",
-          "-Wall",
-          "-Werror",
-          "-Wno-deprecated-declarations",
-        ]
-      },
-    }],
-    ["OS == 'linux'", {
-      "link_settings": {
-        "libraries": ["-lrt"]
-      },
-      "cflags": [
-        "-std=c++14",
-        "-Wall",
-        "-Werror"
-      ],
-      "cflags_cc": [
-        "-Wno-cast-function-type",
-        # TODO: Remove when nan is updated to support v18 properly
-        "-Wno-deprecated-declarations",
-      ]
-    }],
-    ["OS == 'win'", {
-      "cflags": [
-        "/WX"
-      ]
-    }],
-    # No macOS support for -fsanitize=leak
-    ["lsan == 'true' and OS != 'mac'", {
-      "cflags+": ["-fsanitize=leak"],
-      "ldflags": ["-fsanitize=leak"],
-    }],
-    ["asan == 'true' and OS != 'mac'", {
-      "cflags+": [
-        "-fno-omit-frame-pointer",
-        "-fsanitize=address",
-        "-fsanitize-address-use-after-scope",
-      ],
-      "cflags!": [ "-fomit-frame-pointer" ],
-      "ldflags": [ "-fsanitize=address" ],
-    }],
-    ["asan == 'true' and OS == 'mac'", {
-      "xcode_settings+": {
-        "OTHER_CFLAGS+": [
-          "-fno-omit-frame-pointer",
-          "-gline-tables-only",
-          "-fsanitize=address",
-        ],
-        "OTHER_CFLAGS!": [
-          "-fomit-frame-pointer",
-        ],
-        "OTHER_LDFLAGS": [
-          "-fsanitize=address",
-        ],
-      },
-    }],
-    # UBSAN
-    ["ubsan == 'true' and OS != 'mac'", {
-      "cflags+": [
-        "-fsanitize=undefined,alignment,bounds",
-        "-fno-sanitize-recover",
-      ],
-      "ldflags": [
-        "-fsanitize=undefined,alignment,bounds"
-      ],
-    }],
-    ["ubsan == 'true' and OS == 'mac'", {
-      "xcode_settings+": {
-        "OTHER_CFLAGS+": [
-          "-fsanitize=undefined,alignment,bounds",
-          "-fno-sanitize-recover",
-        ],
-        "OTHER_LDFLAGS": [
-          "-fsanitize=undefined,alignment,bounds"
-        ],
-      },
-    }],
-  ],
+  "target_defaults": {
+     "conditions": [
+        ["OS == 'mac'", {
+          "xcode_settings": {
+            "OTHER_CFLAGS+": [
+              "-Wall",
+              "-Werror",
+              "-Wno-deprecated-declarations",
+            ]
+          },
+        }],
+        ["OS == 'linux'", {
+          "cflags+": [
+            "-std=gnu++17",
+            "-Wall",
+            "-Werror"
+          ],
+          # "cflags_cc": [
+          #   "-Wno-cast-function-type",
+          #   # TODO: Remove when nan is updated to support v18 properly
+          #   "-Wno-deprecated-declarations",
+          # ]
+        }],
+        ["OS == 'win'", {
+          "cflags": [
+            "/WX"
+          ]
+        }],
+        ['sanitizer == 1 and OS == "mac"', {
+          'xcode_settings': {
+            'OTHER_CFLAGS+': [
+              '-fno-omit-frame-pointer',
+              '-fsanitize=address,undefined',
+            ],
+            'OTHER_CFLAGS!': [
+              '-fomit-frame-pointer',
+            ],
+          },
+          'target_conditions': [
+            ['_type!="static_library"', {
+              'xcode_settings': {'OTHER_LDFLAGS+': ['-fsanitize=address,undefined']},
+            }],
+          ],
+        }],
+        ["sanitizer == 1 and OS != 'mac'", {
+          "cflags+": [
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+          ],
+          "cflags!": [ "-fomit-frame-pointer" ],
+          "ldflags+": [ "-fsanitize=address,undefined" ],
+        }],
+     ]
+  },
   "targets": [
     {
       "target_name": "dd_pprof",
