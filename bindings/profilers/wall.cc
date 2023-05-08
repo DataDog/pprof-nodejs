@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -29,16 +30,21 @@ using namespace v8;
 
 namespace dd {
 
-// Should not be static but per isolate ?
-static WallProfiler* s_profiler;
+using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
+
+static std::atomic<ProfilerMap*> profilers(new ProfilerMap());
+
 static std::unordered_map<const CpuProfileNode*, Local<Array>> labelSetsByNode;
 
 static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
-  if (s_profiler) {
-    s_profiler->PushContext();
+  auto prof_map = profilers.load();
+  auto prof_it = prof_map->find(Isolate::GetCurrent());
+  if (prof_it != prof_map->end()) {
+    prof_it->second->PushContext();
   }
+
   if (old_handler) {
     old_handler(sig, info, context);
   }
@@ -303,13 +309,46 @@ WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
       contexts(durationMicros * 2 / intervalMicros) {}
 
 WallProfiler::~WallProfiler() {
-  Dispose();
+  Dispose(nullptr);
 }
 
-void WallProfiler::Dispose() {
+template <typename F>
+void updateProfilers(F updateFn) {
+  auto currProfilers = profilers.load();
+  for (;;) {
+    auto newProfilers = new ProfilerMap(*currProfilers);
+    updateFn(newProfilers);
+    if (profilers.compare_exchange_weak(currProfilers, newProfilers)) {
+      delete currProfilers;
+      break;
+    } else {
+      delete newProfilers;
+    }
+  }
+}
+
+void WallProfiler::Dispose(Isolate* isolate) {
   if (cpuProfiler != nullptr) {
     cpuProfiler->Dispose();
     cpuProfiler = nullptr;
+
+    updateProfilers([isolate, this](auto map) {
+      if (isolate != nullptr) {
+        auto it = map->find(isolate);
+        if (it != map->end() && it->second == this) {
+          map->erase(it);
+        }
+      } else {
+        // TODO: use map->erase_if once we can use C++20.
+        for (auto it = map->begin(), last = map->end(); it != last;) {
+          if (it->second == this) {
+            it = map->erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
+    });
   }
 }
 
@@ -317,7 +356,7 @@ NAN_METHOD(WallProfiler::Dispose) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  wallProfiler->Dispose();
+  wallProfiler->Dispose(info.GetIsolate());
 }
 
 NAN_METHOD(WallProfiler::New) {
@@ -396,7 +435,6 @@ NAN_METHOD(WallProfiler::Start) {
   if (!old_handler) {
     old_handler = old_sa.sa_sigaction;
   }
-  s_profiler = wallProfiler;
 }
 
 void WallProfiler::StartImpl(Local<String> name, bool includeLines) {
@@ -468,6 +506,9 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 v8::CpuProfiler* WallProfiler::GetProfiler() {
   if (cpuProfiler == nullptr) {
     v8::Isolate* isolate = v8::Isolate::GetCurrent();
+
+    updateProfilers([isolate, this](auto map) { map->emplace(isolate, this); });
+
     cpuProfiler = v8::CpuProfiler::New(isolate);
     cpuProfiler->SetSamplingInterval(samplingInterval);
   }
