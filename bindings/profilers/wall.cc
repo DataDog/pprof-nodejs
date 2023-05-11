@@ -34,8 +34,6 @@ using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
 
 static std::atomic<ProfilerMap*> profilers(new ProfilerMap());
 
-static std::unordered_map<const CpuProfileNode*, Local<Array>> labelSetsByNode;
-
 static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
@@ -50,7 +48,7 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
   }
 }
 
-Local<Array> getLabelSetsForNode(const CpuProfileNode* node) {
+Local<Array> WallProfiler::getLabelSetsForNode(const CpuProfileNode* node) {
   auto it = labelSetsByNode.find(node);
   if (it != labelSetsByNode.end()) {
     auto retval = it->second;
@@ -88,7 +86,8 @@ Local<Object> CreateTimeNode(Local<String> name,
 Local<Object> TranslateLineNumbersTimeProfileNode(const CpuProfileNode* parent,
                                                   const CpuProfileNode* node);
 
-Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* node) {
+Local<Array> WallProfiler::GetLineNumberTimeProfileChildren(
+    const CpuProfileNode* node) {
   unsigned int index = 0;
   Local<Array> children;
   int32_t count = node->GetChildrenCount();
@@ -139,8 +138,8 @@ Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* node) {
   return children;
 }
 
-Local<Object> TranslateLineNumbersTimeProfileNode(const CpuProfileNode* parent,
-                                                  const CpuProfileNode* node) {
+Local<Object> WallProfiler::TranslateLineNumbersTimeProfileNode(
+    const CpuProfileNode* parent, const CpuProfileNode* node) {
   return CreateTimeNode(parent->GetFunctionName(),
                         parent->GetScriptResourceName(),
                         Nan::New<Integer>(parent->GetScriptId()),
@@ -154,7 +153,8 @@ Local<Object> TranslateLineNumbersTimeProfileNode(const CpuProfileNode* parent,
 // In profiles with line level accurate line numbers, a node's line number
 // and column number refer to the line/column from which the function was
 // called.
-Local<Value> TranslateLineNumbersTimeProfileRoot(const CpuProfileNode* node) {
+Local<Value> WallProfiler::TranslateLineNumbersTimeProfileRoot(
+    const CpuProfileNode* node) {
   int32_t count = node->GetChildrenCount();
   std::vector<Local<Array>> childrenArrs(count);
   int32_t childCount = 0;
@@ -184,7 +184,8 @@ Local<Value> TranslateLineNumbersTimeProfileRoot(const CpuProfileNode* node) {
                         getLabelSetsForNode(node));
 }
 
-Local<Value> TranslateTimeProfileNode(const CpuProfileNode* node) {
+Local<Value> WallProfiler::TranslateTimeProfileNode(
+    const CpuProfileNode* node) {
   int32_t count = node->GetChildrenCount();
   Local<Array> children = Nan::New<Array>(count);
   for (int32_t i = 0; i < count; i++) {
@@ -201,8 +202,8 @@ Local<Value> TranslateTimeProfileNode(const CpuProfileNode* node) {
                         getLabelSetsForNode(node));
 }
 
-Local<Value> TranslateTimeProfile(const CpuProfile* profile,
-                                  bool includeLineInfo) {
+Local<Value> WallProfiler::TranslateTimeProfile(const CpuProfile* profile,
+                                                bool includeLineInfo) {
   Local<Object> js_profile = Nan::New<Object>();
   Nan::Set(js_profile,
            Nan::New<String>("title").ToLocalChecked(),
@@ -469,13 +470,18 @@ NAN_METHOD(WallProfiler::Stop) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  auto profiler = wallProfiler->GetProfiler();
-  auto v8_profile = profiler->StopProfiling(name);
-  wallProfiler->AddLabelSetsByNode(v8_profile);
-  Local<Value> profile = TranslateTimeProfile(v8_profile, includeLines);
-  v8_profile->Delete();
+  auto profile = wallProfiler->StopImpl(name, includeLines);
 
   info.GetReturnValue().Set(profile);
+}
+
+Local<Value> WallProfiler::StopImpl(Local<String> name, bool includeLines) {
+  auto profiler = GetProfiler();
+  auto v8_profile = profiler->StopProfiling(name);
+  AddLabelSetsByNode(v8_profile);
+  Local<Value> profile = TranslateTimeProfile(v8_profile, includeLines);
+  v8_profile->Delete();
+  return profile;
 }
 
 NAN_MODULE_INIT(WallProfiler::Init) {
