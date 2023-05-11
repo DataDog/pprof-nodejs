@@ -2,6 +2,8 @@
 
 #include <nan.h>
 #include <v8-profiler.h>
+#include <unordered_map>
+
 #include "../buffer.hh"
 #include "../wrap.hh"
 
@@ -12,6 +14,8 @@ class WallProfiler : public Nan::ObjectWrap {
   int samplingInterval = 0;
   v8::CpuProfiler* cpuProfiler = nullptr;
   std::shared_ptr<LabelWrap> labels_;
+  std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>
+      labelSetsByNode;
 
   struct SampleContext {
     std::shared_ptr<LabelWrap> labels;
@@ -46,6 +50,19 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
+  void AddLabelSetsByNode(v8::CpuProfile* profile);
+  v8::Local<v8::Array> getLabelSetsForNode(const v8::CpuProfileNode* node);
+  v8::Local<v8::Array> GetLineNumberTimeProfileChildren(
+      const v8::CpuProfileNode* node);
+  v8::Local<v8::Object> TranslateLineNumbersTimeProfileNode(
+      const v8::CpuProfileNode* parent, const v8::CpuProfileNode* node);
+  v8::Local<v8::Value> TranslateLineNumbersTimeProfileRoot(
+      const v8::CpuProfileNode* node);
+  v8::Local<v8::Value> TranslateTimeProfileNode(const v8::CpuProfileNode* node);
+  // TODO: get rid of includeLineInfo
+  v8::Local<v8::Value> TranslateTimeProfile(const v8::CpuProfile* profile,
+                                            bool includeLineInfo);
+
  public:
   /**
    * @param intervalMicros sampling interval, in microseconds
@@ -62,7 +79,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   void PushContext();
   void StartImpl(v8::Local<v8::String> name, bool includeLines);
-  void AddLabelSetsByNode(v8::CpuProfile* profile);
+  v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name, bool includeLines);
 
   static NAN_METHOD(New);
   static NAN_METHOD(Dispose);
