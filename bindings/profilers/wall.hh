@@ -16,6 +16,7 @@ class WallProfiler : public Nan::ObjectWrap {
   std::shared_ptr<LabelWrap> labels_;
   std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>
       labelSetsByNode;
+  bool labelsCaptured = false;
 
   struct SampleContext {
     std::shared_ptr<LabelWrap> labels;
@@ -74,6 +75,11 @@ class WallProfiler : public Nan::ObjectWrap {
   explicit WallProfiler(int intervalMicros, int durationMicros);
 
   v8::Local<v8::Value> GetLabels();
+  bool GetLabelsCaptured() {
+    bool captured = labelsCaptured;
+    labelsCaptured = false;
+    return captured;
+  }
   void SetLabels(v8::Local<v8::Value>);
   void UnsetLabels();
 
@@ -89,6 +95,7 @@ class WallProfiler : public Nan::ObjectWrap {
   static NAN_MODULE_INIT(Init);
   static NAN_GETTER(GetLabels);
   static NAN_SETTER(SetLabels);
+  static NAN_GETTER(GetLabelsCaptured);
 };
 
 }  // namespace dd
