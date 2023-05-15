@@ -71,7 +71,7 @@ export function start(
 ) {
   const profiler = new TimeProfiler(intervalMicros, durationMillis * 1000);
   let runName = start();
-  return { stop: majorVersion < 16 ? stopOld : stop, setLabels, unsetLabels }
+  return { stop: majorVersion < 16 ? stopOld : stop, setLabels, unsetLabels, labelsCaptured }
 
   function start() {
     const runName = ensureRunName(name);
@@ -113,5 +113,10 @@ export function start(
 
   function unsetLabels() {
     profiler.unsetLabels();
+
+  }
+
+  function labelsCaptured() {
+    return profiler.labelsCaptured;
   }
 }
