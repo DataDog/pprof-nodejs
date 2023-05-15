@@ -19,6 +19,7 @@ import delay from 'delay';
 import {serializeTimeProfile} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {TimeProfiler} from './time-profiler-bindings';
+import {LabelSet} from './v8-types';
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
 const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
@@ -71,7 +72,12 @@ export function start(
 ) {
   const profiler = new TimeProfiler(intervalMicros, durationMillis * 1000);
   let runName = start();
-  return { stop: majorVersion < 16 ? stopOld : stop, setLabels, unsetLabels, labelsCaptured }
+  return {
+    stop: majorVersion < 16 ? stopOld : stop,
+    setLabels,
+    unsetLabels,
+    labelsCaptured,
+  };
 
   function start() {
     const runName = ensureRunName(name);
@@ -107,13 +113,12 @@ export function start(
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
   }
 
-  function setLabels(labels: any) {
-    profiler.labels = labels
+  function setLabels(labels: LabelSet) {
+    profiler.labels = labels;
   }
 
   function unsetLabels() {
     profiler.unsetLabels();
-
   }
 
   function labelsCaptured() {
