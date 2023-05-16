@@ -26,6 +26,12 @@
 #include "../per-isolate-data.hh"
 #include "wall.hh"
 
+#ifndef _WIN32
+#define DD_WALL_USE_SIGPROF
+#else
+#undef DD_WALL_USE_SIGPROF
+#endif
+
 using namespace v8;
 
 namespace dd {
@@ -34,6 +40,7 @@ using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
 
 static std::atomic<ProfilerMap*> profilers(new ProfilerMap());
 
+#ifdef DD_WALL_USE_SIGPROF
 static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
@@ -47,6 +54,7 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
     old_handler(sig, info, context);
   }
 }
+#endif
 
 Local<Array> WallProfiler::getLabelSetsForNode(const CpuProfileNode* node) {
   auto it = labelSetsByNode.find(node);
@@ -425,6 +433,7 @@ NAN_METHOD(WallProfiler::Start) {
 
   wallProfiler->StartImpl(name, includeLines);
 
+#ifdef DD_WALL_USE_SIGPROF
   struct sigaction sa, old_sa;
   sa.sa_flags = SA_SIGINFO | SA_RESTART;
   sa.sa_sigaction = &sighandler;
@@ -436,6 +445,7 @@ NAN_METHOD(WallProfiler::Start) {
   if (!old_handler) {
     old_handler = old_sa.sa_sigaction;
   }
+#endif
 }
 
 void WallProfiler::StartImpl(Local<String> name, bool includeLines) {
