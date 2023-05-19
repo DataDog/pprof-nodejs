@@ -8,6 +8,8 @@
 
 namespace dd {
 
+using LabelSetsByNode = std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>;
+
 class WallProfiler : public Nan::ObjectWrap {
  private:
   int samplingInterval = 0;
@@ -16,8 +18,6 @@ class WallProfiler : public Nan::ObjectWrap {
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
   std::shared_ptr<v8::Global<v8::Value>> labels_;
-  std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>
-      labelSetsByNode;
   bool labelsCaptured = false;
 
   struct SampleContext {
@@ -53,18 +53,7 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
-  void AddLabelSetsByNode(v8::CpuProfile* profile);
-  v8::Local<v8::Array> getLabelSetsForNode(const v8::CpuProfileNode* node);
-  v8::Local<v8::Array> GetLineNumberTimeProfileChildren(
-      const v8::CpuProfileNode* node);
-  v8::Local<v8::Object> TranslateLineNumbersTimeProfileNode(
-      const v8::CpuProfileNode* parent, const v8::CpuProfileNode* node);
-  v8::Local<v8::Value> TranslateLineNumbersTimeProfileRoot(
-      const v8::CpuProfileNode* node);
-  v8::Local<v8::Value> TranslateTimeProfileNode(const v8::CpuProfileNode* node);
-  // TODO: get rid of includeLineInfo
-  v8::Local<v8::Value> TranslateTimeProfile(const v8::CpuProfile* profile,
-                                            bool includeLineInfo);
+  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile);
 
  public:
   /**
