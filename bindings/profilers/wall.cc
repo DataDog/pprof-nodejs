@@ -257,6 +257,8 @@ void WallProfiler::AddLabelSetsByNode(CpuProfile* profile) {
   if (contexts.empty()) {
     return;
   }
+  auto isolate = Isolate::GetCurrent();
+
   SampleContext sampleContext = contexts.pop_front();
 
   uint64_t time_diff = last_start - profile->GetStartTime() * 1000;
@@ -297,7 +299,8 @@ void WallProfiler::AddLabelSetsByNode(CpuProfile* profile) {
         } else {
           array = it->second;
         }
-        Nan::Set(array, array->Length(), sampleContext.labels.get()->handle());
+        Nan::Set(
+            array, array->Length(), sampleContext.labels.get()->Get(isolate));
         // Sample context was consumed, fetch the next one
         if (contexts.empty()) {
           return;
@@ -535,13 +538,13 @@ v8::CpuProfiler* WallProfiler::GetProfiler() {
   return cpuProfiler;
 }
 
-v8::Local<v8::Value> WallProfiler::GetLabels() {
-  if (!labels_) return Nan::Undefined();
-  return labels_->handle();
+v8::Local<v8::Value> WallProfiler::GetLabels(Isolate* isolate) {
+  if (!labels_) return v8::Undefined(isolate);
+  return labels_->Get(isolate);
 }
 
-void WallProfiler::SetLabels(v8::Local<v8::Value> value) {
-  labels_ = std::make_shared<LabelWrap>(value);
+void WallProfiler::SetLabels(Isolate* isolate, Local<Value> value) {
+  labels_ = std::make_shared<Global<Value>>(isolate, value);
 }
 
 void WallProfiler::UnsetLabels() {
@@ -550,12 +553,12 @@ void WallProfiler::UnsetLabels() {
 
 NAN_GETTER(WallProfiler::GetLabels) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-  info.GetReturnValue().Set(profiler->GetLabels());
+  info.GetReturnValue().Set(profiler->GetLabels(info.GetIsolate()));
 }
 
 NAN_SETTER(WallProfiler::SetLabels) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-  profiler->SetLabels(value);
+  profiler->SetLabels(info.GetIsolate(), value);
 }
 
 NAN_METHOD(WallProfiler::UnsetLabels) {
