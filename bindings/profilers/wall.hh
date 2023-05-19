@@ -5,7 +5,6 @@
 #include <unordered_map>
 
 #include "../buffer.hh"
-#include "../wrap.hh"
 
 namespace dd {
 
@@ -13,19 +12,19 @@ class WallProfiler : public Nan::ObjectWrap {
  private:
   int samplingInterval = 0;
   v8::CpuProfiler* cpuProfiler = nullptr;
-  std::shared_ptr<LabelWrap> labels_;
+  std::shared_ptr<v8::Global<v8::Value>> labels_;
   std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>
       labelSetsByNode;
   bool labelsCaptured = false;
 
   struct SampleContext {
-    std::shared_ptr<LabelWrap> labels;
+    std::shared_ptr<v8::Global<v8::Value>> labels;
     uint64_t timestamp;
 
     // Needed to initialize ring buffer elements
     SampleContext() {}
 
-    SampleContext(std::shared_ptr<LabelWrap> l, uint64_t t)
+    SampleContext(std::shared_ptr<v8::Global<v8::Value>> l, uint64_t t)
         : labels(l), timestamp(t) {}
 
     SampleContext(SampleContext&& rval) {
@@ -74,14 +73,14 @@ class WallProfiler : public Nan::ObjectWrap {
    */
   explicit WallProfiler(int intervalMicros, int durationMicros);
 
-  v8::Local<v8::Value> GetLabels();
+  v8::Local<v8::Value> GetLabels(v8::Isolate*);
+  void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
+  void UnsetLabels();
   bool GetLabelsCaptured() {
     bool captured = labelsCaptured;
     labelsCaptured = false;
     return captured;
   }
-  void SetLabels(v8::Local<v8::Value>);
-  void UnsetLabels();
 
   void PushContext();
   void StartImpl(v8::Local<v8::String> name, bool includeLines);
