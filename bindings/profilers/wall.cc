@@ -76,6 +76,7 @@ Local<Object> CreateTimeNode(Local<String> name,
                              Local<Array> children,
                              Local<Array> labelSets) {
   Local<Object> js_node = Nan::New<Object>();
+  // TODO: create these strings once per isolate, store them in a global.
   Nan::Set(js_node, Nan::New<String>("name").ToLocalChecked(), name);
   Nan::Set(
       js_node, Nan::New<String>("scriptName").ToLocalChecked(), scriptName);
