@@ -12,6 +12,9 @@ class WallProfiler : public Nan::ObjectWrap {
  private:
   int samplingInterval = 0;
   v8::CpuProfiler* cpuProfiler = nullptr;
+  // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
+  // avoid heap allocation. Need to figure out the right move/copy semantics in
+  // and out of the ring buffer.
   std::shared_ptr<v8::Global<v8::Value>> labels_;
   std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>
       labelSetsByNode;
