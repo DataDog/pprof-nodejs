@@ -75,7 +75,6 @@ export function start(
   return {
     stop: majorVersion < 16 ? stopOld : stop,
     setLabels,
-    unsetLabels,
     labelsCaptured,
   };
 
@@ -115,10 +114,6 @@ export function start(
 
   function setLabels(labels: LabelSet) {
     profiler.labels = labels;
-  }
-
-  function unsetLabels() {
-    profiler.unsetLabels();
   }
 
   function labelsCaptured() {
