@@ -546,7 +546,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
-  Nan::SetPrototypeMethod(tpl, "unsetLabels", UnsetLabels);
 
   PerIsolateData::For(Isolate::GetCurrent())
       ->WallProfilerConstructor()
@@ -575,11 +574,11 @@ v8::Local<v8::Value> WallProfiler::GetLabels(Isolate* isolate) {
 }
 
 void WallProfiler::SetLabels(Isolate* isolate, Local<Value> value) {
-  labels_ = std::make_shared<Global<Value>>(isolate, value);
-}
-
-void WallProfiler::UnsetLabels() {
-  labels_.reset();
+  if (value->BooleanValue(isolate)) {
+    labels_ = std::make_shared<Global<Value>>(isolate, value);
+  } else {
+    labels_.reset();
+  }
 }
 
 NAN_GETTER(WallProfiler::GetLabels) {
@@ -590,11 +589,6 @@ NAN_GETTER(WallProfiler::GetLabels) {
 NAN_SETTER(WallProfiler::SetLabels) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
   profiler->SetLabels(info.GetIsolate(), value);
-}
-
-NAN_METHOD(WallProfiler::UnsetLabels) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-  profiler->UnsetLabels();
 }
 
 NAN_GETTER(WallProfiler::GetLabelsCaptured) {

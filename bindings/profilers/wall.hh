@@ -67,7 +67,6 @@ class WallProfiler : public Nan::ObjectWrap {
 
   v8::Local<v8::Value> GetLabels(v8::Isolate*);
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
-  void UnsetLabels();
   bool GetLabelsCaptured() {
     bool captured = labelsCaptured;
     labelsCaptured = false;
@@ -82,7 +81,6 @@ class WallProfiler : public Nan::ObjectWrap {
   static NAN_METHOD(Dispose);
   static NAN_METHOD(Start);
   static NAN_METHOD(Stop);
-  static NAN_METHOD(UnsetLabels);
   static NAN_MODULE_INIT(Init);
   static NAN_GETTER(GetLabels);
   static NAN_SETTER(SetLabels);
