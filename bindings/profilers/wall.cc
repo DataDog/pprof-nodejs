@@ -56,35 +56,28 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
 }
 #endif
 
-Local<Object> CreateTimeNode(Local<String> name,
-                             Local<String> scriptName,
-                             Local<Integer> scriptId,
-                             Local<Integer> lineNumber,
-                             Local<Integer> columnNumber,
-                             Local<Integer> hitCount,
-                             Local<Array> children,
-                             Local<Array> labelSets) {
-  Local<Object> js_node = Nan::New<Object>();
-  // TODO: create these strings once per isolate, store them in a global.
-  Nan::Set(js_node, Nan::New<String>("name").ToLocalChecked(), name);
-  Nan::Set(
-      js_node, Nan::New<String>("scriptName").ToLocalChecked(), scriptName);
-  Nan::Set(js_node, Nan::New<String>("scriptId").ToLocalChecked(), scriptId);
-  Nan::Set(
-      js_node, Nan::New<String>("lineNumber").ToLocalChecked(), lineNumber);
-  Nan::Set(
-      js_node, Nan::New<String>("columnNumber").ToLocalChecked(), columnNumber);
-  Nan::Set(js_node, Nan::New<String>("hitCount").ToLocalChecked(), hitCount);
-  Nan::Set(js_node, Nan::New<String>("children").ToLocalChecked(), children);
-  Nan::Set(js_node, Nan::New<String>("labelSets").ToLocalChecked(), labelSets);
-
-  return js_node;
-}
-
 class ProfileTranslator {
   friend class WallProfiler;
 
   LabelSetsByNode labelSetsByNode;
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Array> emptyArray = NewArray(0);
+  Local<Integer> zero = NewInteger(0);
+
+#define FIELDS                                                                 \
+  X(name)                                                                      \
+  X(scriptName)                                                                \
+  X(scriptId)                                                                  \
+  X(lineNumber)                                                                \
+  X(columnNumber)                                                              \
+  X(hitCount)                                                                  \
+  X(children)                                                                  \
+  X(labelSets)
+
+#define X(name) Local<String> str_##name = NewString(#name);
+  FIELDS
+#undef X
+
   ProfileTranslator(
       std::unordered_map<const CpuProfileNode*, Local<Array>>&& nls)
       : labelSetsByNode(std::move(nls)) {}
@@ -96,12 +89,42 @@ class ProfileTranslator {
       labelSetsByNode.erase(it);
       return retval;
     } else {
-      return Nan::New<Array>(0);
+      return emptyArray;
     }
   }
 
-  Local<Array> GetLineNumberTimeProfileChildren(
-      const CpuProfileNode* node) {
+  Local<Object> CreateTimeNode(Local<String> name,
+                               Local<String> scriptName,
+                               Local<Integer> scriptId,
+                               Local<Integer> lineNumber,
+                               Local<Integer> columnNumber,
+                               Local<Integer> hitCount,
+                               Local<Array> children,
+                               Local<Array> labelSets) {
+    Local<Object> js_node = Nan::New<Object>();
+#define X(name) Nan::Set(js_node, str_##name, name);
+    FIELDS
+#undef X
+    return js_node;
+  }
+
+  Local<Integer> NewInteger(int32_t x) {
+    return Integer::New(isolate, x);
+  }
+
+  Local<Array> NewArray(int length) {
+    return Array::New(isolate, length);
+  }
+
+  Local<String> NewString(const char* str) {
+#if NODE_MODULE_VERSION > NODE_12_0_MODULE_VERSION
+    return String::NewFromUtf8(isolate, str).ToLocalChecked();
+#else
+    return Nan::New<String>(str).ToLocalChecked();
+#endif
+  }
+
+  Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* node) {
     unsigned int index = 0;
     Local<Array> children;
     int32_t count = node->GetChildrenCount();
@@ -109,38 +132,39 @@ class ProfileTranslator {
     unsigned int hitLineCount = node->GetHitLineCount();
     unsigned int hitCount = node->GetHitCount();
     auto labelSets = getLabelSetsForNode(node);
+    auto scriptId = NewInteger(node->GetScriptId());
     if (hitLineCount > 0) {
       std::vector<CpuProfileNode::LineTick> entries(hitLineCount);
       node->GetLineTicks(&entries[0], hitLineCount);
-      children = Nan::New<Array>(count + hitLineCount);
+      children = NewArray(count + hitLineCount);
       for (const CpuProfileNode::LineTick entry : entries) {
         Nan::Set(children,
                  index++,
                  CreateTimeNode(node->GetFunctionName(),
                                 node->GetScriptResourceName(),
-                                Nan::New<Integer>(node->GetScriptId()),
-                                Nan::New<Integer>(entry.line),
-                                Nan::New<Integer>(0),
-                                Nan::New<Integer>(entry.hit_count),
-                                Nan::New<Array>(0),
+                                scriptId,
+                                NewInteger(entry.line),
+                                zero,
+                                NewInteger(entry.hit_count),
+                                emptyArray,
                                 labelSets));
       }
     } else if (hitCount > 0) {
       // Handle nodes for pseudo-functions like "process" and "garbage
       // collection" which do not have hit line counts.
-      children = Nan::New<Array>(count + 1);
+      children = NewArray(count + 1);
       Nan::Set(children,
                index++,
                CreateTimeNode(node->GetFunctionName(),
                               node->GetScriptResourceName(),
-                              Nan::New<Integer>(node->GetScriptId()),
-                              Nan::New<Integer>(node->GetLineNumber()),
-                              Nan::New<Integer>(node->GetColumnNumber()),
-                              Nan::New<Integer>(hitCount),
-                              Nan::New<Array>(0),
+                              scriptId,
+                              NewInteger(node->GetLineNumber()),
+                              NewInteger(node->GetColumnNumber()),
+                              NewInteger(hitCount),
+                              emptyArray,
                               labelSets));
     } else {
-      children = Nan::New<Array>(count);
+      children = NewArray(count);
     }
 
     for (int32_t i = 0; i < count; i++) {
@@ -156,10 +180,10 @@ class ProfileTranslator {
       const CpuProfileNode* parent, const CpuProfileNode* node) {
     return CreateTimeNode(parent->GetFunctionName(),
                           parent->GetScriptResourceName(),
-                          Nan::New<Integer>(parent->GetScriptId()),
-                          Nan::New<Integer>(node->GetLineNumber()),
-                          Nan::New<Integer>(node->GetColumnNumber()),
-                          Nan::New<Integer>(0),
+                          NewInteger(parent->GetScriptId()),
+                          NewInteger(node->GetLineNumber()),
+                          NewInteger(node->GetColumnNumber()),
+                          zero,
                           GetLineNumberTimeProfileChildren(node),
                           getLabelSetsForNode(node));
   }
@@ -177,7 +201,7 @@ class ProfileTranslator {
       childrenArrs[i] = c;
     }
 
-    Local<Array> children = Nan::New<Array>(childCount);
+    Local<Array> children = NewArray(childCount);
     int32_t idx = 0;
     for (int32_t i = 0; i < count; i++) {
       Local<Array> arr = childrenArrs[i];
@@ -189,10 +213,10 @@ class ProfileTranslator {
 
     return CreateTimeNode(node->GetFunctionName(),
                           node->GetScriptResourceName(),
-                          Nan::New<Integer>(node->GetScriptId()),
-                          Nan::New<Integer>(node->GetLineNumber()),
-                          Nan::New<Integer>(node->GetColumnNumber()),
-                          Nan::New<Integer>(0),
+                          NewInteger(node->GetScriptId()),
+                          NewInteger(node->GetLineNumber()),
+                          NewInteger(node->GetColumnNumber()),
+                          zero,
                           children,
                           getLabelSetsForNode(node));
   }
@@ -206,10 +230,10 @@ class ProfileTranslator {
 
     return CreateTimeNode(node->GetFunctionName(),
                           node->GetScriptResourceName(),
-                          Nan::New<Integer>(node->GetScriptId()),
-                          Nan::New<Integer>(node->GetLineNumber()),
-                          Nan::New<Integer>(node->GetColumnNumber()),
-                          Nan::New<Integer>(node->GetHitCount()),
+                          NewInteger(node->GetScriptId()),
+                          NewInteger(node->GetLineNumber()),
+                          NewInteger(node->GetColumnNumber()),
+                          NewInteger(node->GetHitCount()),
                           children,
                           getLabelSetsForNode(node));
   }
@@ -217,34 +241,33 @@ class ProfileTranslator {
   Local<Value> TranslateTimeProfile(const CpuProfile* profile,
                                     bool includeLineInfo) {
     Local<Object> js_profile = Nan::New<Object>();
-    Nan::Set(js_profile,
-             Nan::New<String>("title").ToLocalChecked(),
-             profile->GetTitle());
+    Nan::Set(js_profile, NewString("title"), profile->GetTitle());
 
 #if NODE_MODULE_VERSION > NODE_11_0_MODULE_VERSION
     if (includeLineInfo) {
       Nan::Set(js_profile,
-               Nan::New<String>("topDownRoot").ToLocalChecked(),
+               NewString("topDownRoot"),
                TranslateLineNumbersTimeProfileRoot(profile->GetTopDownRoot()));
     } else {
       Nan::Set(js_profile,
-               Nan::New<String>("topDownRoot").ToLocalChecked(),
+               NewString("topDownRoot"),
                TranslateTimeProfileNode(profile->GetTopDownRoot()));
     }
 #else
     Nan::Set(js_profile,
-             Nan::New<String>("topDownRoot").ToLocalChecked(),
+             NewString("topDownRoot"),
              TranslateTimeProfileNode(profile->GetTopDownRoot()));
 #endif
     Nan::Set(js_profile,
-             Nan::New<String>("startTime").ToLocalChecked(),
+             NewString("startTime"),
              Nan::New<Number>(profile->GetStartTime()));
     Nan::Set(js_profile,
-             Nan::New<String>("endTime").ToLocalChecked(),
+             NewString("endTime"),
              Nan::New<Number>(profile->GetEndTime()));
 
     return js_profile;
   }
+#undef FIELDS
 };
 
 bool isIdleSample(const CpuProfileNode* sample) {
