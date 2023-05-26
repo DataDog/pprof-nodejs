@@ -29,17 +29,6 @@ class WallProfiler : public Nan::ObjectWrap {
 
     SampleContext(std::shared_ptr<v8::Global<v8::Value>> l, uint64_t t)
         : labels(l), timestamp(t) {}
-
-    SampleContext(SampleContext&& rval) {
-      labels = std::move(rval.labels);
-      timestamp = rval.timestamp;
-    }
-
-    SampleContext& operator=(SampleContext&& rval) {
-      labels = std::move(rval.labels);
-      timestamp = rval.timestamp;
-      return *this;
-    }
   };
 
   RingBuffer<SampleContext> contexts;

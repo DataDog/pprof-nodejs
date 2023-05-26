@@ -18,36 +18,38 @@ class RingBuffer {
 
   const T& front() const { return buffer[front_index_]; }
 
-  void push_back(T t) {
+  template <typename T2>
+  void push_back(T2&& t) {
     if (full()) {
       if (empty()) {
         return;
       }
       // overwrite buffer head
-      buffer[back_index_] = std::move(t);
+      buffer[back_index_] = std::forward<T2>(t);
       increment(back_index_);
       // move buffer head
       front_index_ = back_index_;
     } else {
-      buffer[back_index_] = std::move(t);
+      buffer[back_index_] = std::forward<T2>(t);
       increment(back_index_);
       ++size_;
     }
   }
 
-  void push_front(T t) {
+  template <typename T2>
+  void push_front(T2&& t) {
     if (full()) {
       if (empty()) {
         return;
       }
       // overwrite buffer head
       decrement(front_index_);
-      buffer[front_index_] = std::move(t);
+      buffer[front_index_] = std::forward<T2>(t);
       // move buffer head
       back_index_ = front_index_;
     } else {
       decrement(front_index_);
-      buffer[front_index_] = std::move(t);
+      buffer[front_index_] = std::forward<T2>(t);
       ++size_;
     }
   }
