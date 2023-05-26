@@ -12,17 +12,17 @@ const rimraf = require('rimraf')
 const platform = os.platform()
 const arches = (process.env.ARCH || os.arch()).split(',')
 
-const { NODE_VERSIONS = '>=12' } = process.env
+const { NODE_VERSIONS = '>=14' } = process.env
 
 // https://nodejs.org/en/download/releases/
 const targets = [
-  { version: '12.0.0', abi: '72' },
-  { version: '13.0.0', abi: '79' },
   { version: '14.0.0', abi: '83' },
   { version: '15.0.0', abi: '88' },
   { version: '16.0.0', abi: '93' },
   { version: '17.0.1', abi: '102' },
-  { version: '18.0.0', abi: '108' }
+  { version: '18.0.0', abi: '108' },
+  { version: '19.0.0', abi: '111' },
+  { version: '20.0.0', abi: '115' }
 ].filter(target => semver.satisfies(target.version, NODE_VERSIONS))
 
 prebuildify()
