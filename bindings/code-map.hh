@@ -5,7 +5,7 @@
 #include <memory>
 
 #include <node_object_wrap.h>  // cppcheck-suppress missingIncludeSystem
-#if NODE_MODULE_VERSION >= 102
+#if NODE_MODULE_VERSION >= NODE_17_0_MODULE_VERSION
 #include <v8-callbacks.h>
 #endif
 #include <v8-profiler.h>

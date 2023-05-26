@@ -70,7 +70,6 @@ void CodeMap::StaticHandleJitEvent(const v8::JitCodeEvent* event) {
 // If size of previous is greater than offset of new position, the old record
 // must be invalid, clean it up.
 void CodeMap::Handle(v8::CodeEvent* code_event) {
-#if NODE_MODULE_VERSION > 79
   if (code_event->GetCodeType() == v8::CodeEventType::kRelocationType) {
     CodeEntries::iterator it =
         code_entries_.find(code_event->GetPreviousCodeStartAddress());
@@ -78,7 +77,6 @@ void CodeMap::Handle(v8::CodeEvent* code_event) {
       code_entries_.erase(it);
     }
   }
-#endif
 
   Add(code_event->GetCodeStartAddress(),
       std::make_shared<CodeEventRecord>(isolate_, code_event));

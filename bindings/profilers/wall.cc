@@ -169,7 +169,6 @@ Local<Value> TranslateTimeProfile(const CpuProfile* profile,
            Nan::New<String>("title").ToLocalChecked(),
            profile->GetTitle());
 
-#if NODE_MODULE_VERSION > NODE_11_0_MODULE_VERSION
   if (includeLineInfo) {
     Nan::Set(js_profile,
              Nan::New<String>("topDownRoot").ToLocalChecked(),
@@ -179,11 +178,6 @@ Local<Value> TranslateTimeProfile(const CpuProfile* profile,
              Nan::New<String>("topDownRoot").ToLocalChecked(),
              TranslateTimeProfileNode(profile->GetTopDownRoot()));
   }
-#else
-  Nan::Set(js_profile,
-           Nan::New<String>("topDownRoot").ToLocalChecked(),
-           TranslateTimeProfileNode(profile->GetTopDownRoot()));
-#endif
   Nan::Set(js_profile,
            Nan::New<String>("startTime").ToLocalChecked(),
            Nan::New<Number>(profile->GetStartTime()));
