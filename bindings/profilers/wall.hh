@@ -63,7 +63,7 @@ class WallProfiler : public Nan::ObjectWrap {
   }
 
   void PushContext();
-  void StartImpl(v8::Local<v8::String> name, bool includeLines);
+  void StartImpl(v8::Local<v8::String> name, bool includeLines, bool withLabels);
   v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name, bool includeLines);
 
   static NAN_METHOD(New);

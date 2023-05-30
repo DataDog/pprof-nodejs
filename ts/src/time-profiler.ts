@@ -47,9 +47,8 @@ export interface TimeProfilerOptions {
 }
 
 export async function profile(options: TimeProfilerOptions) {
-  const {stop} = startWithLabels(
+  const stop = start(
     options.intervalMicros || DEFAULT_INTERVAL_MICROS,
-    options.durationMillis || DEFAULT_DURATION_MILLIS,
     options.name,
     options.sourceMapper,
     options.lineNumbers
@@ -62,24 +61,26 @@ function ensureRunName(name?: string) {
   return name || `pprof-${Date.now()}-${Math.random()}`;
 }
 
-// Retained for backwards compatibility with older tracer
+// Temporarily retained for backwards compatibility with older tracer
 export function start(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
   name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
-  const {stop} = startWithLabels(
+  const {stop} = startInternal(
     intervalMicros,
-    DEFAULT_DURATION_MILLIS,
+    // Duration must be at least intervalMicros; not used anyway when
+    // not collecting extra info (CPU time, labels) with samples.
+    intervalMicros,
     name,
     sourceMapper,
-    lineNumbers
+    lineNumbers,
+    false
   );
   return stop;
 }
 
-// NOTE: refreshing doesn't work if giving a profile name.
 export function startWithLabels(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
   durationMillis: Milliseconds = DEFAULT_DURATION_MILLIS,
@@ -87,7 +88,26 @@ export function startWithLabels(
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
-  const profiler = new TimeProfiler(intervalMicros, durationMillis * 1000);
+  return startInternal(
+    intervalMicros,
+    durationMillis * 1000,
+    name,
+    sourceMapper,
+    lineNumbers,
+    true
+  );
+}
+
+// NOTE: refreshing doesn't work if giving a profile name.
+function startInternal(
+  intervalMicros: Microseconds,
+  durationMicros: Microseconds,
+  name?: string,
+  sourceMapper?: SourceMapper,
+  lineNumbers?: boolean,
+  withLabels?: boolean
+) {
+  const profiler = new TimeProfiler(intervalMicros, durationMicros);
   let runName = start();
   return {
     stop: majorVersion < 16 ? stopOld : stop,
@@ -97,7 +117,7 @@ export function startWithLabels(
 
   function start() {
     const runName = ensureRunName(name);
-    profiler.start(runName, lineNumbers);
+    profiler.start(runName, lineNumbers, withLabels);
     return runName;
   }
 
