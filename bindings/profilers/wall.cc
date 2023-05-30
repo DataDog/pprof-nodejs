@@ -449,14 +449,17 @@ NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("Start must have two arguments.");
+  if (info.Length() != 3) {
+    return Nan::ThrowTypeError("Start must have three arguments.");
   }
   if (!info[0]->IsString()) {
     return Nan::ThrowTypeError("Profile name must be a string.");
   }
   if (!info[1]->IsBoolean()) {
-    return Nan::ThrowTypeError("Include lines must be a boolean.");
+    return Nan::ThrowTypeError("Include lines flag must be a boolean.");
+  }
+  if (!info[2]->IsBoolean()) {
+    return Nan::ThrowTypeError("With labels flag must be a boolean.");
   }
 
   Local<String> name =
@@ -465,29 +468,34 @@ NAN_METHOD(WallProfiler::Start) {
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
-  wallProfiler->StartImpl(name, includeLines);
+  bool withLabels =
+      Nan::MaybeLocal<Boolean>(info[2].As<Boolean>()).ToLocalChecked()->Value();
+
+  wallProfiler->StartImpl(name, includeLines, withLabels);
 
 #ifdef DD_WALL_USE_SIGPROF
-  struct sigaction sa, old_sa;
-  sa.sa_flags = SA_SIGINFO | SA_RESTART;
-  sa.sa_sigaction = &sighandler;
-  sigemptyset(&sa.sa_mask);
-  sigaction(SIGPROF, &sa, &old_sa);
+  if (withLabels) {
+    struct sigaction sa, old_sa;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sa.sa_sigaction = &sighandler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGPROF, &sa, &old_sa);
 
-  // At the end of a cycle start is called before stop,
-  // at this point old_sa.sa_sigaction is sighandler !
-  if (!old_handler) {
-    old_handler = old_sa.sa_sigaction;
+    // At the end of a cycle start is called before stop,
+    // at this point old_sa.sa_sigaction is sighandler !
+    if (!old_handler) {
+      old_handler = old_sa.sa_sigaction;
+    }
   }
 #endif
 }
 
-void WallProfiler::StartImpl(Local<String> name, bool includeLines) {
+void WallProfiler::StartImpl(Local<String> name, bool includeLines, bool withLabels) {
   if (includeLines) {
     GetProfiler()->StartProfiling(
-        name, CpuProfilingMode::kCallerLineNumbers, true);
+        name, CpuProfilingMode::kCallerLineNumbers, withLabels);
   } else {
-    GetProfiler()->StartProfiling(name, true);
+    GetProfiler()->StartProfiling(name, withLabels);
   }
 
   last_start = current_start;
