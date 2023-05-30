@@ -47,9 +47,9 @@ export interface TimeProfilerOptions {
 }
 
 export async function profile(options: TimeProfilerOptions) {
-  const {stop} = start(
+  const {stop} = startWithLabels(
     options.intervalMicros || DEFAULT_INTERVAL_MICROS,
-    options.durationMillis,
+    options.durationMillis || DEFAULT_DURATION_MILLIS,
     options.name,
     options.sourceMapper,
     options.lineNumbers
@@ -62,8 +62,25 @@ function ensureRunName(name?: string) {
   return name || `pprof-${Date.now()}-${Math.random()}`;
 }
 
-// NOTE: refreshing doesn't work if giving a profile name.
+// Retained for backwards compatibility with older tracer
 export function start(
+  intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
+  name?: string,
+  sourceMapper?: SourceMapper,
+  lineNumbers = true
+) {
+  const {stop} = startWithLabels(
+    intervalMicros,
+    DEFAULT_DURATION_MILLIS,
+    name,
+    sourceMapper,
+    lineNumbers
+  );
+  return stop;
+}
+
+// NOTE: refreshing doesn't work if giving a profile name.
+export function startWithLabels(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
   durationMillis: Milliseconds = DEFAULT_DURATION_MILLIS,
   name?: string,
