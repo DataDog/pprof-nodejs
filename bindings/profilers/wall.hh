@@ -8,7 +8,10 @@
 
 namespace dd {
 
-using LabelSetsByNode = std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>;
+using LabelSetsByNode =
+    std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>;
+
+using ValuePtr = std::shared_ptr<v8::Global<v8::Value>>;
 
 class WallProfiler : public Nan::ObjectWrap {
  private:
@@ -17,11 +20,11 @@ class WallProfiler : public Nan::ObjectWrap {
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
-  std::shared_ptr<v8::Global<v8::Value>> labels_;
+  ValuePtr labels_;
   bool labelsCaptured = false;
 
   struct SampleContext {
-    std::shared_ptr<v8::Global<v8::Value>> labels;
+    ValuePtr labels;
     uint64_t timestamp;
 
     // Needed to initialize ring buffer elements
@@ -32,8 +35,6 @@ class WallProfiler : public Nan::ObjectWrap {
   };
 
   RingBuffer<SampleContext> contexts;
-  uint64_t current_start;  // start of current profiling run
-  uint64_t last_start;     // start of last profiling run
 
   ~WallProfiler();
   void Dispose(v8::Isolate* isolate);
@@ -42,7 +43,8 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
-  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile);
+  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile,
+                                     uint64_t startTime);
 
  public:
   /**
@@ -62,9 +64,13 @@ class WallProfiler : public Nan::ObjectWrap {
     return captured;
   }
 
-  void PushContext();
-  void StartImpl(v8::Local<v8::String> name, bool includeLines, bool withLabels);
-  v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name, bool includeLines);
+  uint64_t PushContext();
+  void StartImpl(v8::Local<v8::String> name,
+                 bool includeLines,
+                 bool withLabels);
+  v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name,
+                                bool includeLines,
+                                uint64_t startTime);
 
   static NAN_METHOD(New);
   static NAN_METHOD(Dispose);
