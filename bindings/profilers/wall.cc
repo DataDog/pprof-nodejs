@@ -46,12 +46,11 @@ static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 static void sighandler(int sig, siginfo_t* info, void* context) {
   auto prof_map = profilers.load();
   auto prof_it = prof_map->find(Isolate::GetCurrent());
-  if (prof_it != prof_map->end()) {
-    prof_it->second->PushContext();
-  }
-
   if (old_handler) {
     old_handler(sig, info, context);
+  }
+  if (prof_it != prof_map->end()) {
+    prof_it->second->PushContext();
   }
 }
 #endif
@@ -279,63 +278,92 @@ bool isIdleSample(const CpuProfileNode* sample) {
       strncmp("(idle)", sample->GetFunctionNameStr(), 7) == 0;
 }
 
-LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
-  auto halfInterval = samplingInterval * 1000 / 2;
-
+LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
+                                                 uint64_t startTime) {
   LabelSetsByNode labelSetsByNode;
 
-  if (contexts.empty()) {
+  if (contexts.empty() || profile->GetSamplesCount() == 0) {
     return labelSetsByNode;
   }
   auto isolate = Isolate::GetCurrent();
-
   SampleContext sampleContext = contexts.pop_front();
 
-  uint64_t time_diff = last_start - profile->GetStartTime() * 1000;
+  auto sampleCount = profile->GetSamplesCount();
+  uint64_t halfInterval =
+      (sampleCount > 1 ? (profile->GetSampleTimestamp(sampleCount - 1) -
+                          profile->GetSampleTimestamp(0)) /
+                             (sampleCount - 1)
+                       : samplingInterval) /
+      2;
 
-  for (int i = 0; i < profile->GetSamplesCount(); i++) {
+  // Assumption is that startTime and profile->GetSampleTimestamp(0) were both
+  // taken very closely to each other in real time so they can be used as a
+  // common point of time origin, since startTime is taken in
+  // WallProfiler::Start just after calling WallProfiler::StartImpl.
+  // Sample times are in micros, context times are
+  // in nanos. We are using these values - adjusted for half interval in the
+  // past so we don't suffer any overflows anywhere in the arithmetic below.
+  int64_t zeroSampleTime = profile->GetSampleTimestamp(0) - halfInterval;
+  uint64_t zeroContextTime = startTime - halfInterval * 1000;
+
+  for (int i = 0; i < sampleCount; i++) {
     auto sample = profile->GetSample(i);
     if (isIdleSample(sample)) {
       continue;
     }
-
-    // Translate from profiler micros to uv_hrtime nanos
-    auto sampleTimestamp = profile->GetSampleTimestamp(i) * 1000 + time_diff;
+    int64_t sampleTimestamp = profile->GetSampleTimestamp(i) - zeroSampleTime;
+    // Compute earliest (inclusive) and latest (exclusive) context timestamps
+    // that can belong to this sample. Use half the distance to neighboring
+    // samples, or barring that half the sampling interval
+    uint64_t earliest =
+        1000 * (i > 0 ? (sampleTimestamp + (profile->GetSampleTimestamp(i - 1) -
+                                            zeroSampleTime)) /
+                            2
+                      : (sampleTimestamp - halfInterval));
+    uint64_t latest =
+        1000 * (i < sampleCount - 1
+                    ? (sampleTimestamp +
+                       (profile->GetSampleTimestamp(i + 1) - zeroSampleTime)) /
+                          2
+                    : (sampleTimestamp + halfInterval));
 
     // This loop will drop all contexts that are too old to be associated with
     // the current sample; associate those (normally one) that are close enough
     // to it in time, and stop as soon as it sees a context that's too recent
     // for this sample.
     for (;;) {
-      auto contextTimestamp = sampleContext.timestamp;
-      if (contextTimestamp < sampleTimestamp - halfInterval) {
-        // Current sample context is too old, discard it and fetch the next one
+      auto contextTimestamp = sampleContext.timestamp - zeroContextTime;
+      if (contextTimestamp < earliest) {
+        // Current sample context is too old (closer to the previous sample than
+        // to this one), discard it and fetch the next one.
         if (contexts.empty()) {
           return labelSetsByNode;
         }
         sampleContext = contexts.pop_front();
-      } else if (contextTimestamp >= sampleTimestamp + halfInterval) {
-        // Current sample context is too recent, we'll try to match it to the
-        // next sample
+      } else if (contextTimestamp >= latest) {
+        // Current sample context is too recent (closer to the next sample than
+        // to this one), we'll try to match it to the next sample.
         break;
       } else {
-        // This context timestamp is in the goldilocks zone around the sample
-        // timestamp, so associate its labels with the sample.
-        auto it = labelSetsByNode.find(sample);
-        Local<Array> array;
-        if (it == labelSetsByNode.end()) {
-          array = Nan::New<Array>();
-          labelSetsByNode.emplace(sample, array);
-        } else {
-          array = it->second;
+        // This sample context is the closest to this sample.
+        if (sampleContext.labels) {
+          auto it = labelSetsByNode.find(sample);
+          Local<Array> array;
+          if (it == labelSetsByNode.end()) {
+            array = Nan::New<Array>();
+            labelSetsByNode.emplace(sample, array);
+          } else {
+            array = it->second;
+          }
+          Nan::Set(
+              array, array->Length(), sampleContext.labels.get()->Get(isolate));
         }
-        Nan::Set(
-            array, array->Length(), sampleContext.labels.get()->Get(isolate));
         // Sample context was consumed, fetch the next one
         if (contexts.empty()) {
           return labelSetsByNode;
         }
         sampleContext = contexts.pop_front();
+        break; // don't match more than one context to one sample
       }
     }
   }
@@ -472,6 +500,7 @@ NAN_METHOD(WallProfiler::Start) {
       Nan::MaybeLocal<Boolean>(info[2].As<Boolean>()).ToLocalChecked()->Value();
 
   wallProfiler->StartImpl(name, includeLines, withLabels);
+  auto now = withLabels ? wallProfiler->PushContext() : uv_hrtime();
 
 #ifdef DD_WALL_USE_SIGPROF
   if (withLabels) {
@@ -488,23 +517,24 @@ NAN_METHOD(WallProfiler::Start) {
     }
   }
 #endif
+  auto bi_now = BigInt::NewFromUnsigned(info.GetIsolate(), now);
+  info.GetReturnValue().Set(bi_now);
 }
 
-void WallProfiler::StartImpl(Local<String> name, bool includeLines, bool withLabels) {
+void WallProfiler::StartImpl(Local<String> name,
+                             bool includeLines,
+                             bool withLabels) {
   if (includeLines) {
     GetProfiler()->StartProfiling(
         name, CpuProfilingMode::kCallerLineNumbers, withLabels);
   } else {
     GetProfiler()->StartProfiling(name, withLabels);
   }
-
-  last_start = current_start;
-  current_start = uv_hrtime();
 }
 
 NAN_METHOD(WallProfiler::Stop) {
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("Start must have two arguments.");
+  if (info.Length() != 3) {
+    return Nan::ThrowTypeError("Stop must have three arguments.");
   }
   if (!info[0]->IsString()) {
     return Nan::ThrowTypeError("Profile name must be a string.");
@@ -513,25 +543,36 @@ NAN_METHOD(WallProfiler::Stop) {
     return Nan::ThrowTypeError("Include lines must be a boolean.");
   }
 
+  if (!info[2]->IsBigInt()) {
+    return Nan::ThrowTypeError("Start time must be a bigint.");
+  }
+
   Local<String> name =
       Nan::MaybeLocal<String>(info[0].As<String>()).ToLocalChecked();
 
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
+  uint64_t startTime = Nan::MaybeLocal<BigInt>(info[2].As<BigInt>())
+                           .ToLocalChecked()
+                           ->Uint64Value();
+
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  auto profile = wallProfiler->StopImpl(name, includeLines);
+  auto profile = wallProfiler->StopImpl(name, includeLines, startTime);
 
   info.GetReturnValue().Set(profile);
 }
 
-Local<Value> WallProfiler::StopImpl(Local<String> name, bool includeLines) {
+Local<Value> WallProfiler::StopImpl(Local<String> name,
+                                    bool includeLines,
+                                    uint64_t startTime) {
   auto profiler = GetProfiler();
   auto v8_profile = profiler->StopProfiling(name);
-  Local<Value> profile = ProfileTranslator(GetLabelSetsByNode(v8_profile))
-                             .TranslateTimeProfile(v8_profile, includeLines);
+  Local<Value> profile =
+      ProfileTranslator(GetLabelSetsByNode(v8_profile, startTime))
+          .TranslateTimeProfile(v8_profile, includeLines);
   v8_profile->Delete();
   return profile;
 }
@@ -604,14 +645,16 @@ NAN_GETTER(WallProfiler::GetLabelsCaptured) {
   info.GetReturnValue().Set(profiler->GetLabelsCaptured());
 }
 
-void WallProfiler::PushContext() {
+uint64_t WallProfiler::PushContext() {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
+  auto now = uv_hrtime();
+  contexts.push_back(SampleContext(labels_, now));
   if (labels_) {
-    contexts.push_back(SampleContext(labels_, uv_hrtime()));
     labelsCaptured = true;
   }
+  return now;
 }
 
 }  // namespace dd
