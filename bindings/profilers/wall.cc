@@ -363,7 +363,7 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
           return labelSetsByNode;
         }
         sampleContext = contexts.pop_front();
-        break; // don't match more than one context to one sample
+        break;  // don't match more than one context to one sample
       }
     }
   }
@@ -372,8 +372,6 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
   contexts.push_front(std::move(sampleContext));
   return labelSetsByNode;
 }
-
-static Nan::Persistent<v8::Function> constructor;
 
 WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
     : samplingInterval(intervalMicros),
@@ -438,7 +436,7 @@ NAN_METHOD(WallProfiler::New) {
     return Nan::ThrowTypeError("Sample rate must be a number.");
   }
 
-  if (!info[0]->IsNumber()) {
+  if (!info[1]->IsNumber()) {
     return Nan::ThrowTypeError("Duration must be a number.");
   }
 
@@ -464,8 +462,8 @@ NAN_METHOD(WallProfiler::New) {
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
-    const int argc = 1;
-    v8::Local<v8::Value> argv[argc] = {info[0]};
+    const int argc = 2;
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1]};
     v8::Local<v8::Function> cons = Nan::New(
         PerIsolateData::For(info.GetIsolate())->WallProfilerConstructor());
     info.GetReturnValue().Set(

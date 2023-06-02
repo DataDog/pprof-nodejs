@@ -22,7 +22,7 @@ import {TimeProfiler} from './time-profiler-bindings';
 import {LabelSet} from './v8-types';
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
-const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
+const DEFAULT_DURATION_MICROS: Microseconds = 60000000;
 
 const majorVersion = process.version.slice(1).split('.').map(Number)[0];
 
@@ -83,14 +83,14 @@ export function start(
 
 export function startWithLabels(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
-  durationMillis: Milliseconds = DEFAULT_DURATION_MILLIS,
+  durationMicros: Microseconds = DEFAULT_DURATION_MICROS,
   name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
   return startInternal(
     intervalMicros,
-    durationMillis * 1000,
+    durationMicros,
     name,
     sourceMapper,
     lineNumbers,
