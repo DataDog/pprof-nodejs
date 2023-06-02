@@ -2,7 +2,9 @@
 
 #include <nan.h>
 #include <v8-profiler.h>
+#include <memory>
 #include <unordered_map>
+#include <utility>
 
 #include "../buffer.hh"
 
@@ -28,10 +30,9 @@ class WallProfiler : public Nan::ObjectWrap {
     uint64_t timestamp;
 
     // Needed to initialize ring buffer elements
-    SampleContext() {}
+    SampleContext() = default;
 
-    SampleContext(std::shared_ptr<v8::Global<v8::Value>> l, uint64_t t)
-        : labels(l), timestamp(t) {}
+    SampleContext(const ValuePtr& l, uint64_t t) : labels(l), timestamp(t) {}
   };
 
   RingBuffer<SampleContext> contexts;
@@ -58,11 +59,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   v8::Local<v8::Value> GetLabels(v8::Isolate*);
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
-  bool GetLabelsCaptured() {
-    bool captured = labelsCaptured;
-    labelsCaptured = false;
-    return captured;
-  }
+  bool GetLabelsCaptured() { return std::exchange(labelsCaptured, false); }
 
   uint64_t PushContext();
   void StartImpl(v8::Local<v8::String> name,
