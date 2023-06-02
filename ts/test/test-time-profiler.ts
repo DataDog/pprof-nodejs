@@ -50,7 +50,7 @@ describe('Time Profiler', () => {
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
       const {stop, setLabels} = time.startWithLabels(
         PROFILE_OPTIONS.intervalMicros,
-        PROFILE_OPTIONS.durationMillis
+        PROFILE_OPTIONS.durationMillis * 1000
       );
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
