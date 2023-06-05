@@ -289,7 +289,7 @@ bool isIdleSample(const CpuProfileNode* sample) {
 }
 
 LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
-                                                 uint64_t startTime) {
+                                                 int64_t startTime) {
   LabelSetsByNode labelSetsByNode;
 
   if (contexts.empty() || profile->GetSamplesCount() == 0) {
@@ -299,7 +299,7 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
   SampleContext sampleContext = contexts.pop_front();
 
   auto sampleCount = profile->GetSamplesCount();
-  uint64_t halfInterval =
+  auto halfInterval =
       (sampleCount > 1 ? (profile->GetSampleTimestamp(sampleCount - 1) -
                           profile->GetSampleTimestamp(0)) /
                              (sampleCount - 1)
@@ -313,24 +313,24 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
   // Sample times are in micros, context times are
   // in nanos. We are using these values - adjusted for half interval in the
   // past so we don't suffer any overflows anywhere in the arithmetic below.
-  int64_t zeroSampleTime = profile->GetSampleTimestamp(0) - halfInterval;
-  uint64_t zeroContextTime = startTime - halfInterval * 1000;
+  auto zeroSampleTime = profile->GetSampleTimestamp(0) - halfInterval;
+  auto zeroContextTime = startTime - halfInterval * 1000;
 
   for (int i = 0; i < sampleCount; i++) {
     auto sample = profile->GetSample(i);
     if (isIdleSample(sample)) {
       continue;
     }
-    int64_t sampleTimestamp = profile->GetSampleTimestamp(i) - zeroSampleTime;
+    auto sampleTimestamp = profile->GetSampleTimestamp(i) - zeroSampleTime;
     // Compute earliest (inclusive) and latest (exclusive) context timestamps
     // that can belong to this sample. Use half the distance to neighboring
     // samples, or barring that half the sampling interval
-    uint64_t earliest =
+    auto earliest =
         1000 * (i > 0 ? (sampleTimestamp + (profile->GetSampleTimestamp(i - 1) -
                                             zeroSampleTime)) /
                             2
                       : (sampleTimestamp - halfInterval));
-    uint64_t latest =
+    auto latest =
         1000 * (i < sampleCount - 1
                     ? (sampleTimestamp +
                        (profile->GetSampleTimestamp(i + 1) - zeroSampleTime)) /
@@ -532,7 +532,7 @@ NAN_METHOD(WallProfiler::Start) {
     }
   }
 #endif
-  auto bi_now = BigInt::NewFromUnsigned(info.GetIsolate(), now);
+  auto bi_now = BigInt::New(info.GetIsolate(), now);
   info.GetReturnValue().Set(bi_now);
 }
 
@@ -568,9 +568,9 @@ NAN_METHOD(WallProfiler::Stop) {
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
-  uint64_t startTime = Nan::MaybeLocal<BigInt>(info[2].As<BigInt>())
-                           .ToLocalChecked()
-                           ->Uint64Value();
+  auto startTime = Nan::MaybeLocal<BigInt>(info[2].As<BigInt>())
+                       .ToLocalChecked()
+                       ->Int64Value();
 
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
@@ -582,7 +582,7 @@ NAN_METHOD(WallProfiler::Stop) {
 
 Local<Value> WallProfiler::StopImpl(Local<String> name,
                                     bool includeLines,
-                                    uint64_t startTime) {
+                                    int64_t startTime) {
   auto profiler = GetProfiler();
   auto v8_profile = profiler->StopProfiling(name);
   Local<Value> profile =
@@ -660,11 +660,11 @@ NAN_GETTER(WallProfiler::GetLabelsCaptured) {
   info.GetReturnValue().Set(profiler->GetLabelsCaptured());
 }
 
-uint64_t WallProfiler::PushContext() {
+int64_t WallProfiler::PushContext() {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
-  auto now = uv_hrtime();
+  int64_t now = uv_hrtime();
   contexts.push_back(SampleContext(labels_, now));
   if (labels_) {
     labelsCaptured = true;
