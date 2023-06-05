@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include <nan.h>
@@ -39,18 +40,27 @@ namespace dd {
 using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
 
 static std::atomic<ProfilerMap*> profilers(new ProfilerMap());
+static std::mutex update_profilers;
 
 #ifdef DD_WALL_USE_SIGPROF
 static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
-  auto prof_map = profilers.load();
-  auto prof_it = prof_map->find(Isolate::GetCurrent());
+  auto isolate = Isolate::GetCurrent();
+  WallProfiler* prof = nullptr;
+  auto prof_map = profilers.exchange(nullptr, std::memory_order_acq_rel);
+  if (prof_map) {
+    auto prof_it = prof_map->find(isolate);
+    if (prof_it != prof_map->end()) {
+      prof = prof_it->second;
+    }
+    profilers.store(prof_map, std::memory_order_release);
+  }
   if (old_handler) {
     old_handler(sig, info, context);
   }
-  if (prof_it != prof_map->end()) {
-    prof_it->second->PushContext();
+  if (prof) {
+    prof->PushContext();
   }
 }
 #endif
@@ -383,17 +393,24 @@ WallProfiler::~WallProfiler() {
 
 template <typename F>
 void updateProfilers(F updateFn) {
-  auto currProfilers = profilers.load();
+  std::lock_guard<std::mutex> lock(update_profilers);
+  auto currProfilers = profilers.load(std::memory_order_acquire);
+  // Wait until sighandler is done using the map
+  while (!currProfilers) {
+    currProfilers = profilers.load(std::memory_order_relaxed);
+  }
+  auto newProfilers = new ProfilerMap(*currProfilers);
+  updateFn(newProfilers);
+  // Wait until sighandler is done using the map before installing a new map.
+  // The value in profilers is either nullptr or currProfilers.
   for (;;) {
-    auto newProfilers = new ProfilerMap(*currProfilers);
-    updateFn(newProfilers);
-    if (profilers.compare_exchange_weak(currProfilers, newProfilers)) {
-      delete currProfilers;
+    ProfilerMap* currProfilers2 = currProfilers;
+    if (profilers.compare_exchange_weak(
+            currProfilers2, newProfilers, std::memory_order_acq_rel)) {
       break;
-    } else {
-      delete newProfilers;
     }
   }
+  delete currProfilers;
 }
 
 void WallProfiler::Dispose(Isolate* isolate) {
