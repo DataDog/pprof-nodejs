@@ -33,6 +33,16 @@
 #undef DD_WALL_USE_SIGPROF
 #endif
 
+// Declare v8::base::TimeTicks::Now. It is exported from the node executable so
+// our addon will be able to dynamically link to the symbol when loaded.
+namespace v8 {
+namespace base {
+struct TimeTicks {
+  static int64_t Now();
+};
+}  // namespace base
+}  // namespace v8
+
 using namespace v8;
 
 namespace dd {
@@ -288,8 +298,7 @@ bool isIdleSample(const CpuProfileNode* sample) {
       strncmp("(idle)", sample->GetFunctionNameStr(), 7) == 0;
 }
 
-LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
-                                                 int64_t startTime) {
+LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
   LabelSetsByNode labelSetsByNode;
 
   if (contexts.empty() || profile->GetSamplesCount() == 0) {
@@ -306,35 +315,16 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
                        : samplingInterval) /
       2;
 
-  // Assumption is that startTime and profile->GetSampleTimestamp(0) were both
-  // taken very closely to each other in real time so they can be used as a
-  // common point of time origin, since startTime is taken in
-  // WallProfiler::Start just after calling WallProfiler::StartImpl.
-  // Sample times are in micros, context times are
-  // in nanos. We are using these values - adjusted for half interval in the
-  // past so we don't suffer any overflows anywhere in the arithmetic below.
-  auto zeroSampleTime = profile->GetSampleTimestamp(0) - halfInterval;
-  auto zeroContextTime = startTime - halfInterval * 1000;
 
   for (int i = 0; i < sampleCount; i++) {
     auto sample = profile->GetSample(i);
     if (isIdleSample(sample)) {
       continue;
     }
-    auto sampleTimestamp = profile->GetSampleTimestamp(i) - zeroSampleTime;
-    // Compute earliest (inclusive) and latest (exclusive) context timestamps
-    // that can belong to this sample. Use half the distance to neighboring
-    // samples, or barring that half the sampling interval
-    auto earliest =
-        1000 * (i > 0 ? (sampleTimestamp + (profile->GetSampleTimestamp(i - 1) -
-                                            zeroSampleTime)) /
-                            2
-                      : (sampleTimestamp - halfInterval));
+    auto sampleTimestamp = profile->GetSampleTimestamp(i);
     auto latest =
-        1000 * (i < sampleCount - 1
-                    ? (sampleTimestamp +
-                       (profile->GetSampleTimestamp(i + 1) - zeroSampleTime)) /
-                          2
+        (i < sampleCount - 1
+                    ? (sampleTimestamp + profile->GetSampleTimestamp(i + 1)) / 2
                     : (sampleTimestamp + halfInterval));
 
     // This loop will drop all contexts that are too old to be associated with
@@ -342,8 +332,8 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
     // to it in time, and stop as soon as it sees a context that's too recent
     // for this sample.
     for (;;) {
-      auto contextTimestamp = sampleContext.timestamp - zeroContextTime;
-      if (contextTimestamp < earliest) {
+      auto contextTimestamp = sampleContext.timestamp;
+      if (contextTimestamp < sampleTimestamp) {
         // Current sample context is too old (closer to the previous sample than
         // to this one), discard it and fetch the next one.
         if (contexts.empty()) {
@@ -515,10 +505,9 @@ NAN_METHOD(WallProfiler::Start) {
       Nan::MaybeLocal<Boolean>(info[2].As<Boolean>()).ToLocalChecked()->Value();
 
   wallProfiler->StartImpl(name, includeLines, withLabels);
-  auto now = withLabels ? wallProfiler->PushContext() : uv_hrtime();
-
 #ifdef DD_WALL_USE_SIGPROF
   if (withLabels) {
+    wallProfiler->PushContext();
     struct sigaction sa, old_sa;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sa.sa_sigaction = &sighandler;
@@ -532,8 +521,6 @@ NAN_METHOD(WallProfiler::Start) {
     }
   }
 #endif
-  auto bi_now = BigInt::New(info.GetIsolate(), now);
-  info.GetReturnValue().Set(bi_now);
 }
 
 void WallProfiler::StartImpl(Local<String> name,
@@ -548,8 +535,8 @@ void WallProfiler::StartImpl(Local<String> name,
 }
 
 NAN_METHOD(WallProfiler::Stop) {
-  if (info.Length() != 3) {
-    return Nan::ThrowTypeError("Stop must have three arguments.");
+  if (info.Length() != 2) {
+    return Nan::ThrowTypeError("Stop must have two arguments.");
   }
   if (!info[0]->IsString()) {
     return Nan::ThrowTypeError("Profile name must be a string.");
@@ -558,35 +545,26 @@ NAN_METHOD(WallProfiler::Stop) {
     return Nan::ThrowTypeError("Include lines must be a boolean.");
   }
 
-  if (!info[2]->IsBigInt()) {
-    return Nan::ThrowTypeError("Start time must be a bigint.");
-  }
-
   Local<String> name =
       Nan::MaybeLocal<String>(info[0].As<String>()).ToLocalChecked();
 
   bool includeLines =
       Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
 
-  auto startTime = Nan::MaybeLocal<BigInt>(info[2].As<BigInt>())
-                       .ToLocalChecked()
-                       ->Int64Value();
-
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  auto profile = wallProfiler->StopImpl(name, includeLines, startTime);
+  auto profile = wallProfiler->StopImpl(name, includeLines);
 
   info.GetReturnValue().Set(profile);
 }
 
 Local<Value> WallProfiler::StopImpl(Local<String> name,
-                                    bool includeLines,
-                                    int64_t startTime) {
+                                    bool includeLines) {
   auto profiler = GetProfiler();
   auto v8_profile = profiler->StopProfiling(name);
   Local<Value> profile =
-      ProfileTranslator(GetLabelSetsByNode(v8_profile, startTime))
+      ProfileTranslator(GetLabelSetsByNode(v8_profile))
           .TranslateTimeProfile(v8_profile, includeLines);
   v8_profile->Delete();
   return profile;
@@ -664,7 +642,7 @@ int64_t WallProfiler::PushContext() {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
-  int64_t now = uv_hrtime();
+  int64_t now = v8::base::TimeTicks::Now();
   contexts.push_back(SampleContext(labels_, now));
   if (labels_) {
     labelsCaptured = true;

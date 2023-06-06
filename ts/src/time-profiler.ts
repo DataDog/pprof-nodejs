@@ -108,7 +108,7 @@ function startInternal(
   withLabels?: boolean
 ) {
   const profiler = new TimeProfiler(intervalMicros, durationMicros);
-  let runInfo = start();
+  let runName = start();
   return {
     stop: majorVersion < 16 ? stopOld : stop,
     setLabels,
@@ -117,18 +117,18 @@ function startInternal(
 
   function start() {
     const runName = ensureRunName(name);
-    const startTime = profiler.start(runName, lineNumbers, withLabels);
-    return {name: runName, startTime};
+    profiler.start(runName, lineNumbers, withLabels);
+    return runName;
   }
 
   // Node.js versions prior to v16 leak memory if not disposed and recreated
   // between each profile. As disposing deletes current profile data too,
   // we must stop then dispose then start.
   function stopOld(restart = false) {
-    const result = profiler.stop(runInfo.name, lineNumbers, runInfo.startTime);
+    const result = profiler.stop(runName, lineNumbers);
     profiler.dispose();
     if (restart) {
-      runInfo = start();
+      runName = start();
     }
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
   }
@@ -137,13 +137,13 @@ function startInternal(
   // current one as otherwise the active profile count could reach zero which
   // means V8 might tear down the symbolizer thread and need to start it again.
   function stop(restart = false) {
-    let nextRunInfo;
+    let nextRunName;
     if (restart) {
-      nextRunInfo = start();
+      nextRunName = start();
     }
-    const result = profiler.stop(runInfo.name, lineNumbers, runInfo.startTime);
-    if (nextRunInfo) {
-      runInfo = nextRunInfo;
+    const result = profiler.stop(runName, lineNumbers);
+    if (nextRunName) {
+      runName = nextRunName;
     }
     if (!restart) profiler.dispose();
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
