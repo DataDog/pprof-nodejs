@@ -44,8 +44,7 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
-  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile,
-                                     int64_t startTime);
+  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile);
 
  public:
   /**
@@ -66,8 +65,7 @@ class WallProfiler : public Nan::ObjectWrap {
                  bool includeLines,
                  bool withLabels);
   v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name,
-                                bool includeLines,
-                                int64_t startTime);
+                                bool includeLines);
 
   static NAN_METHOD(New);
   static NAN_METHOD(Dispose);
