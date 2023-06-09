@@ -111,8 +111,7 @@ function startInternal(
   let runName = start();
   return {
     stop: majorVersion < 16 ? stopOld : stop,
-    setLabels,
-    labelsCaptured,
+    setLabels
   };
 
   function start() {
@@ -151,9 +150,5 @@ function startInternal(
 
   function setLabels(labels?: LabelSet) {
     profiler.labels = labels;
-  }
-
-  function labelsCaptured() {
-    return profiler.labelsCaptured;
   }
 }
