@@ -27,12 +27,13 @@ class WallProfiler : public Nan::ObjectWrap {
 
   struct SampleContext {
     ValuePtr labels;
-    int64_t timestamp;
+    int64_t time_from;
+    int64_t time_to;
 
     // Needed to initialize ring buffer elements
     SampleContext() = default;
 
-    SampleContext(const ValuePtr& l, int64_t t) : labels(l), timestamp(t) {}
+    SampleContext(const ValuePtr& l, int64_t from, int64_t to) : labels(l), time_from(from), time_to(to) {}
   };
 
   RingBuffer<SampleContext> contexts;
@@ -60,7 +61,7 @@ class WallProfiler : public Nan::ObjectWrap {
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
   bool GetLabelsCaptured() { return std::exchange(labelsCaptured, false); }
 
-  int64_t PushContext();
+  void PushContext(int64_t time_from);
   void StartImpl(v8::Local<v8::String> name,
                  bool includeLines,
                  bool withLabels);
