@@ -4,9 +4,9 @@ namespace dd {
 template <class T>
 class RingBuffer {
  public:
-  explicit RingBuffer(size_t size)
-      : buffer(std::make_unique<T[]>(size)),
-        capacity_(size),
+  explicit RingBuffer(size_t capacity)
+      : buffer(std::make_unique<T[]>(capacity)),
+        capacity_(capacity),
         size_(0),
         back_index_(0),
         front_index_(0) {}
@@ -33,24 +33,6 @@ class RingBuffer {
     } else {
       buffer[back_index_] = std::forward<T2>(t);
       increment(back_index_);
-      ++size_;
-    }
-  }
-
-  template <typename T2>
-  void push_front(T2&& t) {
-    if (full()) {
-      if (empty()) {
-        return;
-      }
-      // overwrite buffer head
-      decrement(front_index_);
-      buffer[front_index_] = std::forward<T2>(t);
-      // move buffer head
-      back_index_ = front_index_;
-    } else {
-      decrement(front_index_);
-      buffer[front_index_] = std::forward<T2>(t);
       ++size_;
     }
   }
