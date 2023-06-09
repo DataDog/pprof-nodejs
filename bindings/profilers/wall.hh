@@ -23,7 +23,6 @@ class WallProfiler : public Nan::ObjectWrap {
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
   ValuePtr labels_;
-  bool labelsCaptured = false;
 
   struct SampleContext {
     ValuePtr labels;
@@ -59,7 +58,6 @@ class WallProfiler : public Nan::ObjectWrap {
 
   v8::Local<v8::Value> GetLabels(v8::Isolate*);
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
-  bool GetLabelsCaptured() { return std::exchange(labelsCaptured, false); }
 
   void PushContext(int64_t time_from);
   void StartImpl(v8::Local<v8::String> name,
@@ -75,7 +73,6 @@ class WallProfiler : public Nan::ObjectWrap {
   static NAN_MODULE_INIT(Init);
   static NAN_GETTER(GetLabels);
   static NAN_SETTER(SetLabels);
-  static NAN_GETTER(GetLabelsCaptured);
 };
 
 }  // namespace dd

@@ -572,10 +572,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    GetLabels,
                    SetLabels);
 
-  Nan::SetAccessor(tpl->InstanceTemplate(),
-                   Nan::New("labelsCaptured").ToLocalChecked(),
-                   GetLabelsCaptured);
-
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
@@ -624,19 +620,11 @@ NAN_SETTER(WallProfiler::SetLabels) {
   profiler->SetLabels(info.GetIsolate(), value);
 }
 
-NAN_GETTER(WallProfiler::GetLabelsCaptured) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-  info.GetReturnValue().Set(profiler->GetLabelsCaptured());
-}
-
 void WallProfiler::PushContext(int64_t time_from) {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
   contexts.push_back(SampleContext(labels_, time_from, v8::base::TimeTicks::Now()));
-  if (labels_) {
-    labelsCaptured = true;
-  }
 }
 
 }  // namespace dd
