@@ -304,13 +304,11 @@ bool isIdleSample(const CpuProfileNode* sample) {
 LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
   LabelSetsByNode labelSetsByNode;
 
-  if (contexts.empty() || profile->GetSamplesCount() == 0) {
+  auto sampleCount = profile->GetSamplesCount();
+  if (contexts.empty() || sampleCount == 0) {
     return labelSetsByNode;
   }
   auto isolate = Isolate::GetCurrent();
-  SampleContext sampleContext = contexts.pop_front();
-
-  auto sampleCount = profile->GetSamplesCount();
 
   for (int i = 0; i < sampleCount; i++) {
     auto sample = profile->GetSample(i);
@@ -324,12 +322,13 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
     // to it in time, and stop as soon as it sees a context that's too recent
     // for this sample.
     for (;;) {
+      auto& sampleContext = contexts.front();
       if (sampleContext.time_to < sampleTimestamp) {
         // Current sample context is too old, discard it and fetch the next one.
+        contexts.pop_front();
         if (contexts.empty()) {
           return labelSetsByNode;
         }
-        sampleContext = contexts.pop_front();
       } else if (sampleContext.time_from > sampleTimestamp) {
         // Current sample context is too recent, we'll try to match it to the
         // next sample.
@@ -349,17 +348,14 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
               array, array->Length(), sampleContext.labels.get()->Get(isolate));
         }
         // Sample context was consumed, fetch the next one
+        contexts.pop_front();
         if (contexts.empty()) {
           return labelSetsByNode;
         }
-        sampleContext = contexts.pop_front();
         break;  // don't match more than one context to one sample
       }
     }
   }
-  // Push the last popped sample context back into the ring to be used by the
-  // next profile
-  contexts.push_front(std::move(sampleContext));
   return labelSetsByNode;
 }
 
