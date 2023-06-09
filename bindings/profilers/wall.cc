@@ -56,6 +56,10 @@ static std::mutex update_profilers;
 static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
+  if (!old_handler) {
+    return;
+  }
+
   auto isolate = Isolate::GetCurrent();
   WallProfiler* prof = nullptr;
   auto prof_map = profilers.exchange(nullptr, std::memory_order_acq_rel);
@@ -66,11 +70,10 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
     }
     profilers.store(prof_map, std::memory_order_release);
   }
-  if (old_handler) {
-    old_handler(sig, info, context);
-  }
+  auto now = v8::base::TimeTicks::Now();
+  old_handler(sig, info, context);
   if (prof) {
-    prof->PushContext();
+    prof->PushContext(now);
   }
 }
 #endif
@@ -308,13 +311,6 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
   SampleContext sampleContext = contexts.pop_front();
 
   auto sampleCount = profile->GetSamplesCount();
-  auto halfInterval =
-      (sampleCount > 1 ? (profile->GetSampleTimestamp(sampleCount - 1) -
-                          profile->GetSampleTimestamp(0)) /
-                             (sampleCount - 1)
-                       : samplingInterval) /
-      2;
-
 
   for (int i = 0; i < sampleCount; i++) {
     auto sample = profile->GetSample(i);
@@ -322,27 +318,21 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
       continue;
     }
     auto sampleTimestamp = profile->GetSampleTimestamp(i);
-    auto latest =
-        (i < sampleCount - 1
-                    ? (sampleTimestamp + profile->GetSampleTimestamp(i + 1)) / 2
-                    : (sampleTimestamp + halfInterval));
 
     // This loop will drop all contexts that are too old to be associated with
     // the current sample; associate those (normally one) that are close enough
     // to it in time, and stop as soon as it sees a context that's too recent
     // for this sample.
     for (;;) {
-      auto contextTimestamp = sampleContext.timestamp;
-      if (contextTimestamp < sampleTimestamp) {
-        // Current sample context is too old (closer to the previous sample than
-        // to this one), discard it and fetch the next one.
+      if (sampleContext.time_to < sampleTimestamp) {
+        // Current sample context is too old, discard it and fetch the next one.
         if (contexts.empty()) {
           return labelSetsByNode;
         }
         sampleContext = contexts.pop_front();
-      } else if (contextTimestamp >= latest) {
-        // Current sample context is too recent (closer to the next sample than
-        // to this one), we'll try to match it to the next sample.
+      } else if (sampleContext.time_from > sampleTimestamp) {
+        // Current sample context is too recent, we'll try to match it to the
+        // next sample.
         break;
       } else {
         // This sample context is the closest to this sample.
@@ -504,10 +494,11 @@ NAN_METHOD(WallProfiler::Start) {
   bool withLabels =
       Nan::MaybeLocal<Boolean>(info[2].As<Boolean>()).ToLocalChecked()->Value();
 
+  auto now = v8::base::TimeTicks::Now();
   wallProfiler->StartImpl(name, includeLines, withLabels);
 #ifdef DD_WALL_USE_SIGPROF
   if (withLabels) {
-    wallProfiler->PushContext();
+    wallProfiler->PushContext(now);
     struct sigaction sa, old_sa;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sa.sa_sigaction = &sighandler;
@@ -638,16 +629,14 @@ NAN_GETTER(WallProfiler::GetLabelsCaptured) {
   info.GetReturnValue().Set(profiler->GetLabelsCaptured());
 }
 
-int64_t WallProfiler::PushContext() {
+void WallProfiler::PushContext(int64_t time_from) {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
-  int64_t now = v8::base::TimeTicks::Now();
-  contexts.push_back(SampleContext(labels_, now));
+  contexts.push_back(SampleContext(labels_, time_from, v8::base::TimeTicks::Now()));
   if (labels_) {
     labelsCaptured = true;
   }
-  return now;
 }
 
 }  // namespace dd
