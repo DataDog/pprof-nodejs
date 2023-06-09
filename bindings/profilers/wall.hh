@@ -22,7 +22,12 @@ class WallProfiler : public Nan::ObjectWrap {
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
-  ValuePtr labels_;
+
+  // We're using a pair of shared pointers and an atomic pointer-to-current as
+  // a way to ensure signal safety on update.
+  ValuePtr labels1;
+  ValuePtr labels2;
+  std::atomic<ValuePtr*> curLabels;
 
   struct SampleContext {
     ValuePtr labels;

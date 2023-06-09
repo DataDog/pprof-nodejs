@@ -365,7 +365,9 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
 
 WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
     : samplingInterval(intervalMicros),
-      contexts(durationMicros * 2 / intervalMicros) {}
+      contexts(durationMicros * 2 / intervalMicros) {
+  curLabels.store(&labels1, std::memory_order_relaxed);
+}
 
 WallProfiler::~WallProfiler() {
   Dispose(nullptr);
@@ -598,16 +600,22 @@ v8::CpuProfiler* WallProfiler::GetProfiler() {
 }
 
 v8::Local<v8::Value> WallProfiler::GetLabels(Isolate* isolate) {
-  if (!labels_) return v8::Undefined(isolate);
-  return labels_->Get(isolate);
+  auto labels = *curLabels.load(std::memory_order_relaxed);
+  if (!labels) return v8::Undefined(isolate);
+  return labels->Get(isolate);
 }
 
 void WallProfiler::SetLabels(Isolate* isolate, Local<Value> value) {
+  auto newCurLabels = curLabels.load(std::memory_order_relaxed) == &labels1
+                          ? &labels2
+                          : &labels1;
   if (value->BooleanValue(isolate)) {
-    labels_ = std::make_shared<Global<Value>>(isolate, value);
+    *newCurLabels = std::make_shared<Global<Value>>(isolate, value);
   } else {
-    labels_.reset();
+    newCurLabels->reset();
   }
+  std::atomic_signal_fence(std::memory_order_release);
+  curLabels.store(newCurLabels, std::memory_order_relaxed);
 }
 
 NAN_GETTER(WallProfiler::GetLabels) {
@@ -624,7 +632,9 @@ void WallProfiler::PushContext(int64_t time_from) {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations). Our
   // ring buffer avoids allocations.
-  contexts.push_back(SampleContext(labels_, time_from, v8::base::TimeTicks::Now()));
+  auto labels = curLabels.load(std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_acquire);
+  contexts.push_back(SampleContext(*labels, time_from, v8::base::TimeTicks::Now()));
 }
 
 }  // namespace dd
