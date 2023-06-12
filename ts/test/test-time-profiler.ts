@@ -128,7 +128,7 @@ describe('Time Profiler', () => {
         }
 
         function labelStr(label: Label) {
-          return label ? stringTable.strings[idx(label.str) + 1] : "undefined";
+          return label ? stringTable.strings[idx(label.str) + 1] : 'undefined';
         }
 
         let fn0ObservedWithLabel0 = false;
@@ -202,9 +202,8 @@ describe('Time Profiler', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
     const timeProfilerStub = {
-      start: sinon.stub().returns(BigInt(0)),
+      start: sinon.stub(),
       stop: sinon.stub().returns(v8TimeProfile),
-      dispose: sinon.stub(),
     };
 
     before(() => {
@@ -238,27 +237,19 @@ describe('Time Profiler', () => {
       const stop = time.start(PROFILE_OPTIONS.intervalMicros);
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stop.resetHistory();
-      timeProfilerStub.dispose.resetHistory();
 
       assert.deepEqual(timeProfile, stop(true));
 
-      sinon.assert.calledOnce(timeProfilerStub.start);
+      sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
-      if (majorVersion >= 16) {
-        sinon.assert.notCalled(timeProfilerStub.dispose);
-      } else {
-        sinon.assert.calledOnce(timeProfilerStub.dispose);
-      }
 
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stop.resetHistory();
-      timeProfilerStub.dispose.resetHistory();
 
       assert.deepEqual(timeProfile, stop());
 
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
-      sinon.assert.calledOnce(timeProfilerStub.dispose);
     });
   });
 });

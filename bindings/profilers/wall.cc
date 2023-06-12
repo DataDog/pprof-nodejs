@@ -61,19 +61,17 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
   }
 
   auto isolate = Isolate::GetCurrent();
-  WallProfiler* prof = nullptr;
   auto prof_map = profilers.exchange(nullptr, std::memory_order_acq_rel);
   if (prof_map) {
+    WallProfiler* prof = nullptr;
     auto prof_it = prof_map->find(isolate);
     if (prof_it != prof_map->end()) {
       prof = prof_it->second;
     }
     profilers.store(prof_map, std::memory_order_release);
-  }
-  auto now = v8::base::TimeTicks::Now();
-  old_handler(sig, info, context);
-  if (prof) {
-    prof->PushContext(now);
+    if (prof) {
+      prof->DoSignalHandler(sig, info, context);
+    }
   }
 }
 #endif
@@ -301,7 +299,8 @@ bool isIdleSample(const CpuProfileNode* sample) {
       strncmp("(idle)", sample->GetFunctionNameStr(), 7) == 0;
 }
 
-LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
+LabelSetsByNode WallProfiler::GetLabelSetsByNode(
+    CpuProfile* profile, RingBuffer<SampleContext>& contexts) {
   LabelSetsByNode labelSetsByNode;
 
   auto sampleCount = profile->GetSamplesCount();
@@ -356,13 +355,23 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile) {
       }
     }
   }
+  while (!contexts.empty()) {
+    contexts.pop_front();
+  }
   return labelSetsByNode;
 }
 
-WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
+WallProfiler::WallProfiler(int intervalMicros,
+                           int durationMicros,
+                           bool includeLines_,
+                           bool withLabels_)
     : samplingInterval(intervalMicros),
-      contexts(durationMicros * 2 / intervalMicros) {
+      includeLines(includeLines_),
+      withLabels(withLabels_),
+      session1(durationMicros * 2 / intervalMicros),
+      session2(durationMicros * 2 / intervalMicros) {
   curLabels.store(&labels1, std::memory_order_relaxed);
+  currentSession.store(nullptr, std::memory_order_relaxed);
 }
 
 WallProfiler::~WallProfiler() {
@@ -416,16 +425,9 @@ void WallProfiler::Dispose(Isolate* isolate) {
   }
 }
 
-NAN_METHOD(WallProfiler::Dispose) {
-  WallProfiler* wallProfiler =
-      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-
-  wallProfiler->Dispose(info.GetIsolate());
-}
-
 NAN_METHOD(WallProfiler::New) {
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("WallProfiler must have two arguments.");
+  if (info.Length() != 4) {
+    return Nan::ThrowTypeError("WallProfiler must have four arguments.");
   }
   if (!info[0]->IsNumber()) {
     return Nan::ThrowTypeError("Sample rate must be a number.");
@@ -433,6 +435,14 @@ NAN_METHOD(WallProfiler::New) {
 
   if (!info[1]->IsNumber()) {
     return Nan::ThrowTypeError("Duration must be a number.");
+  }
+
+  if (!info[2]->IsBoolean()) {
+    return Nan::ThrowTypeError("includeLines must be a boolean.");
+  }
+
+  if (!info[3]->IsBoolean()) {
+    return Nan::ThrowTypeError("withLabels must be a boolean.");
   }
 
   if (info.IsConstructCall()) {
@@ -453,12 +463,21 @@ NAN_METHOD(WallProfiler::New) {
       return Nan::ThrowTypeError("Duration must not be less than sample rate.");
     }
 
-    WallProfiler* obj = new WallProfiler(interval, duration);
+    bool includeLines = Nan::MaybeLocal<Boolean>(info[2].As<Boolean>())
+                            .ToLocalChecked()
+                            ->Value();
+
+    bool withLabels = Nan::MaybeLocal<Boolean>(info[3].As<Boolean>())
+                          .ToLocalChecked()
+                          ->Value();
+
+    WallProfiler* obj =
+        new WallProfiler(interval, duration, includeLines, withLabels);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
-    const int argc = 2;
-    v8::Local<v8::Value> argv[argc] = {info[0], info[1]};
+    const int argc = 4;
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
     v8::Local<v8::Function> cons = Nan::New(
         PerIsolateData::For(info.GetIsolate())->WallProfilerConstructor());
     info.GetReturnValue().Set(
@@ -470,93 +489,110 @@ NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  if (info.Length() != 3) {
-    return Nan::ThrowTypeError("Start must have three arguments.");
-  }
-  if (!info[0]->IsString()) {
-    return Nan::ThrowTypeError("Profile name must be a string.");
-  }
-  if (!info[1]->IsBoolean()) {
-    return Nan::ThrowTypeError("Include lines flag must be a boolean.");
-  }
-  if (!info[2]->IsBoolean()) {
-    return Nan::ThrowTypeError("With labels flag must be a boolean.");
+  if (info.Length() != 0) {
+    return Nan::ThrowTypeError("Start must have no arguments.");
   }
 
-  Local<String> name =
-      Nan::MaybeLocal<String>(info[0].As<String>()).ToLocalChecked();
-
-  bool includeLines =
-      Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
-
-  bool withLabels =
-      Nan::MaybeLocal<Boolean>(info[2].As<Boolean>()).ToLocalChecked()->Value();
-
-  auto now = v8::base::TimeTicks::Now();
-  wallProfiler->StartImpl(name, includeLines, withLabels);
-#ifdef DD_WALL_USE_SIGPROF
-  if (withLabels) {
-    wallProfiler->PushContext(now);
-    struct sigaction sa, old_sa;
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    sa.sa_sigaction = &sighandler;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGPROF, &sa, &old_sa);
-
-    // At the end of a cycle start is called before stop,
-    // at this point old_sa.sa_sigaction is sighandler !
-    if (!old_handler) {
-      old_handler = old_sa.sa_sigaction;
-    }
-  }
-#endif
-}
-
-void WallProfiler::StartImpl(Local<String> name,
-                             bool includeLines,
-                             bool withLabels) {
-  if (includeLines) {
-    GetProfiler()->StartProfiling(
-        name, CpuProfilingMode::kCallerLineNumbers, withLabels);
-  } else {
-    GetProfiler()->StartProfiling(name, withLabels);
-  }
+  return wallProfiler->StartStop(true, false, info);
 }
 
 NAN_METHOD(WallProfiler::Stop) {
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("Stop must have two arguments.");
+  if (info.Length() != 1) {
+    return Nan::ThrowTypeError("Stop must have one arguments.");
   }
-  if (!info[0]->IsString()) {
-    return Nan::ThrowTypeError("Profile name must be a string.");
+  if (!info[0]->IsBoolean()) {
+    return Nan::ThrowTypeError("restart must be a boolean.");
   }
-  if (!info[1]->IsBoolean()) {
-    return Nan::ThrowTypeError("Include lines must be a boolean.");
-  }
-
-  Local<String> name =
-      Nan::MaybeLocal<String>(info[0].As<String>()).ToLocalChecked();
-
-  bool includeLines =
-      Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
+  bool restart =
+      Nan::MaybeLocal<Boolean>(info[0].As<Boolean>()).ToLocalChecked()->Value();
 
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  auto profile = wallProfiler->StopImpl(name, includeLines);
-
-  info.GetReturnValue().Set(profile);
+  wallProfiler->StartStop(restart, true, info);
+  if (!restart) {
+    wallProfiler->Dispose(info.GetIsolate());
+  }
 }
 
-Local<Value> WallProfiler::StopImpl(Local<String> name,
-                                    bool includeLines) {
-  auto profiler = GetProfiler();
-  auto v8_profile = profiler->StopProfiling(name);
-  Local<Value> profile =
-      ProfileTranslator(GetLabelSetsByNode(v8_profile))
-          .TranslateTimeProfile(v8_profile, includeLines);
-  v8_profile->Delete();
-  return profile;
+Nan::NAN_METHOD_RETURN_TYPE WallProfiler::StartStop(
+    bool start, bool stop, Nan::NAN_METHOD_ARGS_TYPE info) {
+  auto prevSession =
+      currentSession.exchange(nullptr, std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_release);
+
+  if (start && !stop && prevSession) {
+    currentSession.store(prevSession, std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_release);
+    return Nan::ThrowError("Start called with already started profiling "
+                           "session. Call stop first.");
+  }
+
+  if (stop && !prevSession) {
+    return Nan::ThrowError(
+        "Stop called without started profiling session. Call start first.");
+  }
+
+  ProfilingSession* nextSession = nullptr;
+  if (start) {
+    nextSession = prevSession == &session2 ? &session1 : &session2;
+
+    auto now = v8::base::TimeTicks::Now();
+    auto nameLocal = Nan::New<String>(std::to_string(now)).ToLocalChecked();
+    nextSession->name.Reset(info.GetIsolate(), nameLocal);
+    CpuProfilingMode mode = includeLines
+                                ? CpuProfilingMode::kCallerLineNumbers
+                                : CpuProfilingMode::kLeafNodeLineNumbers;
+    auto status = GetProfiler()->StartProfiling(nameLocal, mode, withLabels);
+    switch (status) {
+      case CpuProfilingStatus::kStarted:
+        break;
+      case CpuProfilingStatus::kAlreadyStarted:
+        return Nan::ThrowError("Failed to start V8 profiler; already started");
+      case CpuProfilingStatus::kErrorTooManyProfilers:
+        return Nan::ThrowError(
+            "Failed to start V8 profiler; too many profilers");
+      default:
+        return Nan::ThrowError("Failed to start V8 profiler; unknown error");
+    }
+
+#ifdef DD_WALL_USE_SIGPROF
+    if (withLabels) {
+      auto labels = curLabels.load(std::memory_order_relaxed);
+      nextSession->contexts.push_back(
+          SampleContext(*labels, now, v8::base::TimeTicks::Now()));
+
+      struct sigaction sa, old_sa;
+      sa.sa_flags = SA_SIGINFO | SA_RESTART;
+      sa.sa_sigaction = &sighandler;
+      sigemptyset(&sa.sa_mask);
+      sigaction(SIGPROF, &sa, &old_sa);
+
+      if (!old_handler) {
+        old_handler = old_sa.sa_sigaction;
+      }
+    }
+#endif
+  }
+
+  CpuProfile* v8_profile = nullptr;
+
+  if (stop) {
+    v8_profile =
+        GetProfiler()->StopProfiling(prevSession->name.Get(info.GetIsolate()));
+    prevSession->name.Reset();
+  }
+
+  currentSession.store(nextSession, std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_release);
+
+  if (v8_profile) {
+    Local<Value> profile =
+        ProfileTranslator(GetLabelSetsByNode(v8_profile, prevSession->contexts))
+            .TranslateTimeProfile(v8_profile, includeLines);
+    v8_profile->Delete();
+    info.GetReturnValue().Set(profile);
+  }
 }
 
 NAN_MODULE_INIT(WallProfiler::Init) {
@@ -571,7 +607,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    SetLabels);
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
-  Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
 
   PerIsolateData::For(Isolate::GetCurrent())
@@ -624,13 +659,17 @@ NAN_SETTER(WallProfiler::SetLabels) {
   profiler->SetLabels(info.GetIsolate(), value);
 }
 
-void WallProfiler::PushContext(int64_t time_from) {
-  // Be careful this is called in a signal handler context therefore all
-  // operations must be async signal safe (in particular no allocations). Our
-  // ring buffer avoids allocations.
-  auto labels = curLabels.load(std::memory_order_relaxed);
+void WallProfiler::DoSignalHandler(int sig, siginfo_t* info, void* context) {
+  auto currSession = currentSession.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
-  contexts.push_back(SampleContext(*labels, time_from, v8::base::TimeTicks::Now()));
+  if (currSession) {
+    auto labels = curLabels.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
+    auto start = v8::base::TimeTicks::Now();
+    old_handler(sig, info, context);
+    currSession->contexts.push_back(
+        SampleContext(*labels, start, v8::base::TimeTicks::Now()));
+  }
 }
 
 }  // namespace dd

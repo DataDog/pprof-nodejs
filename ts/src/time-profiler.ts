@@ -35,7 +35,6 @@ export interface TimeProfilerOptions {
   /** average time in microseconds between samples */
   intervalMicros?: Microseconds;
   sourceMapper?: SourceMapper;
-  name?: string;
 
   /**
    * This configuration option is experimental.
@@ -49,7 +48,6 @@ export interface TimeProfilerOptions {
 export async function profile(options: TimeProfilerOptions) {
   const stop = start(
     options.intervalMicros || DEFAULT_INTERVAL_MICROS,
-    options.name,
     options.sourceMapper,
     options.lineNumbers
   );
@@ -57,14 +55,9 @@ export async function profile(options: TimeProfilerOptions) {
   return stop();
 }
 
-function ensureRunName(name?: string) {
-  return name || `pprof-${Date.now()}-${Math.random()}`;
-}
-
 // Temporarily retained for backwards compatibility with older tracer
 export function start(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
-  name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
@@ -73,7 +66,6 @@ export function start(
     // Duration must be at least intervalMicros; not used anyway when
     // not collecting extra info (CPU time, labels) with samples.
     intervalMicros,
-    name,
     sourceMapper,
     lineNumbers,
     false
@@ -84,14 +76,12 @@ export function start(
 export function startWithLabels(
   intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
   durationMicros: Microseconds = DEFAULT_DURATION_MICROS,
-  name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers = true
 ) {
   return startInternal(
     intervalMicros,
     durationMicros,
-    name,
     sourceMapper,
     lineNumbers,
     true
@@ -102,49 +92,40 @@ export function startWithLabels(
 function startInternal(
   intervalMicros: Microseconds,
   durationMicros: Microseconds,
-  name?: string,
   sourceMapper?: SourceMapper,
   lineNumbers?: boolean,
   withLabels?: boolean
 ) {
-  const profiler = new TimeProfiler(intervalMicros, durationMicros);
-  let runName = start();
+  const profiler = new TimeProfiler(
+    intervalMicros,
+    durationMicros,
+    !!lineNumbers,
+    !!withLabels
+  );
+  start();
+
   return {
     stop: majorVersion < 16 ? stopOld : stop,
-    setLabels
+    setLabels,
   };
 
   function start() {
-    const runName = ensureRunName(name);
-    profiler.start(runName, lineNumbers, withLabels);
-    return runName;
+    profiler.start();
   }
 
   // Node.js versions prior to v16 leak memory if not disposed and recreated
   // between each profile. As disposing deletes current profile data too,
   // we must stop then dispose then start.
   function stopOld(restart = false) {
-    const result = profiler.stop(runName, lineNumbers);
-    profiler.dispose();
+    const result = profiler.stop(false);
     if (restart) {
-      runName = start();
+      start();
     }
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
   }
 
-  // For Node.js v16+, we want to start the next profile before we stop the
-  // current one as otherwise the active profile count could reach zero which
-  // means V8 might tear down the symbolizer thread and need to start it again.
   function stop(restart = false) {
-    let nextRunName;
-    if (restart) {
-      nextRunName = start();
-    }
-    const result = profiler.stop(runName, lineNumbers);
-    if (nextRunName) {
-      runName = nextRunName;
-    }
-    if (!restart) profiler.dispose();
+    const result = profiler.stop(restart);
     return serializeTimeProfile(result, intervalMicros, sourceMapper, true);
   }
 

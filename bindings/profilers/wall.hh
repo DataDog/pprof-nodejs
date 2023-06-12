@@ -18,6 +18,8 @@ using ValuePtr = std::shared_ptr<v8::Global<v8::Value>>;
 class WallProfiler : public Nan::ObjectWrap {
  private:
   int samplingInterval = 0;
+  bool includeLines;
+  bool withLabels;
   v8::CpuProfiler* cpuProfiler = nullptr;
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
@@ -37,10 +39,21 @@ class WallProfiler : public Nan::ObjectWrap {
     // Needed to initialize ring buffer elements
     SampleContext() = default;
 
-    SampleContext(const ValuePtr& l, int64_t from, int64_t to) : labels(l), time_from(from), time_to(to) {}
+    SampleContext(const ValuePtr& l, int64_t from, int64_t to)
+        : labels(l), time_from(from), time_to(to) {}
   };
 
-  RingBuffer<SampleContext> contexts;
+  struct ProfilingSession {
+    ProfilingSession(int contextsCapacity) : contexts(contextsCapacity) {}
+
+    // TODO: once minumum is Node 18, start using v8::ProfileId instead
+    v8::Global<v8::String> name;
+    RingBuffer<SampleContext> contexts;
+  };
+
+  ProfilingSession session1;
+  ProfilingSession session2;
+  std::atomic<ProfilingSession*> currentSession;
 
   ~WallProfiler();
   void Dispose(v8::Isolate* isolate);
@@ -49,7 +62,8 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
-  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile);
+  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile,
+                                     RingBuffer<SampleContext>& contexts);
 
  public:
   /**
@@ -59,20 +73,20 @@ class WallProfiler : public Nan::ObjectWrap {
    * every period. The parameter is used to preallocate data structures that
    * should not be reallocated in async signal safe code.
    */
-  explicit WallProfiler(int intervalMicros, int durationMicros);
+  explicit WallProfiler(int intervalMicros,
+                        int durationMicros,
+                        bool includeLines,
+                        bool withLabels);
 
   v8::Local<v8::Value> GetLabels(v8::Isolate*);
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
 
-  void PushContext(int64_t time_from);
-  void StartImpl(v8::Local<v8::String> name,
-                 bool includeLines,
-                 bool withLabels);
-  v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name,
-                                bool includeLines);
+  void DoSignalHandler(int sig, siginfo_t* info, void* context);
+  Nan::NAN_METHOD_RETURN_TYPE StartStop(bool start,
+                                        bool stop,
+                                        Nan::NAN_METHOD_ARGS_TYPE info);
 
   static NAN_METHOD(New);
-  static NAN_METHOD(Dispose);
   static NAN_METHOD(Start);
   static NAN_METHOD(Stop);
   static NAN_MODULE_INIT(Init);
