@@ -60,6 +60,7 @@ describe('Time Profiler', () => {
       const repeats = 1000;
       for (let i = 0; i < repeats; ++i) {
         loop();
+        console.log(`Validating profile#${i}`)
         validateProfile(time.stop(i < repeats - 1));
       }
 

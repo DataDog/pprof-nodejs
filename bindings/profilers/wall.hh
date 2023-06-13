@@ -40,7 +40,6 @@ class WallProfiler : public Nan::ObjectWrap {
   bool started_ = false;
 
   struct SampleContext {
-    bool started_;
     ValuePtr labels;
     int64_t time_from;
     int64_t time_to;
