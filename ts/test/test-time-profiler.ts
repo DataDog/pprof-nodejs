@@ -57,7 +57,7 @@ describe('Time Profiler', () => {
       );
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
-      const repeats = 3;
+      const repeats = 1000;
       for (let i = 0; i < repeats; ++i) {
         loop();
         validateProfile(time.stop(i < repeats - 1));
