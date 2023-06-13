@@ -48,16 +48,19 @@ describe('Time Profiler', () => {
 
     it('should assign labels', () => {
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
-      const {stop, setLabels} = time.startWithLabels(
+      time.start(
         PROFILE_OPTIONS.intervalMicros,
-        PROFILE_OPTIONS.durationMillis * 1000
+        PROFILE_OPTIONS.durationMillis * 1000,
+        undefined,
+        false,
+        true
       );
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
       const repeats = 3;
       for (let i = 0; i < repeats; ++i) {
         loop();
-        validateProfile(stop(i < repeats - 1));
+        validateProfile(time.stop(i < repeats - 1));
       }
 
       // Each of fn0, fn1, fn2 loops busily for one or two profiling intervals.
@@ -72,7 +75,7 @@ describe('Time Profiler', () => {
       function fn0() {
         const start = hrtime.bigint();
         while (hrtime.bigint() - start < intervalNanos);
-        setLabels(undefined);
+        time.setLabels(undefined);
       }
 
       function fn1() {
@@ -91,11 +94,11 @@ describe('Time Profiler', () => {
         const durationNanos = PROFILE_OPTIONS.durationMillis * 1_000_000;
         const start = hrtime.bigint();
         while (hrtime.bigint() - start < durationNanos) {
-          setLabels(label0);
+          time.setLabels(label0);
           fn0();
-          setLabels(label1);
+          time.setLabels(label1);
           fn1();
-          setLabels(undefined);
+          time.setLabels(undefined);
           fn2();
         }
       }
@@ -204,7 +207,6 @@ describe('Time Profiler', () => {
     const timeProfilerStub = {
       start: sinon.stub().returns(BigInt(0)),
       stop: sinon.stub().returns(v8TimeProfile),
-      dispose: sinon.stub(),
     };
 
     before(() => {
@@ -223,7 +225,7 @@ describe('Time Profiler', () => {
     it('should profile during duration and finish profiling after duration', async () => {
       let isProfiling = true;
       time.profile(PROFILE_OPTIONS).then(() => {
-        isProfiling = false;
+          isProfiling = false;
       });
       await delay(2 * PROFILE_OPTIONS.durationMillis);
       assert.strictEqual(false, isProfiling, 'profiler is still running');
@@ -232,33 +234,6 @@ describe('Time Profiler', () => {
     it('should return a profile equal to the expected profile', async () => {
       const profile = await time.profile(PROFILE_OPTIONS);
       assert.deepEqual(timeProfile, profile);
-    });
-
-    it('should be able to restart when stopping', async () => {
-      const stop = time.start(PROFILE_OPTIONS.intervalMicros);
-      timeProfilerStub.start.resetHistory();
-      timeProfilerStub.stop.resetHistory();
-      timeProfilerStub.dispose.resetHistory();
-
-      assert.deepEqual(timeProfile, stop(true));
-
-      sinon.assert.calledOnce(timeProfilerStub.start);
-      sinon.assert.calledOnce(timeProfilerStub.stop);
-      if (majorVersion >= 16) {
-        sinon.assert.notCalled(timeProfilerStub.dispose);
-      } else {
-        sinon.assert.calledOnce(timeProfilerStub.dispose);
-      }
-
-      timeProfilerStub.start.resetHistory();
-      timeProfilerStub.stop.resetHistory();
-      timeProfilerStub.dispose.resetHistory();
-
-      assert.deepEqual(timeProfile, stop());
-
-      sinon.assert.notCalled(timeProfilerStub.start);
-      sinon.assert.calledOnce(timeProfilerStub.stop);
-      sinon.assert.calledOnce(timeProfilerStub.dispose);
     });
   });
 });

@@ -29,7 +29,8 @@ export const CpuProfiler = cpuProfiler;
 export const time = {
   profile: timeProfiler.profile,
   start: timeProfiler.start,
-  startWithLabels: timeProfiler.startWithLabels,
+  stop: timeProfiler.stop,
+  setLabels: timeProfiler.setLabels,
 };
 
 export const heap = {
@@ -44,11 +45,11 @@ export const heap = {
 
 // If loaded with --require, start profiling.
 if (module.parent && module.parent.id === 'internal/preload') {
-  const stop = time.start();
+  time.start();
   process.on('exit', () => {
     // The process is going to terminate imminently. All work here needs to
     // be synchronous.
-    const profile = stop();
+    const profile = time.stop();
     const buffer = encodeSync(profile);
     writeFileSync(`pprof-profile-${process.pid}.pb.gz`, buffer);
   });

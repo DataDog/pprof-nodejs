@@ -10,13 +10,18 @@
 
 namespace dd {
 
-using LabelSetsByNode =
-    std::unordered_map<const v8::CpuProfileNode*, v8::Local<v8::Array>>;
+struct NodeInfo {
+   v8::Local<v8::Array> labelSets;
+   int64_t hitcount;
+};
 
-using ValuePtr = std::shared_ptr<v8::Global<v8::Value>>;
+using LabelSetsByNode =
+    std::unordered_map<const v8::CpuProfileNode*, NodeInfo>;
 
 class WallProfiler : public Nan::ObjectWrap {
  private:
+  using ValuePtr = std::shared_ptr<v8::Global<v8::Value>>;
+
   int samplingInterval = 0;
   v8::CpuProfiler* cpuProfiler = nullptr;
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
@@ -28,8 +33,14 @@ class WallProfiler : public Nan::ObjectWrap {
   ValuePtr labels1;
   ValuePtr labels2;
   std::atomic<ValuePtr*> curLabels = &labels1;
+  std::atomic<bool> collectSamples_ = true;
+  v8::ProfilerId profilerId_;
+  bool includeLines_;
+  bool withLabels_ = false;
+  bool started_ = false;
 
   struct SampleContext {
+    bool started_;
     ValuePtr labels;
     int64_t time_from;
     int64_t time_to;
@@ -37,10 +48,12 @@ class WallProfiler : public Nan::ObjectWrap {
     // Needed to initialize ring buffer elements
     SampleContext() = default;
 
-    SampleContext(const ValuePtr& l, int64_t from, int64_t to) : labels(l), time_from(from), time_to(to) {}
+    SampleContext(const ValuePtr& l, int64_t from, int64_t to)
+        : labels(l), time_from(from), time_to(to) {}
   };
 
-  RingBuffer<SampleContext> contexts;
+  using ContextBuffer = RingBuffer<SampleContext>;
+  ContextBuffer contexts_;
 
   ~WallProfiler();
   void Dispose(v8::Isolate* isolate);
@@ -49,7 +62,8 @@ class WallProfiler : public Nan::ObjectWrap {
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
   v8::CpuProfiler* GetProfiler();
 
-  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile);
+  LabelSetsByNode GetLabelSetsByNode(v8::CpuProfile* profile,
+                                     ContextBuffer& contexts);
 
  public:
   /**
@@ -65,11 +79,14 @@ class WallProfiler : public Nan::ObjectWrap {
   void SetLabels(v8::Isolate*, v8::Local<v8::Value>);
 
   void PushContext(int64_t time_from);
-  void StartImpl(v8::Local<v8::String> name,
-                 bool includeLines,
-                 bool withLabels);
-  v8::Local<v8::Value> StopImpl(v8::Local<v8::String> name,
-                                bool includeLines);
+  void StartImpl(bool includeLines, bool withLabels);
+  v8::ProfilerId StartInternal();
+  v8::Local<v8::Value> StopImpl(bool restart);
+  v8::Local<v8::Value> StopImplOld(bool restart);
+
+  bool collectSampleAllowed() const {
+    return collectSamples_.load(std::memory_order_relaxed);
+  }
 
   static NAN_METHOD(New);
   static NAN_METHOD(Dispose);

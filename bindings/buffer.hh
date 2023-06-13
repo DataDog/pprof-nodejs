@@ -11,6 +11,7 @@ class RingBuffer {
         back_index_(0),
         front_index_(0) {}
 
+  size_t capacity() const { return capacity_; }
   bool full() const { return size_ == capacity_; }
   bool empty() const { return size_ == 0; }
   size_t size() const { return size_; }
