@@ -390,8 +390,9 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
       // std::string labels;
       // if (sampleContext.labels) {
       //   auto val = sampleContext.labels.get()->Get(isolate);
-      //   auto obj = Nan::MaybeLocal<Object>(val.As<Object>()).ToLocalChecked();
-      //   auto label = Nan::Get(obj, labelKey)
+      //   auto obj =
+      //   Nan::MaybeLocal<Object>(val.As<Object>()).ToLocalChecked(); auto
+      //   label = Nan::Get(obj, labelKey)
       //                    .ToLocalChecked()
       //                    ->ToString(isolate->GetCurrentContext())
       //                    .ToLocalChecked();
@@ -447,7 +448,9 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
 
 WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
     : samplingInterval(intervalMicros),
-      contexts_(durationMicros * 2 / intervalMicros) {}
+      contexts_(durationMicros * 2 / intervalMicros) {
+  curLabels.store(&labels1, std::memory_order_relaxed);
+}
 
 WallProfiler::~WallProfiler() {
   Dispose(nullptr);
@@ -594,18 +597,24 @@ void WallProfiler::StartImpl(bool includeLines, bool withLabels) {
   }
   includeLines_ = includeLines;
   withLabels_ = withLabels;
-
-  profilerId_ = StartInternal();
+  collectSamples_.store(true, std::memory_order_relaxed);
+  profileIdx_ = 0;
+  profileId_ = StartInternal();
   started_ = true;
 }
 
-v8::ProfilerId WallProfiler::StartInternal() {
-  return GetProfiler()
-      ->Start(v8::CpuProfilingOptions{
+std::string WallProfiler::StartInternal() {
+  char buf[128];
+  snprintf(buf, sizeof(buf), "pprof-%lld", profileIdx_++);
+  v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
+  auto status = GetProfiler()->StartProfiling(
+      title,
+      v8::CpuProfilingOptions{
           includeLines_ ? CpuProfilingMode::kCallerLineNumbers
                         : CpuProfilingMode::kLeafNodeLineNumbers,
-          withLabels_ ? v8::CpuProfilingOptions::kNoSampleLimit : 0})
-      .id;
+          withLabels_ ? v8::CpuProfilingOptions::kNoSampleLimit : 0});
+  // printf("StartProfiler %s: status=%d\n", buf, status);
+  return buf;
 }
 
 NAN_METHOD(WallProfiler::Stop) {
@@ -632,25 +641,29 @@ NAN_METHOD(WallProfiler::Stop) {
 }
 
 Local<Value> WallProfiler::StopImpl(bool restart) {
-  auto oldProfilerId = profilerId_;
+  auto oldProfileId = profileId_;
   collectSamples_.store(false, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
 
   // make sure timestamp changes to avoid having samples from previous profile
   auto now = v8::base::TimeTicks::Now();
-  while (v8::base::TimeTicks::Now() == now) {}
+  while (v8::base::TimeTicks::Now() == now) {
+  }
 
   if (restart) {
-    profilerId_ = StartInternal();
+    profileId_ = StartInternal();
   }
-  auto v8_profile = GetProfiler()->Stop(oldProfilerId);
+  auto v8_profile = GetProfiler()->StopProfiling(
+      Nan::New<String>(oldProfileId).ToLocalChecked());
 
   ContextBuffer contexts{contexts_.capacity()};
   std::swap(contexts, contexts_);
 
-  // make sure timestamp changes to avoid mixing start sample and a sample from signal handler
+  // make sure timestamp changes to avoid mixing start sample and a sample from
+  // signal handler
   now = v8::base::TimeTicks::Now();
-  while (v8::base::TimeTicks::Now() == now) {}
+  while (v8::base::TimeTicks::Now() == now) {
+  }
 
   collectSamples_.store(true, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
@@ -669,14 +682,15 @@ Local<Value> WallProfiler::StopImpl(bool restart) {
 }
 
 Local<Value> WallProfiler::StopImplOld(bool restart) {
-  auto v8_profile = GetProfiler()->Stop(profilerId_);
+  auto v8_profile = GetProfiler()->StopProfiling(
+      Nan::New<String>(profileId_).ToLocalChecked());
   Local<Value> profile =
       ProfileTranslator(GetLabelSetsByNode(v8_profile, contexts_))
           .TranslateTimeProfile(v8_profile, includeLines_);
   v8_profile->Delete();
   Dispose(v8::Isolate::GetCurrent());
   if (restart) {
-    profilerId_ = StartInternal();
+    profileId_ = StartInternal();
   } else {
     started_ = false;
   }

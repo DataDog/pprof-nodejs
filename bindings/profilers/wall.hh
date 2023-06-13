@@ -32,9 +32,10 @@ class WallProfiler : public Nan::ObjectWrap {
   // a way to ensure signal safety on update.
   ValuePtr labels1;
   ValuePtr labels2;
-  std::atomic<ValuePtr*> curLabels = &labels1;
-  std::atomic<bool> collectSamples_ = true;
-  v8::ProfilerId profilerId_;
+  std::atomic<ValuePtr*> curLabels;
+  std::atomic<bool> collectSamples_;
+  std::string profileId_;
+  int64_t profileIdx_ = 0;
   bool includeLines_;
   bool withLabels_ = false;
   bool started_ = false;
@@ -79,7 +80,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   void PushContext(int64_t time_from);
   void StartImpl(bool includeLines, bool withLabels);
-  v8::ProfilerId StartInternal();
+  std::string StartInternal();
   v8::Local<v8::Value> StopImpl(bool restart);
   v8::Local<v8::Value> StopImplOld(bool restart);
 
