@@ -425,6 +425,11 @@ void WallProfiler::Dispose(Isolate* isolate) {
   }
 }
 
+template <typename T>
+decltype(auto) ToLocalValue(Local<Value> v) {
+  return Nan::MaybeLocal<T>(v.template As<T>()).ToLocalChecked()->Value();
+}
+
 NAN_METHOD(WallProfiler::New) {
   if (info.Length() != 4) {
     return Nan::ThrowTypeError("WallProfiler must have four arguments.");
@@ -432,26 +437,19 @@ NAN_METHOD(WallProfiler::New) {
   if (!info[0]->IsNumber()) {
     return Nan::ThrowTypeError("Sample rate must be a number.");
   }
-
   if (!info[1]->IsNumber()) {
     return Nan::ThrowTypeError("Duration must be a number.");
   }
-
   if (!info[2]->IsBoolean()) {
     return Nan::ThrowTypeError("includeLines must be a boolean.");
   }
-
   if (!info[3]->IsBoolean()) {
     return Nan::ThrowTypeError("withLabels must be a boolean.");
   }
 
   if (info.IsConstructCall()) {
-    int interval = Nan::MaybeLocal<Integer>(info[0].As<Integer>())
-                       .ToLocalChecked()
-                       ->Value();
-    int duration = Nan::MaybeLocal<Integer>(info[1].As<Integer>())
-                       .ToLocalChecked()
-                       ->Value();
+    int interval = ToLocalValue<Integer>(info[0]);
+    int duration = ToLocalValue<Integer>(info[1]);
 
     if (interval <= 0) {
       return Nan::ThrowTypeError("Sample rate must be positive.");
@@ -463,13 +461,8 @@ NAN_METHOD(WallProfiler::New) {
       return Nan::ThrowTypeError("Duration must not be less than sample rate.");
     }
 
-    bool includeLines = Nan::MaybeLocal<Boolean>(info[2].As<Boolean>())
-                            .ToLocalChecked()
-                            ->Value();
-
-    bool withLabels = Nan::MaybeLocal<Boolean>(info[3].As<Boolean>())
-                          .ToLocalChecked()
-                          ->Value();
+    bool includeLines = ToLocalValue<Boolean>(info[2]);
+    bool withLabels = ToLocalValue<Boolean>(info[3]);
 
     WallProfiler* obj =
         new WallProfiler(interval, duration, includeLines, withLabels);
@@ -503,8 +496,7 @@ NAN_METHOD(WallProfiler::Stop) {
   if (!info[0]->IsBoolean()) {
     return Nan::ThrowTypeError("restart must be a boolean.");
   }
-  bool restart =
-      Nan::MaybeLocal<Boolean>(info[0].As<Boolean>()).ToLocalChecked()->Value();
+  bool restart = ToLocalValue<Boolean>(info[0]);
 
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
