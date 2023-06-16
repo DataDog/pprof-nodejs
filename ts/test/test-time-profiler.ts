@@ -48,19 +48,17 @@ describe('Time Profiler', () => {
 
     it('should assign labels', () => {
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
-      time.start(
-        PROFILE_OPTIONS.intervalMicros,
-        PROFILE_OPTIONS.durationMillis * 1000,
-        undefined,
-        false,
-        true
-      );
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        customLabels: true,
+      });
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
       const repeats = 1000;
       for (let i = 0; i < repeats; ++i) {
         loop();
-        console.log(`Validating profile#${i}`)
+        console.log(`Validating profile#${i}`);
         validateProfile(time.stop(i < repeats - 1));
       }
 
@@ -132,7 +130,7 @@ describe('Time Profiler', () => {
         }
 
         function labelStr(label: Label) {
-          return label ? stringTable.strings[idx(label.str) + 1] : "undefined";
+          return label ? stringTable.strings[idx(label.str) + 1] : 'undefined';
         }
 
         let fn0ObservedWithLabel0 = false;
@@ -226,7 +224,7 @@ describe('Time Profiler', () => {
     it('should profile during duration and finish profiling after duration', async () => {
       let isProfiling = true;
       time.profile(PROFILE_OPTIONS).then(() => {
-          isProfiling = false;
+        isProfiling = false;
       });
       await delay(2 * PROFILE_OPTIONS.durationMillis);
       assert.strictEqual(false, isProfiling, 'profiler is still running');

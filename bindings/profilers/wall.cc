@@ -33,14 +33,6 @@
 #undef DD_WALL_USE_SIGPROF
 #endif
 
-// static std::string safe_string(v8::Isolate* isolate,
-//                                v8::Local<v8::String> maybe_string) {
-//   auto len = maybe_string->Utf8Length(isolate);
-//   std::string buffer(len + 1, 0);
-//   maybe_string->WriteUtf8(isolate, &buffer[0], len + 1);
-//   return std::string(buffer.c_str());
-// }
-
 // Declare v8::base::TimeTicks::Now. It is exported from the node executable so
 // our addon will be able to dynamically link to the symbol when loaded.
 namespace v8 {
@@ -57,35 +49,37 @@ namespace dd {
 
 using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
 
-static std::atomic<ProfilerMap*> profilers(new ProfilerMap());
-static std::mutex update_profilers;
+static std::atomic<ProfilerMap*> g_profilers(new ProfilerMap());
+static std::mutex g_profilers_update_mtx;
 
 #ifdef DD_WALL_USE_SIGPROF
-static void (*old_handler)(int, siginfo_t*, void*) = nullptr;
+static void (*g_old_handler)(int, siginfo_t*, void*) = nullptr;
 
 static void sighandler(int sig, siginfo_t* info, void* context) {
-  if (!old_handler) {
+  if (!g_old_handler) {
     return;
   }
 
-  auto isolate = Isolate::GetCurrent();
   WallProfiler* prof = nullptr;
-  auto prof_map = profilers.exchange(nullptr, std::memory_order_acq_rel);
+  // Prevent updates to profiler map by atomically setting g_profilers to null
+  auto prof_map = g_profilers.exchange(nullptr, std::memory_order_acq_rel);
   if (prof_map) {
+    auto isolate = Isolate::GetCurrent();
     auto prof_it = prof_map->find(isolate);
     if (prof_it != prof_map->end()) {
       prof = prof_it->second;
     }
-    profilers.store(prof_map, std::memory_order_release);
+    // Allow updates
+    g_profilers.store(prof_map, std::memory_order_release);
   }
   if (prof && !prof->collectSampleAllowed()) {
-    // puts("Dropping sample");
     return;
   }
-  auto now = v8::base::TimeTicks::Now();
-  old_handler(sig, info, context);
+  auto time_from = v8::base::TimeTicks::Now();
+  g_old_handler(sig, info, context);
   if (prof) {
-    prof->PushContext(now);
+    auto time_to = v8::base::TimeTicks::Now();
+    prof->PushContext(time_from, time_to);
   }
 }
 #endif
@@ -136,6 +130,7 @@ class ProfileTranslator {
 #define X(name) Nan::Set(js_node, str_##name, name);
     FIELDS
 #undef X
+#undef FIELDS
     return js_node;
   }
 
@@ -144,11 +139,7 @@ class ProfileTranslator {
   Local<Array> NewArray(int length) { return Array::New(isolate, length); }
 
   Local<String> NewString(const char* str) {
-#if NODE_MODULE_VERSION > NODE_12_0_MODULE_VERSION
-    return String::NewFromUtf8(isolate, str).ToLocalChecked();
-#else
     return Nan::New<String>(str).ToLocalChecked();
-#endif
   }
 
   Local<Array> GetLineNumberTimeProfileChildren(const CpuProfileNode* node) {
@@ -280,7 +271,6 @@ class ProfileTranslator {
                                     bool includeLineInfo) {
     Local<Object> js_profile = Nan::New<Object>();
 
-#if NODE_MODULE_VERSION > NODE_11_0_MODULE_VERSION
     if (includeLineInfo) {
       Nan::Set(js_profile,
                NewString("topDownRoot"),
@@ -290,11 +280,6 @@ class ProfileTranslator {
                NewString("topDownRoot"),
                TranslateTimeProfileNode(profile->GetTopDownRoot()));
     }
-#else
-    Nan::Set(js_profile,
-             NewString("topDownRoot"),
-             TranslateTimeProfileNode(profile->GetTopDownRoot()));
-#endif
     Nan::Set(js_profile,
              NewString("startTime"),
              Nan::New<Number>(profile->GetStartTime()));
@@ -304,7 +289,6 @@ class ProfileTranslator {
 
     return js_profile;
   }
-#undef FIELDS
 };
 
 bool isIdleSample(const CpuProfileNode* sample) {
@@ -316,17 +300,6 @@ bool isIdleSample(const CpuProfileNode* sample) {
       strncmp("(idle)", sample->GetFunctionNameStr(), 7) == 0;
 }
 
-std::pair<int, int> countHits(const CpuProfileNode* node) {
-  int hitcount = node->GetHitCount();
-  int nodecount = 1;
-  for (int i = 0; i < node->GetChildrenCount(); ++i) {
-    auto r = countHits(node->GetChild(i));
-    nodecount += r.first;
-    hitcount += r.second;
-  }
-  return {nodecount, hitcount};
-}
-
 LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
                                                  ContextBuffer& contexts) {
   LabelSetsByNode labelSetsByNode;
@@ -335,9 +308,14 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
   if (contexts.empty() || sampleCount == 0) {
     return labelSetsByNode;
   }
+
   auto isolate = Isolate::GetCurrent();
   // auto labelKey = Nan::New<String>("label").ToLocalChecked();
 
+  auto contextIt = contexts.begin();
+
+  // deltaIdx is the offset of the sample to process compared to current
+  // iteration index
   int deltaIdx = 0;
 
   // skip first sample because it's the one taken on profiler start, outside of
@@ -362,10 +340,6 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
     auto sampleIdx = i + deltaIdx;
     auto sample = profile->GetSample(sampleIdx);
 
-    // if (deltaIdx != 0) {
-    //   printf("Processing sample#%d instead of #%d\n", sampleIdx, i);
-    // }
-
     if (isIdleSample(sample)) {
       continue;
     }
@@ -373,42 +347,14 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
     auto sampleTimestamp = profile->GetSampleTimestamp(sampleIdx);
 
     // This loop will drop all contexts that are too old to be associated with
-    // the current sample; associate those (normally one) that are close enough
-    // to it in time, and stop as soon as it sees a context that's too recent
-    // for this sample.
-    for (;;) {
-      if (contexts.empty()) {
-        // printf("Missing context1@%ld for %s (i=%d), state=%d\n",
-        //        sampleTimestamp,
-        //        sample->GetFunctionNameStr(),
-        //        sampleIdx,
-        //        profile->GetSampleState(sampleIdx));
-        break;
-      }
-
-      auto& sampleContext = contexts.front();
-      // std::string labels;
-      // if (sampleContext.labels) {
-      //   auto val = sampleContext.labels.get()->Get(isolate);
-      //   auto obj =
-      //   Nan::MaybeLocal<Object>(val.As<Object>()).ToLocalChecked(); auto
-      //   label = Nan::Get(obj, labelKey)
-      //                    .ToLocalChecked()
-      //                    ->ToString(isolate->GetCurrentContext())
-      //                    .ToLocalChecked();
-      //   labels = safe_string(isolate, label);
-      // }
-
+    // the current sample; association is done by matching each sample with
+    // context whose [time_from,time_to] interval encompasses sample timestamp.
+    while (contextIt != contexts.end()) {
+      auto& sampleContext = *contextIt;
       if (sampleContext.time_to < sampleTimestamp) {
         // Current sample context is too old, discard it and fetch the next one.
-        contexts.pop_front();
+        ++contextIt;
       } else if (sampleContext.time_from > sampleTimestamp) {
-        // printf("Missing context2@%ld for %s (i=%d), state=%d\n",
-        //        sampleTimestamp,
-        //        sample->GetFunctionNameStr(),
-        //        sampleIdx,
-        //        profile->GetSampleState(sampleIdx));
-
         // Current sample context is too recent, we'll try to match it to the
         // next sample.
         break;
@@ -428,28 +374,27 @@ LabelSetsByNode WallProfiler::GetLabelSetsByNode(CpuProfile* profile,
           Nan::Set(
               array, array->Length(), sampleContext.labels.get()->Get(isolate));
         }
-        // printf("Matching context, time_from=%ld, time_to=%lu, labels=%s\n",
-        //        sampleContext.time_from,
-        //        sampleContext.time_to,
-        //        labels.c_str());
 
         // Sample context was consumed, fetch the next one
-        contexts.pop_front();
+        ++contextIt;
         break;  // don't match more than one context to one sample
       }
     }
   }
 
-  while (!contexts.empty()) {
-    contexts.pop_front();
-  }
   return labelSetsByNode;
 }
 
-WallProfiler::WallProfiler(int intervalMicros, int durationMicros)
-    : samplingInterval(intervalMicros),
-      contexts_(durationMicros * 2 / intervalMicros) {
-  curLabels.store(&labels1, std::memory_order_relaxed);
+WallProfiler::WallProfiler(int samplingPeriodMicros,
+                           int durationMicros,
+                           bool includeLines,
+                           bool withLabels)
+    : samplingPeriodMicros_(samplingPeriodMicros),
+      includeLines_(includeLines),
+      withLabels_(withLabels) {
+  contexts_.reserve(durationMicros * 2 / samplingPeriodMicros);
+  curLabels_.store(&labels1_, std::memory_order_relaxed);
+  collectSamples_.store(false, std::memory_order_relaxed);
 }
 
 WallProfiler::~WallProfiler() {
@@ -457,78 +402,78 @@ WallProfiler::~WallProfiler() {
 }
 
 template <typename F>
-void updateProfilers(F updateFn) {
-  std::lock_guard<std::mutex> lock(update_profilers);
-  auto currProfilers = profilers.load(std::memory_order_acquire);
+bool updateProfilers(F updateFn) {
+  std::lock_guard<std::mutex> lock(g_profilers_update_mtx);
+  auto currProfilers = g_profilers.load(std::memory_order_acquire);
   // Wait until sighandler is done using the map
   while (!currProfilers) {
-    currProfilers = profilers.load(std::memory_order_relaxed);
+    currProfilers = g_profilers.load(std::memory_order_relaxed);
   }
   auto newProfilers = new ProfilerMap(*currProfilers);
-  updateFn(newProfilers);
+  auto res = updateFn(newProfilers);
   // Wait until sighandler is done using the map before installing a new map.
   // The value in profilers is either nullptr or currProfilers.
   for (;;) {
     ProfilerMap* currProfilers2 = currProfilers;
-    if (profilers.compare_exchange_weak(
+    if (g_profilers.compare_exchange_weak(
             currProfilers2, newProfilers, std::memory_order_acq_rel)) {
       break;
     }
   }
   delete currProfilers;
+  return res;
 }
 
 void WallProfiler::Dispose(Isolate* isolate) {
-  if (cpuProfiler != nullptr) {
-    cpuProfiler->Dispose();
-    cpuProfiler = nullptr;
+  if (cpuProfiler_ != nullptr) {
+    cpuProfiler_->Dispose();
+    cpuProfiler_ = nullptr;
 
     updateProfilers([isolate, this](auto map) {
       if (isolate != nullptr) {
         auto it = map->find(isolate);
         if (it != map->end() && it->second == this) {
           map->erase(it);
+          return true;
         }
+        return false;
       } else {
         // TODO: use map->erase_if once we can use C++20.
         for (auto it = map->begin(), last = map->end(); it != last;) {
           if (it->second == this) {
             it = map->erase(it);
+            return true;
           } else {
             ++it;
           }
         }
+        return false;
       }
     });
   }
 }
 
-NAN_METHOD(WallProfiler::Dispose) {
-  WallProfiler* wallProfiler =
-      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
-
-  wallProfiler->Dispose(info.GetIsolate());
-}
-
 NAN_METHOD(WallProfiler::New) {
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("WallProfiler must have two arguments.");
-  }
-  if (!info[0]->IsNumber()) {
-    return Nan::ThrowTypeError("Sample rate must be a number.");
+  if (info.Length() != 4) {
+    return Nan::ThrowTypeError("WallProfiler must have four arguments.");
   }
 
+  if (!info[0]->IsNumber()) {
+    return Nan::ThrowTypeError("Sample period must be a number.");
+  }
   if (!info[1]->IsNumber()) {
     return Nan::ThrowTypeError("Duration must be a number.");
   }
+  if (!info[2]->IsBoolean()) {
+    return Nan::ThrowTypeError("includeLines must be a boolean.");
+  }
+  if (!info[3]->IsBoolean()) {
+    return Nan::ThrowTypeError("withLabels must be a boolean.");
+  }
 
   if (info.IsConstructCall()) {
-    int interval = Nan::MaybeLocal<Integer>(info[0].As<Integer>())
-                       .ToLocalChecked()
-                       ->Value();
-    int duration = Nan::MaybeLocal<Integer>(info[1].As<Integer>())
-                       .ToLocalChecked()
-                       ->Value();
+    int interval = info[0].As<Integer>()->Value();
+    int duration = info[1].As<Integer>()->Value();
 
     if (interval <= 0) {
       return Nan::ThrowTypeError("Sample rate must be positive.");
@@ -540,12 +485,16 @@ NAN_METHOD(WallProfiler::New) {
       return Nan::ThrowTypeError("Duration must not be less than sample rate.");
     }
 
-    WallProfiler* obj = new WallProfiler(interval, duration);
+    bool includeLines = info[2].As<Boolean>()->Value();
+    bool withLabels = info[3].As<Boolean>()->Value();
+
+    WallProfiler* obj =
+        new WallProfiler(interval, duration, includeLines, withLabels);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
-    const int argc = 2;
-    v8::Local<v8::Value> argv[argc] = {info[0], info[1]};
+    const int argc = 4;
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
     v8::Local<v8::Function> cons = Nan::New(
         PerIsolateData::For(info.GetIsolate())->WallProfilerConstructor());
     info.GetReturnValue().Set(
@@ -557,25 +506,34 @@ NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
-  if (info.Length() != 2) {
-    return Nan::ThrowTypeError("Start must have two arguments.");
-  }
-  if (!info[0]->IsBoolean()) {
-    return Nan::ThrowTypeError("Include lines flag must be a boolean.");
-  }
-  if (!info[1]->IsBoolean()) {
-    return Nan::ThrowTypeError("With labels flag must be a boolean.");
+  if (info.Length() != 0) {
+    return Nan::ThrowTypeError("Start must not have any arguments.");
   }
 
-  bool includeLines =
-      Nan::MaybeLocal<Boolean>(info[0].As<Boolean>()).ToLocalChecked()->Value();
+  auto res = wallProfiler->StartImpl();
+  if (!res.success) {
+    return Nan::ThrowTypeError(res.msg.c_str());
+  }
+}
 
-  bool withLabels =
-      Nan::MaybeLocal<Boolean>(info[1].As<Boolean>()).ToLocalChecked()->Value();
+Result WallProfiler::StartImpl() {
+  if (started_) {
+    return Result{"Start called on already started profiler, stop it first."};
+  }
 
-  wallProfiler->StartImpl(includeLines, withLabels);
+  profileIdx_ = 0;
+
+  if (!CreateV8CpuProfiler()) {
+    return Result{"Cannot start profiler: another profiler is already active."};
+  }
+
+  auto res = StartInternal(profileId_);
+  if (!res.success) {
+    return res;
+  }
+
 #ifdef DD_WALL_USE_SIGPROF
-  if (withLabels) {
+  if (withLabels_) {
     struct sigaction sa, old_sa;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sa.sa_sigaction = &sighandler;
@@ -584,37 +542,40 @@ NAN_METHOD(WallProfiler::Start) {
 
     // At the end of a cycle start is called before stop,
     // at this point old_sa.sa_sigaction is sighandler !
-    if (!old_handler) {
-      old_handler = old_sa.sa_sigaction;
+    if (!g_old_handler) {
+      g_old_handler = old_sa.sa_sigaction;
     }
   }
 #endif
-}
 
-void WallProfiler::StartImpl(bool includeLines, bool withLabels) {
-  if (started_) {
-    return;
-  }
-  includeLines_ = includeLines;
-  withLabels_ = withLabels;
   collectSamples_.store(true, std::memory_order_relaxed);
-  profileIdx_ = 0;
-  profileId_ = StartInternal();
   started_ = true;
+  return {};
 }
 
-std::string WallProfiler::StartInternal() {
+Result WallProfiler::StartInternal(std::string& profileId) {
   char buf[128];
   snprintf(buf, sizeof(buf), "pprof-%lld", profileIdx_++);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
-  auto status = GetProfiler()->StartProfiling(
+  auto status = cpuProfiler_->StartProfiling(
       title,
-      v8::CpuProfilingOptions{
-          includeLines_ ? CpuProfilingMode::kCallerLineNumbers
-                        : CpuProfilingMode::kLeafNodeLineNumbers,
-          withLabels_ ? v8::CpuProfilingOptions::kNoSampleLimit : 0});
-  // printf("StartProfiler %s: status=%d\n", buf, status);
-  return buf;
+      v8::CpuProfilingOptions(includeLines_
+                                  ? CpuProfilingMode::kCallerLineNumbers
+                                  : CpuProfilingMode::kLeafNodeLineNumbers,
+                              withLabels_ ? contexts_.capacity() : 0));
+
+  switch (status) {
+    case CpuProfilingStatus::kStarted:
+      break;
+    case CpuProfilingStatus::kAlreadyStarted:
+      return Result("Failed to start V8 profiler: already started");
+    case CpuProfilingStatus::kErrorTooManyProfilers:
+      return Result("Failed to start V8 profiler: too many profilers");
+    default:
+      return Result("Failed to start V8 profiler: unknown error");
+  }
+  profileId = buf;
+  return {};
 }
 
 NAN_METHOD(WallProfiler::Stop) {
@@ -622,25 +583,32 @@ NAN_METHOD(WallProfiler::Stop) {
     return Nan::ThrowTypeError("Stop must have one argument.");
   }
   if (!info[0]->IsBoolean()) {
-    return Nan::ThrowTypeError("Include lines must be a boolean.");
+    return Nan::ThrowTypeError("Restart must be a boolean.");
   }
 
-  bool restart =
-      Nan::MaybeLocal<Boolean>(info[0].As<Boolean>()).ToLocalChecked()->Value();
+  bool restart = info[0].As<Boolean>()->Value();
 
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
 
+  v8::Local<v8::Value> profile;
 #if NODE_MODULE_VERSION < NODE_16_0_MODULE_VERSION
-  auto profile = wallProfiler->StopImplOld(restart);
+  auto err = wallProfiler->StopImplOld(restart, profile);
 #else
-  auto profile = wallProfiler->StopImpl(restart);
+  auto err = wallProfiler->StopImpl(restart, profile);
 #endif
 
+  if (!err.success) {
+    return Nan::ThrowTypeError(err.msg.c_str());
+  }
   info.GetReturnValue().Set(profile);
 }
 
-Local<Value> WallProfiler::StopImpl(bool restart) {
+Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
+  if (!started_) {
+    return Result{"Stop called on not started profiler."};
+  }
+
   auto oldProfileId = profileId_;
   collectSamples_.store(false, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
@@ -651,26 +619,27 @@ Local<Value> WallProfiler::StopImpl(bool restart) {
   }
 
   if (restart) {
-    profileId_ = StartInternal();
+    StartInternal(profileId_);
   }
-  auto v8_profile = GetProfiler()->StopProfiling(
+  auto v8_profile = cpuProfiler_->StopProfiling(
       Nan::New<String>(oldProfileId).ToLocalChecked());
 
-  ContextBuffer contexts{contexts_.capacity()};
+  ContextBuffer contexts;
+  contexts.reserve(contexts_.capacity());
   std::swap(contexts, contexts_);
 
-  // make sure timestamp changes to avoid mixing start sample and a sample from
-  // signal handler
-  now = v8::base::TimeTicks::Now();
-  while (v8::base::TimeTicks::Now() == now) {
+  if (restart) {
+    // make sure timestamp changes to avoid mixing start sample and a sample
+    // from signal handler
+    now = v8::base::TimeTicks::Now();
+    while (v8::base::TimeTicks::Now() == now) {
+    }
+    collectSamples_.store(true, std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_release);
   }
 
-  collectSamples_.store(true, std::memory_order_relaxed);
-  std::atomic_signal_fence(std::memory_order_release);
-
-  Local<Value> profile =
-      ProfileTranslator(GetLabelSetsByNode(v8_profile, contexts))
-          .TranslateTimeProfile(v8_profile, includeLines_);
+  profile = ProfileTranslator(GetLabelSetsByNode(v8_profile, contexts))
+                .TranslateTimeProfile(v8_profile, includeLines_);
   v8_profile->Delete();
 
   if (!restart) {
@@ -678,24 +647,29 @@ Local<Value> WallProfiler::StopImpl(bool restart) {
   }
   started_ = restart;
 
-  return profile;
+  return {};
 }
 
-Local<Value> WallProfiler::StopImplOld(bool restart) {
-  auto v8_profile = GetProfiler()->StopProfiling(
+Result WallProfiler::StopImplOld(bool restart, v8::Local<v8::Value>& profile) {
+  if (started_) {
+    return Result{"Stop called on not started profiler."};
+  }
+
+  auto v8_profile = cpuProfiler_->StopProfiling(
       Nan::New<String>(profileId_).ToLocalChecked());
-  Local<Value> profile =
-      ProfileTranslator(GetLabelSetsByNode(v8_profile, contexts_))
-          .TranslateTimeProfile(v8_profile, includeLines_);
+
+  profile = ProfileTranslator(GetLabelSetsByNode(v8_profile, contexts_))
+                .TranslateTimeProfile(v8_profile, includeLines_);
+  contexts_.clear();
   v8_profile->Delete();
   Dispose(v8::Isolate::GetCurrent());
   if (restart) {
-    profileId_ = StartInternal();
+    auto res = StartInternal(profileId_);
   } else {
     started_ = false;
   }
 
-  return profile;
+  return {};
 }
 
 NAN_MODULE_INIT(WallProfiler::Init) {
@@ -710,7 +684,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    SetLabels);
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
-  Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
 
   PerIsolateData::For(Isolate::GetCurrent())
@@ -722,35 +695,47 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 // A new CPU profiler object will be created each time profiling is started
 // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
 // TODO: Fixed in v16. Delete this hack when deprecating v14.
-v8::CpuProfiler* WallProfiler::GetProfiler() {
-  if (cpuProfiler == nullptr) {
+v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
+  if (cpuProfiler_ == nullptr) {
     v8::Isolate* isolate = v8::Isolate::GetCurrent();
 
-    updateProfilers([isolate, this](auto map) { map->emplace(isolate, this); });
+    bool inserted = updateProfilers([isolate, this](auto map) {
+      return map->emplace(isolate, this).second;
+    });
 
-    cpuProfiler = v8::CpuProfiler::New(isolate);
-    cpuProfiler->SetSamplingInterval(samplingInterval);
+    if (!inserted) {
+      // refuse to create a new profiler if one is already active
+      return nullptr;
+    }
+    cpuProfiler_ = v8::CpuProfiler::New(isolate);
+    cpuProfiler_->SetSamplingInterval(samplingPeriodMicros_);
   }
-  return cpuProfiler;
+  return cpuProfiler_;
 }
 
 v8::Local<v8::Value> WallProfiler::GetLabels(Isolate* isolate) {
-  auto labels = *curLabels.load(std::memory_order_relaxed);
+  auto labels = *curLabels_.load(std::memory_order_relaxed);
   if (!labels) return v8::Undefined(isolate);
   return labels->Get(isolate);
 }
 
 void WallProfiler::SetLabels(Isolate* isolate, Local<Value> value) {
-  auto newCurLabels = curLabels.load(std::memory_order_relaxed) == &labels1
-                          ? &labels2
-                          : &labels1;
+  // Need to be careful here, because we might be interrupted by a
+  // signal handler that will make use of curLabels_.
+  // Update of shared_ptr is not atomic, so instead we use a pointer
+  // (curLabels_) that points on two shared_ptr (labels1_ and labels2_), update
+  // the shared_ptr that is not currently in use and then atomically update
+  // curLabels_.
+  auto newCurLabels = curLabels_.load(std::memory_order_relaxed) == &labels1_
+                          ? &labels2_
+                          : &labels1_;
   if (value->BooleanValue(isolate)) {
     *newCurLabels = std::make_shared<Global<Value>>(isolate, value);
   } else {
     newCurLabels->reset();
   }
   std::atomic_signal_fence(std::memory_order_release);
-  curLabels.store(newCurLabels, std::memory_order_relaxed);
+  curLabels_.store(newCurLabels, std::memory_order_relaxed);
 }
 
 NAN_GETTER(WallProfiler::GetLabels) {
@@ -763,14 +748,15 @@ NAN_SETTER(WallProfiler::SetLabels) {
   profiler->SetLabels(info.GetIsolate(), value);
 }
 
-void WallProfiler::PushContext(int64_t time_from) {
+void WallProfiler::PushContext(int64_t time_from, int64_t time_to) {
   // Be careful this is called in a signal handler context therefore all
-  // operations must be async signal safe (in particular no allocations). Our
-  // ring buffer avoids allocations.
-  auto labels = curLabels.load(std::memory_order_relaxed);
+  // operations must be async signal safe (in particular no allocations).
+  // Our ring buffer avoids allocations.
+  auto labels = curLabels_.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
-  contexts_.push_back(
-      SampleContext(*labels, time_from, v8::base::TimeTicks::Now()));
+  if (contexts_.size() < contexts_.capacity()) {
+    contexts_.push_back({*labels, time_from, time_to});
+  }
 }
 
 }  // namespace dd

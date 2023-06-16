@@ -16,13 +16,13 @@
 
 import delay from 'delay';
 
-import { serializeTimeProfile } from './profile-serializer';
-import { SourceMapper } from './sourcemapper/sourcemapper';
-import { TimeProfiler } from './time-profiler-bindings';
-import { LabelSet, TimeProfile } from './v8-types';
+import {serializeTimeProfile} from './profile-serializer';
+import {SourceMapper} from './sourcemapper/sourcemapper';
+import {TimeProfiler} from './time-profiler-bindings';
+import {LabelSet} from './v8-types';
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
-const DEFAULT_DURATION_MICROS: Microseconds = 60000000;
+const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
 
 type Microseconds = number;
 type Milliseconds = number;
@@ -33,7 +33,7 @@ let gIntervalMicros: Microseconds;
 
 export interface TimeProfilerOptions {
   /** time in milliseconds for which to collect profile. */
-  durationMillis: Milliseconds;
+  durationMillis?: Milliseconds;
   /** average time in microseconds between samples */
   intervalMicros?: Microseconds;
   sourceMapper?: SourceMapper;
@@ -48,57 +48,69 @@ export interface TimeProfilerOptions {
   customLabels?: boolean;
 }
 
-export async function profile(options: TimeProfilerOptions) {
-  start(
-    options.intervalMicros || DEFAULT_INTERVAL_MICROS,
-    options.durationMillis * 1000,
-    options.sourceMapper,
-    options.lineNumbers,
-    options.customLabels
-  );
-  await delay(options.durationMillis);
+export async function profile({
+  intervalMicros = DEFAULT_INTERVAL_MICROS,
+  durationMillis = DEFAULT_DURATION_MILLIS,
+  sourceMapper,
+  lineNumbers = true,
+  customLabels = false,
+}: TimeProfilerOptions) {
+  start({
+    intervalMicros,
+    durationMillis,
+    sourceMapper,
+    lineNumbers,
+    customLabels,
+  });
+  await delay(durationMillis);
   return stop();
 }
 
 // Temporarily retained for backwards compatibility with older tracer
-export function start(
-  intervalMicros: Microseconds = DEFAULT_INTERVAL_MICROS,
-  durationMicros: Microseconds = DEFAULT_DURATION_MICROS,
-  sourceMapper?: SourceMapper,
+export function start({
+  intervalMicros = DEFAULT_INTERVAL_MICROS,
+  durationMillis = DEFAULT_DURATION_MILLIS,
+  sourceMapper,
   lineNumbers = true,
-  customLabels = false
-) {
+  customLabels = false,
+}: TimeProfilerOptions) {
   if (gProfiler) {
-    throw new Error(
-      'Wall profiler is already started'
-    );
+    throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler(intervalMicros, durationMicros)
-  gProfiler.start(lineNumbers, customLabels)
+  gProfiler = new TimeProfiler(
+    intervalMicros,
+    durationMillis * 1000,
+    lineNumbers,
+    customLabels
+  );
+  gProfiler.start();
   gSourceMapper = sourceMapper;
   gIntervalMicros = intervalMicros;
 }
 
 export function stop(restart = false) {
   if (!gProfiler) {
-    throw new Error(
-      'Wall profiler is not started');
+    throw new Error('Wall profiler is not started');
   }
 
-  const profile = gProfiler.stop(restart)
-  const serialized_profile = serializeTimeProfile(profile, gIntervalMicros, gSourceMapper, true);
+  const profile = gProfiler.stop(restart);
+  const serialized_profile = serializeTimeProfile(
+    profile,
+    gIntervalMicros,
+    gSourceMapper,
+    true
+  );
   if (!restart) {
     gProfiler = undefined;
     gSourceMapper = undefined;
   }
-  return serialized_profile
+  return serialized_profile;
 }
 
 export function setLabels(labels?: LabelSet) {
   if (!gProfiler) {
-    throw new Error(
-      'Wall profiler is not started');
+    throw new Error('Wall profiler is not started');
   }
   gProfiler.labels = labels;
 }

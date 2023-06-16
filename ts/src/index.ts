@@ -45,7 +45,7 @@ export const heap = {
 
 // If loaded with --require, start profiling.
 if (module.parent && module.parent.id === 'internal/preload') {
-  time.start();
+  time.start({});
   process.on('exit', () => {
     // The process is going to terminate imminently. All work here needs to
     // be synchronous.
