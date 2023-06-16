@@ -82,7 +82,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   void PushContext(int64_t time_from, int64_t time_to);
   Result StartImpl();
-  Result StartInternal(std::string& profileId);
+  std::string StartInternal();
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
   Result StopImplOld(bool restart, v8::Local<v8::Value>& profile);
 

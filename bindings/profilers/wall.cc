@@ -532,10 +532,7 @@ Result WallProfiler::StartImpl() {
     return Result{"Cannot start profiler: another profiler is already active."};
   }
 
-  auto res = StartInternal(profileId_);
-  if (!res.success) {
-    return res;
-  }
+  profileId_ = StartInternal();
 
 #ifdef DD_WALL_USE_SIGPROF
   if (withLabels_) {
@@ -558,29 +555,18 @@ Result WallProfiler::StartImpl() {
   return {};
 }
 
-Result WallProfiler::StartInternal(std::string& profileId) {
+std::string WallProfiler::StartInternal() {
   char buf[128];
   snprintf(buf, sizeof(buf), "pprof-%" PRId64, profileIdx_++);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
-  auto status = cpuProfiler_->StartProfiling(
+  cpuProfiler_->StartProfiling(
       title,
       v8::CpuProfilingOptions(includeLines_
                                   ? CpuProfilingMode::kCallerLineNumbers
                                   : CpuProfilingMode::kLeafNodeLineNumbers,
                               withLabels_ ? contexts_.capacity() : 0));
 
-  switch (status) {
-    case CpuProfilingStatus::kStarted:
-      break;
-    case CpuProfilingStatus::kAlreadyStarted:
-      return Result("Failed to start V8 profiler: already started");
-    case CpuProfilingStatus::kErrorTooManyProfilers:
-      return Result("Failed to start V8 profiler: too many profilers");
-    default:
-      return Result("Failed to start V8 profiler: unknown error");
-  }
-  profileId = buf;
-  return {};
+  return buf;
 }
 
 NAN_METHOD(WallProfiler::Stop) {
@@ -624,7 +610,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   }
 
   if (restart) {
-    StartInternal(profileId_);
+    profileId_ = StartInternal();
   }
   auto v8_profile = cpuProfiler_->StopProfiling(
       Nan::New<String>(oldProfileId).ToLocalChecked());
@@ -669,7 +655,7 @@ Result WallProfiler::StopImplOld(bool restart, v8::Local<v8::Value>& profile) {
   v8_profile->Delete();
   Dispose(v8::Isolate::GetCurrent());
   if (restart) {
-    auto res = StartInternal(profileId_);
+    profileId_ = StartInternal();
   } else {
     started_ = false;
   }
