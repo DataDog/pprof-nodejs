@@ -41,17 +41,13 @@ struct TimeTicks {
 }  // namespace base
 }  // namespace v8
 
-#else
-// Declare v8::base::TimeTicks::Now. It is exported from the node executable so
-// our addon will be able to dynamically link to the symbol when loaded.
-namespace v8 {
-namespace base {
-struct TimeTicks {
-  static int64_t Now() { return 0; }
+static int64_t Now() {
+  return v8::base::TimeTicks::Now();
 };
-}  // namespace base
-}  // namespace v8
-
+#else
+static int64_t Now() {
+  return 0;
+};
 #endif
 
 using namespace v8;
@@ -86,10 +82,10 @@ static void sighandler(int sig, siginfo_t* info, void* context) {
   if (prof && !prof->collectSampleAllowed()) {
     return;
   }
-  auto time_from = v8::base::TimeTicks::Now();
+  auto time_from = Now();
   g_old_handler(sig, info, context);
   if (prof) {
-    auto time_to = v8::base::TimeTicks::Now();
+    auto time_to = Now();
     prof->PushContext(time_from, time_to);
   }
 }
@@ -613,8 +609,8 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   std::atomic_signal_fence(std::memory_order_release);
 
   // make sure timestamp changes to avoid having samples from previous profile
-  auto now = v8::base::TimeTicks::Now();
-  while (v8::base::TimeTicks::Now() == now) {
+  auto now = Now();
+  while (Now() == now) {
   }
 
   if (restart) {
@@ -630,8 +626,8 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   if (restart) {
     // make sure timestamp changes to avoid mixing start sample and a sample
     // from signal handler
-    now = v8::base::TimeTicks::Now();
-    while (v8::base::TimeTicks::Now() == now) {
+    now = Now();
+    while (Now() == now) {
     }
     collectSamples_.store(true, std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_release);
