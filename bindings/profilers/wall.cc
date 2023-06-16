@@ -533,7 +533,6 @@ Result WallProfiler::StartImpl() {
   }
 
   profileId_ = StartInternal();
-
 #ifdef DD_WALL_USE_SIGPROF
   if (withLabels_) {
     struct sigaction sa, old_sa;
@@ -559,12 +558,11 @@ std::string WallProfiler::StartInternal() {
   char buf[128];
   snprintf(buf, sizeof(buf), "pprof-%" PRId64, profileIdx_++);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
-  cpuProfiler_->StartProfiling(
-      title,
-      v8::CpuProfilingOptions(includeLines_
-                                  ? CpuProfilingMode::kCallerLineNumbers
-                                  : CpuProfilingMode::kLeafNodeLineNumbers,
-                              withLabels_ ? contexts_.capacity() : 0));
+  cpuProfiler_->StartProfiling(title,
+                               includeLines_
+                                   ? CpuProfilingMode::kCallerLineNumbers
+                                   : CpuProfilingMode::kLeafNodeLineNumbers,
+                               withLabels_);
 
   return buf;
 }
@@ -642,7 +640,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
 }
 
 Result WallProfiler::StopImplOld(bool restart, v8::Local<v8::Value>& profile) {
-  if (started_) {
+  if (!started_) {
     return Result{"Stop called on not started profiler."};
   }
 
