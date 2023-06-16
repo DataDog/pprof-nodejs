@@ -134,9 +134,13 @@ class ProfileTranslator {
     return js_node;
   }
 
-  Local<Integer> NewInteger(int32_t x) { return Integer::New(isolate, x); }
+  Local<Integer> NewInteger(int32_t x) {
+    return Integer::New(isolate, x);
+  }
 
-  Local<Array> NewArray(int length) { return Array::New(isolate, length); }
+  Local<Array> NewArray(int length) {
+    return Array::New(isolate, length);
+  }
 
   Local<String> NewString(const char* str) {
     return Nan::New<String>(str).ToLocalChecked();
