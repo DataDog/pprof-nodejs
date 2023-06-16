@@ -15,6 +15,7 @@
  */
 
 #include <atomic>
+#include <cinttypes>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -559,7 +560,7 @@ Result WallProfiler::StartImpl() {
 
 Result WallProfiler::StartInternal(std::string& profileId) {
   char buf[128];
-  snprintf(buf, sizeof(buf), "pprof-%lld", profileIdx_++);
+  snprintf(buf, sizeof(buf), "pprof-%" PRId64, profileIdx_++);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
   auto status = cpuProfiler_->StartProfiling(
       title,
