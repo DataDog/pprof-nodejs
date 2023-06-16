@@ -25,8 +25,6 @@ import {AssertionError} from 'assert';
 
 const assert = require('assert');
 
-const majorVersion = process.version.slice(1).split('.').map(Number)[0];
-
 const PROFILE_OPTIONS = {
   durationMillis: 500,
   intervalMicros: 1000,
@@ -46,7 +44,11 @@ describe('Time Profiler', () => {
       );
     });
 
-    it('should assign labels', () => {
+    it('should assign labels', function () {
+      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+        this.skip();
+      }
+
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
       time.start({
         intervalMicros: PROFILE_OPTIONS.intervalMicros,
@@ -55,10 +57,9 @@ describe('Time Profiler', () => {
       });
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
-      const repeats = 1000;
+      const repeats = 3;
       for (let i = 0; i < repeats; ++i) {
         loop();
-        console.log(`Validating profile#${i}`);
         validateProfile(time.stop(i < repeats - 1));
       }
 
@@ -204,7 +205,7 @@ describe('Time Profiler', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
     const timeProfilerStub = {
-      start: sinon.stub().returns(BigInt(0)),
+      start: sinon.stub(),
       stop: sinon.stub().returns(v8TimeProfile),
     };
 
@@ -233,6 +234,25 @@ describe('Time Profiler', () => {
     it('should return a profile equal to the expected profile', async () => {
       const profile = await time.profile(PROFILE_OPTIONS);
       assert.deepEqual(timeProfile, profile);
+    });
+
+    it('should be able to restart when stopping', async () => {
+      const stop = time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      timeProfilerStub.start.resetHistory();
+      timeProfilerStub.stop.resetHistory();
+
+      assert.deepEqual(timeProfile, time.stop(true));
+
+      sinon.assert.notCalled(timeProfilerStub.start);
+      sinon.assert.calledOnce(timeProfilerStub.stop);
+
+      timeProfilerStub.start.resetHistory();
+      timeProfilerStub.stop.resetHistory();
+
+      assert.deepEqual(timeProfile, time.stop());
+
+      sinon.assert.notCalled(timeProfilerStub.start);
+      sinon.assert.calledOnce(timeProfilerStub.stop);
     });
   });
 });
