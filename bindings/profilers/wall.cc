@@ -30,9 +30,6 @@
 
 #ifndef _WIN32
 #define DD_WALL_USE_SIGPROF
-#else
-#undef DD_WALL_USE_SIGPROF
-#endif
 
 // Declare v8::base::TimeTicks::Now. It is exported from the node executable so
 // our addon will be able to dynamically link to the symbol when loaded.
@@ -43,6 +40,19 @@ struct TimeTicks {
 };
 }  // namespace base
 }  // namespace v8
+
+#else
+// Declare v8::base::TimeTicks::Now. It is exported from the node executable so
+// our addon will be able to dynamically link to the symbol when loaded.
+namespace v8 {
+namespace base {
+struct TimeTicks {
+  static int64_t Now() { return 0; }
+};
+}  // namespace base
+}  // namespace v8
+
+#endif
 
 using namespace v8;
 
