@@ -539,21 +539,6 @@ Result WallProfiler::StartImpl() {
   }
 
   profileId_ = StartInternal();
-#ifdef DD_WALL_USE_SIGPROF
-  if (withLabels_) {
-    struct sigaction sa, old_sa;
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    sa.sa_sigaction = &sighandler;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGPROF, &sa, &old_sa);
-
-    // At the end of a cycle start is called before stop,
-    // at this point old_sa.sa_sigaction is sighandler !
-    if (!g_old_handler) {
-      g_old_handler = old_sa.sa_sigaction;
-    }
-  }
-#endif
 
   collectSamples_.store(true, std::memory_order_relaxed);
   started_ = true;
@@ -569,6 +554,23 @@ std::string WallProfiler::StartInternal() {
                                    ? CpuProfilingMode::kCallerLineNumbers
                                    : CpuProfilingMode::kLeafNodeLineNumbers,
                                withLabels_);
+
+#ifdef DD_WALL_USE_SIGPROF
+  // reinstall sighandler on each start
+  if (withLabels_) {
+    struct sigaction sa, old_sa;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sa.sa_sigaction = &sighandler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGPROF, &sa, &old_sa);
+
+    // At the end of a cycle start is called before stop,
+    // at this point old_sa.sa_sigaction is sighandler !
+    if (!g_old_handler) {
+      g_old_handler = old_sa.sa_sigaction;
+    }
+  }
+#endif
 
   return buf;
 }
@@ -658,7 +660,9 @@ Result WallProfiler::StopImplOld(bool restart, v8::Local<v8::Value>& profile) {
   contexts_.clear();
   v8_profile->Delete();
   Dispose(v8::Isolate::GetCurrent());
+
   if (restart) {
+    CreateV8CpuProfiler();
     profileId_ = StartInternal();
   } else {
     started_ = false;
