@@ -17,24 +17,14 @@ class RingBuffer {
   size_t size() const { return size_; }
 
   T& front() { return buffer[front_index_]; }
-
   const T& front() const { return buffer[front_index_]; }
 
-  template <typename T2>
-  void push_back(T2&& t) {
-    if (full()) {
-      if (empty()) {
-        return;
-      }
-      // overwrite buffer head
-      buffer[back_index_] = std::forward<T2>(t);
-      increment(back_index_);
-      // move buffer head
-      front_index_ = back_index_;
-    } else {
-      buffer[back_index_] = std::forward<T2>(t);
-      increment(back_index_);
-      ++size_;
+  void push_back(const T& t) { push_back_(t); }
+  void push_back(T&& t) { push_back_(std::move(t)); }
+
+  void clear() {
+    while (!empty()) {
+      pop_front();
     }
   }
 
@@ -46,6 +36,24 @@ class RingBuffer {
   }
 
  private:
+  template <typename U>
+  void push_back_(U&& t) {
+    const bool is_full = full();
+
+    if (is_full && empty()) {
+      return;
+    }
+    buffer[back_index_] = std::forward<U>(t);
+    increment(back_index_);
+
+    if (is_full) {
+      // move buffer head
+      front_index_ = back_index_;
+    } else {
+      ++size_;
+    }
+  }
+
   void increment(size_t& idx) const {
     idx = idx + 1 == capacity_ ? 0 : idx + 1;
   }
