@@ -162,14 +162,19 @@ class ProfileTranslator {
     unsigned int hitCount = node->GetHitCount();
     auto labelSets = getLabelSetsForNode(node);
     auto scriptId = NewInteger(node->GetScriptId());
+    bool trace = false;
     if (std::string(node->GetFunctionNameStr()).substr(0,2) == "fn") {
       printf("Func=%s, hitLineCount=%d, hitCount=%d\n", node->GetFunctionNameStr(), hitLineCount, hitCount);
+      trace = true;
     }    
     if (hitLineCount > 0) {
       std::vector<CpuProfileNode::LineTick> entries(hitLineCount);
       node->GetLineTicks(&entries[0], hitLineCount);
       children = NewArray(count + hitLineCount);
       for (const CpuProfileNode::LineTick entry : entries) {
+        if (trace) {
+          printf("  %d hits at line %d\n", entry.hit_count, entry.line);
+        }
         Nan::Set(children,
                  index++,
                  CreateTimeNode(node->GetFunctionName(),
