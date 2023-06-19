@@ -311,6 +311,11 @@ export function serializeTimeProfile(
         unlabelledHits--;
       }
     }
+    if (entry.node.name?.startsWith('fn')) {
+      console.log(
+        `${entry.node.name}: ${entry.node.labelSets?.length}/${entry.node.hitCount} labels/hits, ${unlabelledHits} unlabelled`
+      );
+    }
     if (unlabelledHits > 0) {
       const sample = new Sample({
         locationId: entry.stack,

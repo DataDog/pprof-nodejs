@@ -162,6 +162,9 @@ class ProfileTranslator {
     unsigned int hitCount = node->GetHitCount();
     auto labelSets = getLabelSetsForNode(node);
     auto scriptId = NewInteger(node->GetScriptId());
+    if (std::string(node->GetFunctionNameStr()).substr(0,2) == "fn") {
+      printf("Func=%s, hitLineCount=%d, hitCount=%d\n", node->GetFunctionNameStr(), hitLineCount, hitCount);
+    }    
     if (hitLineCount > 0) {
       std::vector<CpuProfileNode::LineTick> entries(hitLineCount);
       node->GetLineTicks(&entries[0], hitLineCount);
@@ -281,7 +284,7 @@ class ProfileTranslator {
   Local<Value> TranslateTimeProfile(const CpuProfile* profile,
                                     bool includeLineInfo) {
     Local<Object> js_profile = Nan::New<Object>();
-
+    printf("TranslateTimepProfile: includeLineInfo=%d\n", includeLineInfo);
     if (includeLineInfo) {
       Nan::Set(js_profile,
                NewString("topDownRoot"),
