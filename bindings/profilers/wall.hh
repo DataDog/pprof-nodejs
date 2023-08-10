@@ -58,6 +58,7 @@ class WallProfiler : public Nan::ObjectWrap {
   bool includeLines_ = false;
   bool withContexts_ = false;
   bool started_ = false;
+  bool v8ProfilerStuckEventLoopDetected_ = false;
 
   uint32_t* fields_;
   v8::Global<v8::Uint32Array> jsArray_;
@@ -108,9 +109,14 @@ class WallProfiler : public Nan::ObjectWrap {
     return res;
   }
 
+  bool v8ProfilerStuckEventLoopDetected() const {
+    return v8ProfilerStuckEventLoopDetected_;
+  }
+
   static NAN_METHOD(New);
   static NAN_METHOD(Start);
   static NAN_METHOD(Stop);
+  static NAN_METHOD(V8ProfilerStuckEventLoopDetected);
   static NAN_MODULE_INIT(Init);
   static NAN_GETTER(GetContext);
   static NAN_SETTER(SetContext);

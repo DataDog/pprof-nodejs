@@ -35,6 +35,7 @@ type Milliseconds = number;
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
+let gV8ProfilerStuckEventLoopDetected = false;
 
 /** Make sure to stop profiler before node shuts down, otherwise profiling
  * signal might cause a crash if it occurs during shutdown */
@@ -97,6 +98,7 @@ export function start({
   );
   gSourceMapper = sourceMapper;
   gIntervalMicros = intervalMicros;
+  gV8ProfilerStuckEventLoopDetected = false;
   gProfiler.start();
 }
 
@@ -109,6 +111,17 @@ export function stop(
   }
 
   const profile = gProfiler.stop(restart);
+  if (restart && gProfiler.v8ProfilerStuckEventLoopDetected()) {
+    // Workaround for v8 bug, where profiler event processor thread is stuck in
+    // a loop eating 100% CPU, leading to empty profiles.
+    // Fully stop and restart the profiler to reset the profile to a valid state.
+    gProfiler.stop(false);
+    gProfiler.start();
+    gV8ProfilerStuckEventLoopDetected = true;
+  } else {
+    gV8ProfilerStuckEventLoopDetected = false;
+  }
+
   const serialized_profile = serializeTimeProfile(
     profile,
     gIntervalMicros,
@@ -139,6 +152,10 @@ export function setContext(context?: object) {
 
 export function isStarted() {
   return !!gProfiler;
+}
+
+export function v8ProfilerStuckEventLoopDetected() {
+  return gV8ProfilerStuckEventLoopDetected;
 }
 
 export const constants = {kSampleCount};

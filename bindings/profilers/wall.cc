@@ -54,6 +54,29 @@ using namespace v8;
 
 namespace dd {
 
+int getTotalHitCount(const v8::CpuProfileNode* node) {
+  int count = node->GetHitCount();
+  auto child_count = node->GetChildrenCount();
+
+  for (int i = 0; i < child_count; ++i) {
+    count += getTotalHitCount(node->GetChild(i));
+  }
+  return count;
+}
+
+bool detectV8Bug(const v8::CpuProfile* profile) {
+  // Return true if either condition is false:
+  // - profile has at least one node with a non-zero hitcount
+  // - number of samples is strictly greater to total hitcount (meaning that
+  //   starting sample or some deopt events have been processed)
+  // If either condition is false, it implies that
+  // v8::SamplingEventsProcessor::ProcessOneSample loop is stuck for
+  // ticks_buffer_ or vm_ticks_buffer_.
+
+  auto totalHitCount = getTotalHitCount(profile->GetTopDownRoot());
+  return totalHitCount == 0 || profile->GetSamplesCount() == totalHitCount;
+}
+
 class ProtectedProfilerMap {
  public:
   WallProfiler* GetProfiler(const Isolate* isolate) const {
@@ -469,17 +492,34 @@ std::string WallProfiler::StartInternal() {
   char buf[128];
   snprintf(buf, sizeof(buf), "pprof-%" PRId64, profileIdx_++);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
-  cpuProfiler_->StartProfiling(title,
-                               includeLines_
-                                   ? CpuProfilingMode::kCallerLineNumbers
-                                   : CpuProfilingMode::kLeafNodeLineNumbers,
-                               withContexts_);
+  cpuProfiler_->StartProfiling(
+      title,
+      includeLines_ ? CpuProfilingMode::kCallerLineNumbers
+                    : CpuProfilingMode::kLeafNodeLineNumbers,
+      // Always record samples in order to be able to check if non tick samples
+      // (ie. starting or deopt samples) have been processed, and therefore if
+      // SamplingEventsProcessor::ProcessOneSample is stuck on vm_ticks_buffer_.
+      true);
 
   // reinstall sighandler on each new upload period
   if (withContexts_) {
     SignalHandler::IncreaseUseCount();
     fields_[kSampleCount] = 0;
   }
+
+  // Force collection of two other non-tick samples (ie. that will not add to
+  // hitcount).
+  // This is to be able to detect when v8 profiler event processor loop is
+  // stuck on ticks_from_vm_buffer_.
+  // A non-tick sample is already taken upon profiling start, and should be
+  // enough to determine if a non-tick sample has been processed at the end by
+  // comparing number of samples with total hitcount.
+  // The first tick sample might be discarded though if its timestamp is older
+  // than profile start time due to queueing and in that case it is still added
+  // to hitcount but not to the sample array, leading to incorrectly detect
+  // that ticks_from_vm_buffer_ is stuck.
+  cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
+  cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
 
   return buf;
 }
@@ -541,6 +581,8 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     contexts.reserve(contexts_.capacity());
     std::swap(contexts, contexts_);
   }
+
+  v8ProfilerStuckEventLoopDetected_ = detectV8Bug(v8_profile);
 
   if (restart && withContexts_) {
     // make sure timestamp changes to avoid mixing sample taken upon start and a
@@ -614,6 +656,10 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
+  Nan::SetPrototypeMethod(tpl,
+                          "v8ProfilerStuckEventLoopDetected",
+                          V8ProfilerStuckEventLoopDetected);
+
   Nan::SetAccessor(tpl->InstanceTemplate(),
                    Nan::New("state").ToLocalChecked(),
                    SharedArrayGetter);
@@ -697,6 +743,11 @@ NAN_SETTER(WallProfiler::SetContext) {
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
   info.GetReturnValue().Set(profiler->jsArray_.Get(v8::Isolate::GetCurrent()));
+}
+
+NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  info.GetReturnValue().Set(profiler->v8ProfilerStuckEventLoopDetected());
 }
 
 void WallProfiler::PushContext(int64_t time_from, int64_t time_to) {
