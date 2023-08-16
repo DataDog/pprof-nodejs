@@ -489,8 +489,11 @@ Result WallProfiler::StartImpl() {
 }
 
 std::string WallProfiler::StartInternal() {
+  // Reuse the same names for the profiles because strings used for profile
+  // names are not released until v8::CpuProfiler object is destroyed.
+  // https://github.com/nodejs/node/blob/b53c51995380b1f8d642297d848cab6010d2909c/deps/v8/src/profiler/profile-generator.h#L516
   char buf[128];
-  snprintf(buf, sizeof(buf), "pprof-%" PRId64, profileIdx_++);
+  snprintf(buf, sizeof(buf), "pprof-%" PRId64, (profileIdx_++) % 2);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
   cpuProfiler_->StartProfiling(
       title,
