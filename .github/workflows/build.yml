@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    uses: Datadog/action-prebuildify/.github/workflows/build.yml@nsavoire/fix_node_headers_cache
+    uses: Datadog/action-prebuildify/.github/workflows/build.yml@nsavoire/fix_node_headers_cache2
     with:
       target-name: 'dd_pprof' # target name in binding.gyp
       package-manager: 'npm' # npm or yarn
