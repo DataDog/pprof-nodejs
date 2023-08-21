@@ -322,7 +322,7 @@ describe('Time Profiler', () => {
     const timeProfilerStub = {
       start: sinon.stub(),
       stop: sinon.stub().returns(v8TimeProfile),
-      v8ProfilerStuckEventLoopDetected: sinon.stub().returns(false),
+      v8ProfilerStuckEventLoopDetected: sinon.stub().returns(0),
     };
 
     before(() => {
@@ -358,7 +358,11 @@ describe('Time Profiler', () => {
       timeProfilerStub.stop.resetHistory();
 
       assert.deepEqual(timeProfile, time.stop(true));
-      assert(!time.v8ProfilerStuckEventLoopDetected(), 'v8 bug detected');
+      assert.equal(
+        time.v8ProfilerStuckEventLoopDetected(),
+        0,
+        'v8 bug detected'
+      );
 
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
@@ -379,7 +383,7 @@ describe('Time Profiler', () => {
     const timeProfilerStub = {
       start: sinon.stub(),
       stop: sinon.stub().returns(v8TimeProfile),
-      v8ProfilerStuckEventLoopDetected: sinon.stub().returns(true),
+      v8ProfilerStuckEventLoopDetected: sinon.stub().returns(2),
     };
 
     before(() => {
@@ -401,7 +405,11 @@ describe('Time Profiler', () => {
       sinon.assert.calledTwice(timeProfilerStub.start);
       sinon.assert.calledTwice(timeProfilerStub.stop);
 
-      assert(time.v8ProfilerStuckEventLoopDetected(), 'v8 bug not detected');
+      assert.equal(
+        time.v8ProfilerStuckEventLoopDetected(),
+        2,
+        'v8 bug not detected'
+      );
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stop.resetHistory();
 

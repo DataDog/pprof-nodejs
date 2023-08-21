@@ -35,7 +35,7 @@ type Milliseconds = number;
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
-let gV8ProfilerStuckEventLoopDetected = false;
+let gV8ProfilerStuckEventLoopDetected = 0;
 
 /** Make sure to stop profiler before node shuts down, otherwise profiling
  * signal might cause a crash if it occurs during shutdown */
@@ -58,6 +58,7 @@ export interface TimeProfilerOptions {
    */
   lineNumbers?: boolean;
   withContexts?: boolean;
+  workaroundV8Bug?: boolean;
 }
 
 export async function profile({
@@ -66,6 +67,7 @@ export async function profile({
   sourceMapper,
   lineNumbers = false,
   withContexts = false,
+  workaroundV8Bug = true,
 }: TimeProfilerOptions) {
   start({
     intervalMicros,
@@ -73,6 +75,7 @@ export async function profile({
     sourceMapper,
     lineNumbers,
     withContexts,
+    workaroundV8Bug,
   });
   await delay(durationMillis);
   return stop();
@@ -85,6 +88,7 @@ export function start({
   sourceMapper,
   lineNumbers = false,
   withContexts = false,
+  workaroundV8Bug = true,
 }: TimeProfilerOptions) {
   if (gProfiler) {
     throw new Error('Wall profiler is already started');
@@ -94,11 +98,12 @@ export function start({
     intervalMicros,
     durationMillis * 1000,
     lineNumbers,
-    withContexts
+    withContexts,
+    workaroundV8Bug
   );
   gSourceMapper = sourceMapper;
   gIntervalMicros = intervalMicros;
-  gV8ProfilerStuckEventLoopDetected = false;
+  gV8ProfilerStuckEventLoopDetected = 0;
   gProfiler.start();
 }
 
@@ -111,15 +116,18 @@ export function stop(
   }
 
   const profile = gProfiler.stop(restart);
-  if (restart && gProfiler.v8ProfilerStuckEventLoopDetected()) {
+  if (restart) {
+    gV8ProfilerStuckEventLoopDetected =
+      gProfiler.v8ProfilerStuckEventLoopDetected();
     // Workaround for v8 bug, where profiler event processor thread is stuck in
     // a loop eating 100% CPU, leading to empty profiles.
     // Fully stop and restart the profiler to reset the profile to a valid state.
-    gProfiler.stop(false);
-    gProfiler.start();
-    gV8ProfilerStuckEventLoopDetected = true;
+    if (gV8ProfilerStuckEventLoopDetected > 0) {
+      gProfiler.stop(false);
+      gProfiler.start();
+    }
   } else {
-    gV8ProfilerStuckEventLoopDetected = false;
+    gV8ProfilerStuckEventLoopDetected = 0;
   }
 
   const serialized_profile = serializeTimeProfile(
@@ -154,6 +162,7 @@ export function isStarted() {
   return !!gProfiler;
 }
 
+// Return 0 if no issue detected, 1 if possible issue, 2 if issue detected for certain
 export function v8ProfilerStuckEventLoopDetected() {
   return gV8ProfilerStuckEventLoopDetected;
 }
