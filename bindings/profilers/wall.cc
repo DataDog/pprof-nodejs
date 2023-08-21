@@ -617,7 +617,10 @@ bool WallProfiler::waitForSignal(uint64_t targetCallCount) {
   timespec ts = {0, samplingPeriodMicros_ * maxRetries * 1000};
   nanosleep(&ts, nullptr);
 #endif
-  return noCollectCallCount_.load(std::memory_order_relaxed) >= targetCallCount;
+  auto res =
+      noCollectCallCount_.load(std::memory_order_relaxed) >= targetCallCount;
+  std::atomic_signal_fence(std::memory_order_release);
+  return res;
 }
 
 Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
@@ -647,6 +650,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     profileId_ = StartInternal();
     // record callcount to wait for next signal at the end of function
     callCount = noCollectCallCount_.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
   }
 
   if (withContexts_ || workaroundV8Bug_) {
