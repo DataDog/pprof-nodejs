@@ -88,7 +88,7 @@ int detectV8Bug(const v8::CpuProfile* profile) {
     /*  Checking number of samples against number of hits potentially leads to
      * false positive because some ticks samples can be discarded if their
      * timestamp is older than profile start time because of queueing.
-     * Additionnaly check for leaf nodes with zero hitcount, if there is one,
+     * Additionally check for leaf nodes with zero hitcount, if there is one,
      * this implies that one non-tick sample was processed.
      */
     return 1;
@@ -377,9 +377,8 @@ WallProfiler::WallProfiler(int samplingPeriodMicros,
   // When starting a new profile, wait for one signal before and one signal
   // after to reduce the likelyhood that race condition occurs and one code
   // event just after triggers the issue.
-  workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF &&
-                     (NODE_MODULE_VERSION >= NODE_16_0_MODULE_VERSION);
-  detectV8Bug_ = (NODE_MODULE_VERSION >= NODE_16_0_MODULE_VERSION);
+  detectV8Bug_ = NODE_MODULE_VERSION >= NODE_16_0_MODULE_VERSION;
+  workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF && detectV8Bug_;
 
   if (withContexts_) {
     contexts_.reserve(durationMicros * 2 / samplingPeriodMicros);
@@ -519,15 +518,11 @@ Result WallProfiler::StartImpl() {
 
   profileId_ = StartInternal();
 
-  if (withContexts_) {
-    collectionMode_.store(CollectionMode::kCollectContexts,
-                          std::memory_order_relaxed);
-  } else {
-    collectionMode_.store(workaroundV8Bug_ ? CollectionMode::kPassThrough
-                                           : CollectionMode::kNoCollect,
-                          std::memory_order_relaxed);
-  }
-
+  auto collectionMode = withContexts_
+                            ? CollectionMode::kCollectContexts
+                            : (workaroundV8Bug_ ? CollectionMode::kPassThrough
+                                                : CollectionMode::kNoCollect);
+  collectionMode_.store(collectionMode, std::memory_order_relaxed);
   started_ = true;
   return {};
 }
@@ -674,7 +669,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   if (restart && withContexts_ && !workaroundV8Bug_) {
     // make sure timestamp changes to avoid mixing sample taken upon start and a
     // sample from signal handler
-    // If v8 bug workatound is enabled, reactivation of sample collection is
+    // If v8 bug workaround is enabled, reactivation of sample collection is
     // delayed until function end.
     auto now = Now();
     while (Now() == now) {
