@@ -53,11 +53,10 @@ static int64_t Now() {
 #endif
 
 using namespace v8;
-using namespace std::chrono;
 
 namespace dd {
 // Maximum number of rounds in the GetV8ToEpochOffset
-static int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
+static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
 int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
   int count = node->GetHitCount();
@@ -298,6 +297,7 @@ static int64_t midpoint(int64_t x, int64_t y) {
 }
 
 static int64_t GetV8ToEpochOffset() {
+  using namespace std::chrono;
   // Make a best effort to capture the difference between UNIX epoch and the V8
   // profiling timer as precisely as possible. Will make at most 20 attempts to
   // capture the epoch time within the same V8 microsecond and use the one with
