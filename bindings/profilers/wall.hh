@@ -15,6 +15,7 @@
  */
 
 #pragma once
+#define NOMINMAX
 
 #include "contexts.hh"
 
