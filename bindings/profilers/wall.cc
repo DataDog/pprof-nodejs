@@ -50,8 +50,6 @@ static int64_t Now() {
 static int64_t Now() {
   return 0;
 };
-// a predefined "max" macro on _WIN32 clashes with std::numeric_limits::max()
-#undef max
 #endif
 
 using namespace v8;
