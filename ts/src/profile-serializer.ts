@@ -175,9 +175,9 @@ function serialize<T extends ProfileNode>(
     if (!name) {
       if (loc.line) {
         if (loc.column) {
-          name = `(anonymous@L${loc.line}:C${loc.column})`;
+          name = `(anonymous:L#${loc.line}:C#${loc.column})`;
         } else {
-          name = `(anonymous@L${loc.line})`;
+          name = `(anonymous:L#${loc.line})`;
         }
       } else {
         name = '(anonymous)';
