@@ -8,13 +8,12 @@ on:
 
 jobs:
   build:
-    uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
+    uses: Datadog/action-prebuildify/.github/workflows/build.yml@szegedi/PROF-8599-fix-nodegyp-macos
     with:
       target-name: 'dd_pprof' # target name in binding.gyp
       package-manager: 'npm' # npm or yarn
       cache: true # enable caching of dependencies based on lockfile
       min-node-version: 14
-      prebuild: 'npm install node-gyp'
 
   dev_publish:
     needs: build
