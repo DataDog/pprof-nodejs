@@ -65,7 +65,11 @@ class WallProfiler : public Nan::ObjectWrap {
   bool started_ = false;
   bool workaroundV8Bug_;
   bool detectV8Bug_;
+  bool collectCpuTime_;
+  bool isMainThread_;
   int v8ProfilerStuckEventLoopDetected_ = 0;
+  int64_t startThreadCpuTime_ = 0;
+  int64_t startProcessCpuTime_ = 0;
 
   uint32_t* fields_;
   v8::Global<v8::Uint32Array> jsArray_;
@@ -74,6 +78,7 @@ class WallProfiler : public Nan::ObjectWrap {
     ContextPtr context;
     int64_t time_from;
     int64_t time_to;
+    int64_t cpu_time;
   };
 
   using ContextBuffer = std::vector<SampleContext>;
@@ -87,7 +92,8 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::CpuProfiler* CreateV8CpuProfiler();
 
   ContextsByNode GetContextsByNode(v8::CpuProfile* profile,
-                                   ContextBuffer& contexts);
+                                   ContextBuffer& contexts,
+                                   int64_t startCpuTime);
 
   bool waitForSignal(uint64_t targetCallCount = 0);
 
@@ -103,11 +109,13 @@ class WallProfiler : public Nan::ObjectWrap {
                         int durationMicros,
                         bool includeLines,
                         bool withContexts,
-                        bool workaroundV8bug);
+                        bool workaroundV8bug,
+                        bool collectCpuTime,
+                        bool isMainThread);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);
-  void PushContext(int64_t time_from, int64_t time_to);
+  void PushContext(int64_t time_from, int64_t time_to, int64_t cpu_time);
   Result StartImpl();
   std::string StartInternal();
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
@@ -121,6 +129,8 @@ class WallProfiler : public Nan::ObjectWrap {
     std::atomic_signal_fence(std::memory_order_acquire);
     return res;
   }
+
+  bool collectCpuTime() const { return collectCpuTime_; }
 
   int v8ProfilerStuckEventLoopDetected() const {
     return v8ProfilerStuckEventLoopDetected_;

@@ -22,6 +22,7 @@ export interface TimeProfile {
   topDownRoot: TimeProfileNode;
   /** Time in nanoseconds at which profile was started. */
   startTime: number;
+  hasCpuTime?: boolean;
 }
 
 export interface ProfileNode {
@@ -37,6 +38,7 @@ export interface ProfileNode {
 export interface TimeProfileNodeContext {
   context: object;
   timestamp: bigint; // end of sample taking; in microseconds since epoch
+  cpuTime: number; // cpu time in nanoseconds
 }
 
 export interface TimeProfileNode extends ProfileNode {

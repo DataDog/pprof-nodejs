@@ -24,6 +24,7 @@ import {
   constants as profilerConstants,
 } from './time-profiler-bindings';
 import {LabelSet, TimeProfileNodeContext} from './v8-types';
+import {isMainThread} from 'node:worker_threads';
 
 const {kSampleCount} = profilerConstants;
 
@@ -60,6 +61,7 @@ export interface TimeProfilerOptions {
   lineNumbers?: boolean;
   withContexts?: boolean;
   workaroundV8Bug?: boolean;
+  collectCpuTime?: boolean;
 }
 
 export async function profile({
@@ -69,6 +71,7 @@ export async function profile({
   lineNumbers = false,
   withContexts = false,
   workaroundV8Bug = true,
+  collectCpuTime = false,
 }: TimeProfilerOptions) {
   start({
     intervalMicros,
@@ -77,6 +80,7 @@ export async function profile({
     lineNumbers,
     withContexts,
     workaroundV8Bug,
+    collectCpuTime,
   });
   await delay(durationMillis);
   return stop();
@@ -90,6 +94,7 @@ export function start({
   lineNumbers = false,
   withContexts = false,
   workaroundV8Bug = true,
+  collectCpuTime = false,
 }: TimeProfilerOptions) {
   if (gProfiler) {
     throw new Error('Wall profiler is already started');
@@ -100,12 +105,20 @@ export function start({
     durationMillis * 1000,
     lineNumbers,
     withContexts,
-    workaroundV8Bug
+    workaroundV8Bug,
+    collectCpuTime,
+    isMainThread
   );
   gSourceMapper = sourceMapper;
   gIntervalMicros = intervalMicros;
   gV8ProfilerStuckEventLoopDetected = 0;
+
   gProfiler.start();
+
+  // If contexts are enabled, set an initial empty context
+  if (options.withContexts) {
+    setContext({});
+  }
 }
 
 export function stop(
@@ -157,6 +170,13 @@ export function setContext(context?: object) {
     throw new Error('Wall profiler is not started');
   }
   gProfiler.context = context;
+}
+
+export function getContext() {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  }
+  return gProfiler.context;
 }
 
 export function isStarted() {
