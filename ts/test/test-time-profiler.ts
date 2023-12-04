@@ -22,7 +22,7 @@ import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
 import {AssertionError} from 'assert';
-import {TimeProfileNodeContext} from '../src/v8-types';
+import {TimeProfileNode, TimeProfileNodeContext} from '../src/v8-types';
 
 const assert = require('assert');
 
@@ -73,16 +73,21 @@ describe('Time Profiler', () => {
       initialContext['aaa'] = 'bbb';
 
       let endTime = 0n;
-      time.stop(false, (context?: TimeProfileNodeContext) => {
+      time.stop(false, (node, context?: TimeProfileNodeContext) => {
+        if (node.name === time.constants.NON_JS_THREADS_FUNCTION_NAME) {
+          return {};
+        }
         assert.ok(context !== null, 'Context should not be null');
         if (!endTime) {
           endTime = BigInt(Date.now()) * 1000n;
         }
+
         assert.deepEqual(
           context!.context,
           initialContext,
           'Unexpected context'
         );
+
         assert.ok(context!.timestamp >= startTime);
         assert.ok(context!.timestamp <= endTime);
         checked = true;
@@ -126,7 +131,10 @@ describe('Time Profiler', () => {
         );
       }
 
-      function generateLabels(context?: TimeProfileNodeContext) {
+      function generateLabels(
+        _node: TimeProfileNode,
+        context?: TimeProfileNodeContext
+      ) {
         if (!context) {
           return {};
         }

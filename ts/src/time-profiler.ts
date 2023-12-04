@@ -16,14 +16,17 @@
 
 import delay from 'delay';
 
-import {serializeTimeProfile} from './profile-serializer';
+import {
+  serializeTimeProfile,
+  NON_JS_THREADS_FUNCTION_NAME,
+} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   TimeProfiler,
   getNativeThreadId,
   constants as profilerConstants,
 } from './time-profiler-bindings';
-import {LabelSet, TimeProfileNodeContext} from './v8-types';
+import {LabelSet, TimeProfileNode, TimeProfileNodeContext} from './v8-types';
 import {isMainThread} from 'node:worker_threads';
 
 const {kSampleCount} = profilerConstants;
@@ -123,7 +126,10 @@ export function start({
 
 export function stop(
   restart = false,
-  generateLabels?: (context?: TimeProfileNodeContext) => LabelSet
+  generateLabels?: (
+    node: TimeProfileNode,
+    context?: TimeProfileNodeContext
+  ) => LabelSet
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -188,6 +194,5 @@ export function v8ProfilerStuckEventLoopDetected() {
   return gV8ProfilerStuckEventLoopDetected;
 }
 
-export const constants = {kSampleCount};
-export {LabelSet};
-export {getNativeThreadId};
+export const constants = {kSampleCount, NON_JS_THREADS_FUNCTION_NAME};
+export {LabelSet, getNativeThreadId};

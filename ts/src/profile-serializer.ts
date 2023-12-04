@@ -40,6 +40,8 @@ import {
   TimeProfileNodeContext,
 } from './v8-types';
 
+export const NON_JS_THREADS_FUNCTION_NAME = '(non-JS threads)';
+
 /**
  * A stack of function IDs.
  */
@@ -272,7 +274,10 @@ export function serializeTimeProfile(
   intervalMicros: number,
   sourceMapper?: SourceMapper,
   recomputeSamplingInterval = false,
-  generateLabels?: (context?: TimeProfileNodeContext) => LabelSet
+  generateLabels?: (
+    node: TimeProfileNode,
+    context?: TimeProfileNodeContext
+  ) => LabelSet
 ): Profile {
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -300,7 +305,9 @@ export function serializeTimeProfile(
     let unlabelledHits = entry.node.hitCount;
     let unlabelledCpuTime = 0;
     for (const context of entry.node.contexts || []) {
-      const labels = generateLabels ? generateLabels(context) : context.context;
+      const labels = generateLabels
+        ? generateLabels(entry.node, context)
+        : context.context;
       if (Object.keys(labels).length > 0) {
         const values = [1, intervalNanos];
         if (prof.hasCpuTime) {
@@ -317,8 +324,8 @@ export function serializeTimeProfile(
         unlabelledCpuTime += context.cpuTime;
       }
     }
-    if (unlabelledHits > 0) {
-      const labels = generateLabels ? generateLabels() : {};
+    if (unlabelledHits > 0 || unlabelledCpuTime > 0) {
+      const labels = generateLabels ? generateLabels(entry.node) : {};
       const values = [unlabelledHits, unlabelledHits * intervalNanos];
       if (prof.hasCpuTime) {
         values.push(unlabelledCpuTime);
@@ -350,6 +357,25 @@ export function serializeTimeProfile(
     period: intervalNanos,
   };
 
+  if (prof.nonJSThreadsCpuTime) {
+    const node: TimeProfileNode = {
+      name: NON_JS_THREADS_FUNCTION_NAME,
+      scriptName: '',
+      scriptId: 0,
+      lineNumber: 0,
+      columnNumber: 0,
+      children: [],
+      hitCount: 0, // 0 because this should not be accounted for wall time
+      contexts: [
+        {
+          context: {},
+          timestamp: BigInt(0),
+          cpuTime: prof.nonJSThreadsCpuTime,
+        },
+      ],
+    };
+    prof.topDownRoot.children.push(node);
+  }
   serialize(
     profile,
     prof.topDownRoot,

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "contexts.hh"
+#include "thread-cpu-clock.hh"
 
 #include <nan.h>
 #include <v8-profiler.h>
@@ -68,9 +69,11 @@ class WallProfiler : public Nan::ObjectWrap {
   bool collectCpuTime_;
   bool isMainThread_;
   int v8ProfilerStuckEventLoopDetected_ = 0;
+  ProcessCpuClock::time_point startProcessCpuTime_{};
   int64_t startThreadCpuTime_ = 0;
-  int64_t startProcessCpuTime_ = 0;
-
+  /* threadCpuStopWatch_ is used to measure CPU consumed by JS thread owning the
+   * WallProfiler object during profiling period of main worker thread. */
+  ThreadCpuStopWatch threadCpuStopWatch_;
   uint32_t* fields_;
   v8::Global<v8::Uint32Array> jsArray_;
 
@@ -134,6 +137,10 @@ class WallProfiler : public Nan::ObjectWrap {
 
   int v8ProfilerStuckEventLoopDetected() const {
     return v8ProfilerStuckEventLoopDetected_;
+  }
+
+  ThreadCpuClock::duration GetAndResetThreadCpu() {
+    return threadCpuStopWatch_.GetAndReset();
   }
 
   static NAN_METHOD(New);

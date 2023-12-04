@@ -23,6 +23,8 @@ export interface TimeProfile {
   /** Time in nanoseconds at which profile was started. */
   startTime: number;
   hasCpuTime?: boolean;
+  /** CPU time of non-JS threads, only reported for the main worker thread */
+  nonJSThreadsCpuTime?: number;
 }
 
 export interface ProfileNode {

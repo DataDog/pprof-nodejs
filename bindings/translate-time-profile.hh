@@ -27,6 +27,7 @@ v8::Local<v8::Value> TranslateTimeProfile(
     const v8::CpuProfile* profile,
     bool includeLineInfo,
     ContextsByNode* contextsByNode = nullptr,
-    bool hasCpuTime = false);
+    bool hasCpuTime = false,
+    int64_t nonJSThreadsCpuTime = 0);
 
 }  // namespace dd

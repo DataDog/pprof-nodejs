@@ -46,35 +46,12 @@ static int64_t Now() {
   return v8::base::TimeTicks::Now();
 };
 
-static constexpr std::chrono::nanoseconds timespec_to_duration(timespec ts) {
-  return std::chrono::seconds{ts.tv_sec} + std::chrono::nanoseconds{ts.tv_nsec};
-}
-
-static std::chrono::nanoseconds currentThreadCpuTime() {
-  timespec ts;
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-  return timespec_to_duration(ts);
-}
-
-static std::chrono::nanoseconds processCpuTime() {
-  timespec ts;
-  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
-  return timespec_to_duration(ts);
-}
-
 #else
 #define DD_WALL_USE_SIGPROF false
 static int64_t Now() {
   return 0;
 };
 
-static std::chrono::nanoseconds currentThreadCpuTime() {
-  return std::chrono::nanoseconds{0};
-}
-
-static std::chrono::nanoseconds processCpuTime() {
-  return std::chrono::nanoseconds{0};
-}
 #endif
 
 using namespace v8;
@@ -150,7 +127,9 @@ class ProtectedProfilerMap {
   }
 
   bool RemoveProfiler(const v8::Isolate* isolate, WallProfiler* profiler) {
-    return UpdateProfilers([isolate, profiler](auto map) {
+    return UpdateProfilers([isolate, profiler, this](auto map) {
+      terminatedWorkersCpu_ += profiler->GetAndResetThreadCpu();
+
       if (isolate != nullptr) {
         auto it = map->find(isolate);
         if (it != map->end() && it->second == profiler) {
@@ -174,6 +153,33 @@ class ProtectedProfilerMap {
     return UpdateProfilers([isolate, profiler](auto map) {
       return map->emplace(isolate, profiler).second;
     });
+  }
+
+  ThreadCpuClock::duration GatherTotalWorkerCpuAndReset() {
+    std::lock_guard<std::mutex> lock(update_mutex_);
+
+    // Retrieve CPU of workers that have terminated during the last period
+    ThreadCpuClock::duration totalWorkerCpu = terminatedWorkersCpu_;
+
+    // Reset terminated workers cpu to 0
+    terminatedWorkersCpu_ = ThreadCpuClock::duration::zero();
+
+    if (!init_) {
+      return totalWorkerCpu;
+    }
+
+    auto currProfilers = profilers_.load(std::memory_order_acquire);
+    // Wait until sighandler is done using the map
+    while (!currProfilers) {
+      currProfilers = profilers_.load(std::memory_order_relaxed);
+    }
+
+    // Gather CPU of workers that are still running
+    for (auto& profiler : *currProfilers) {
+      totalWorkerCpu += profiler.second->GetAndResetThreadCpu();
+    }
+
+    return totalWorkerCpu;
   }
 
  private:
@@ -211,6 +217,7 @@ class ProtectedProfilerMap {
   mutable std::atomic<ProfilerMap*> profilers_;
   std::mutex update_mutex_;
   bool init_ = false;
+  std::chrono::nanoseconds terminatedWorkersCpu_{};
 };
 
 using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
@@ -309,9 +316,7 @@ void SignalHandler::HandleProfilerSignal(int sig,
 
   int64_t cpu_time = 0;
   if (prof->collectCpuTime()) {
-    timespec ts;
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-    cpu_time = timespec_to_duration(ts).count();
+    cpu_time = CurrentThreadCpuClock::now().time_since_epoch().count();
   }
   auto time_from = Now();
   old_handler(sig, info, context);
@@ -521,7 +526,7 @@ void WallProfiler::Dispose(Isolate* isolate) {
 
 NAN_METHOD(WallProfiler::New) {
   if (info.Length() != 7) {
-    return Nan::ThrowTypeError("WallProfiler must have 6 arguments.");
+    return Nan::ThrowTypeError("WallProfiler must have 7 arguments.");
   }
 
   if (!info[0]->IsNumber()) {
@@ -672,8 +677,9 @@ std::string WallProfiler::StartInternal() {
   }
 
   if (collectCpuTime_) {
-    startThreadCpuTime_ = currentThreadCpuTime().count();
-    startProcessCpuTime_ = processCpuTime().count();
+    startThreadCpuTime_ =
+        CurrentThreadCpuClock::now().time_since_epoch().count();
+    startProcessCpuTime_ = ProcessCpuClock::now();
   }
 
   // Force collection of two other non-tick samples (ie. that will not add to
@@ -773,7 +779,8 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     }
   }
 
-  auto startCpuTime = startThreadCpuTime_;
+  auto startThreadCpuTime = startThreadCpuTime_;
+  auto startProcessCpuTime = startProcessCpuTime_;
 
   if (restart) {
     profileId_ = StartInternal();
@@ -813,9 +820,27 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   }
 
   if (withContexts_) {
-    auto contextsByNode = GetContextsByNode(v8_profile, contexts, startCpuTime);
-    profile = TranslateTimeProfile(
-        v8_profile, includeLines_, &contextsByNode, collectCpuTime_);
+    int64_t nonJSThreadsCpuTime{};
+
+    if (isMainThread_) {
+      // account for non-JS threads CPU only in main thread
+      // CPU time of non-JS threads is the difference between process CPU time
+      // and sum of all worker JS thread during the profiling period of main
+      // worker thread.
+      auto totalWorkerCpu = g_profilers.GatherTotalWorkerCpuAndReset();
+      auto processCpu = ProcessCpuClock::now() - startProcessCpuTime;
+      nonJSThreadsCpuTime =
+          std::max(processCpu - totalWorkerCpu, ProcessCpuClock::duration{})
+              .count();
+    }
+    auto contextsByNode =
+        GetContextsByNode(v8_profile, contexts, startThreadCpuTime);
+
+    profile = TranslateTimeProfile(v8_profile,
+                                   includeLines_,
+                                   &contextsByNode,
+                                   collectCpuTime_,
+                                   nonJSThreadsCpuTime);
 
   } else {
     profile = TranslateTimeProfile(v8_profile, includeLines_);
