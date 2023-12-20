@@ -261,10 +261,6 @@ describe('Time Profiler', () => {
                   );
                 });
               } else {
-                if (labels.length >= 3) {
-                  console.log(getLabels(labels));
-                }
-
                 assert(labels.length < 3, 'loop can have at most one label');
                 labels.forEach(label => {
                   assert(
