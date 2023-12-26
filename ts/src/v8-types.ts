@@ -59,3 +59,16 @@ export interface Allocation {
 export interface LabelSet {
   [key: string]: string | number;
 }
+
+export interface GenerateAllocationLabelsFunction {
+  ({node}: {node: AllocationProfileNode}): LabelSet;
+}
+
+export interface GenerateTimeLabelsArgs {
+  node: TimeProfileNode;
+  context?: TimeProfileNodeContext;
+}
+
+export interface GenerateTimeLabelsFunction {
+  (args: GenerateTimeLabelsArgs): LabelSet;
+}

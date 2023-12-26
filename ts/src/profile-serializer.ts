@@ -33,11 +33,11 @@ import {
 } from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
-  LabelSet,
+  GenerateAllocationLabelsFunction,
+  GenerateTimeLabelsFunction,
   ProfileNode,
   TimeProfile,
   TimeProfileNode,
-  TimeProfileNodeContext,
 } from './v8-types';
 
 export const NON_JS_THREADS_FUNCTION_NAME = '(non-JS threads)';
@@ -274,10 +274,7 @@ export function serializeTimeProfile(
   intervalMicros: number,
   sourceMapper?: SourceMapper,
   recomputeSamplingInterval = false,
-  generateLabels?: (
-    node: TimeProfileNode,
-    context?: TimeProfileNodeContext
-  ) => LabelSet
+  generateLabels?: GenerateTimeLabelsFunction
 ): Profile {
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -306,7 +303,7 @@ export function serializeTimeProfile(
     let unlabelledCpuTime = 0;
     for (const context of entry.node.contexts || []) {
       const labels = generateLabels
-        ? generateLabels(entry.node, context)
+        ? generateLabels({node: entry.node, context})
         : context.context;
       if (Object.keys(labels).length > 0) {
         const values = [1, intervalNanos];
@@ -325,7 +322,7 @@ export function serializeTimeProfile(
       }
     }
     if (unlabelledHits > 0 || unlabelledCpuTime > 0) {
-      const labels = generateLabels ? generateLabels(entry.node) : {};
+      const labels = generateLabels ? generateLabels({node: entry.node}) : {};
       const values = [unlabelledHits, unlabelledHits * intervalNanos];
       if (prof.hasCpuTime) {
         values.push(unlabelledCpuTime);
@@ -428,14 +425,14 @@ export function serializeHeapProfile(
   intervalBytes: number,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: (node: AllocationProfileNode) => LabelSet
+  generateLabels?: GenerateAllocationLabelsFunction
 ): Profile {
   const appendHeapEntryToSamples: AppendEntryToSamples<
     AllocationProfileNode
   > = (entry: Entry<AllocationProfileNode>, samples: Sample[]) => {
     if (entry.node.allocations.length > 0) {
       const labels = generateLabels
-        ? buildLabels(generateLabels(entry.node), stringTable)
+        ? buildLabels(generateLabels({node: entry.node}), stringTable)
         : [];
       for (const alloc of entry.node.allocations) {
         const sample = new Sample({

@@ -26,7 +26,7 @@ import {
   getNativeThreadId,
   constants as profilerConstants,
 } from './time-profiler-bindings';
-import {LabelSet, TimeProfileNode, TimeProfileNodeContext} from './v8-types';
+import {GenerateTimeLabelsFunction} from './v8-types';
 import {isMainThread} from 'node:worker_threads';
 
 const {kSampleCount} = profilerConstants;
@@ -105,10 +105,7 @@ export function start(options: TimeProfilerOptions = {}) {
 
 export function stop(
   restart = false,
-  generateLabels?: (
-    node: TimeProfileNode,
-    context?: TimeProfileNodeContext
-  ) => LabelSet
+  generateLabels?: GenerateTimeLabelsFunction
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -174,4 +171,4 @@ export function v8ProfilerStuckEventLoopDetected() {
 }
 
 export const constants = {kSampleCount, NON_JS_THREADS_FUNCTION_NAME};
-export {LabelSet, getNativeThreadId};
+export {getNativeThreadId};

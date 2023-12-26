@@ -22,7 +22,7 @@ import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
 import {AssertionError} from 'assert';
-import {TimeProfileNode, TimeProfileNodeContext} from '../src/v8-types';
+import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
 
 const assert = require('assert');
 
@@ -73,7 +73,7 @@ describe('Time Profiler', () => {
       initialContext['aaa'] = 'bbb';
 
       let endTime = 0n;
-      time.stop(false, (node, context?: TimeProfileNodeContext) => {
+      time.stop(false, ({node, context}: GenerateTimeLabelsArgs) => {
         if (node.name === time.constants.NON_JS_THREADS_FUNCTION_NAME) {
           return {};
         }
@@ -131,14 +131,11 @@ describe('Time Profiler', () => {
         );
       }
 
-      function generateLabels(
-        _node: TimeProfileNode,
-        context?: TimeProfileNodeContext
-      ) {
+      function generateLabels({context}: GenerateTimeLabelsArgs) {
         if (!context) {
           return {};
         }
-        const labels: time.LabelSet = {};
+        const labels: LabelSet = {};
         for (const [key, value] of Object.entries(context.context)) {
           if (typeof value === 'string') {
             labels[key] = value;
