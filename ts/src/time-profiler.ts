@@ -67,53 +67,32 @@ export interface TimeProfilerOptions {
   collectCpuTime?: boolean;
 }
 
-export async function profile({
-  intervalMicros = DEFAULT_INTERVAL_MICROS,
-  durationMillis = DEFAULT_DURATION_MILLIS,
-  sourceMapper,
-  lineNumbers = false,
-  withContexts = false,
-  workaroundV8Bug = true,
-  collectCpuTime = false,
-}: TimeProfilerOptions) {
-  start({
-    intervalMicros,
-    durationMillis,
-    sourceMapper,
-    lineNumbers,
-    withContexts,
-    workaroundV8Bug,
-    collectCpuTime,
-  });
-  await delay(durationMillis);
+const DEFAULT_OPTIONS: TimeProfilerOptions = {
+  durationMillis: DEFAULT_DURATION_MILLIS,
+  intervalMicros: DEFAULT_INTERVAL_MICROS,
+  lineNumbers: false,
+  withContexts: false,
+  workaroundV8Bug: true,
+  collectCpuTime: false,
+};
+
+export async function profile(options: TimeProfilerOptions = {}) {
+  options = {...DEFAULT_OPTIONS, ...options};
+  start(options);
+  await delay(options.durationMillis!);
   return stop();
 }
 
 // Temporarily retained for backwards compatibility with older tracer
-export function start({
-  intervalMicros = DEFAULT_INTERVAL_MICROS,
-  durationMillis = DEFAULT_DURATION_MILLIS,
-  sourceMapper,
-  lineNumbers = false,
-  withContexts = false,
-  workaroundV8Bug = true,
-  collectCpuTime = false,
-}: TimeProfilerOptions) {
+export function start(options: TimeProfilerOptions = {}) {
+  options = {...DEFAULT_OPTIONS, ...options};
   if (gProfiler) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler(
-    intervalMicros,
-    durationMillis * 1000,
-    lineNumbers,
-    withContexts,
-    workaroundV8Bug,
-    collectCpuTime,
-    isMainThread
-  );
-  gSourceMapper = sourceMapper;
-  gIntervalMicros = intervalMicros;
+  gProfiler = new TimeProfiler({...options, isMainThread});
+  gSourceMapper = options.sourceMapper;
+  gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
 
   gProfiler.start();

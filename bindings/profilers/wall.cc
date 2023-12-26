@@ -470,14 +470,14 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
   return contextsByNode;
 }
 
-WallProfiler::WallProfiler(int samplingPeriodMicros,
-                           int durationMicros,
+WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
+                           std::chrono::microseconds duration,
                            bool includeLines,
                            bool withContexts,
                            bool workaroundV8Bug,
                            bool collectCpuTime,
                            bool isMainThread)
-    : samplingPeriodMicros_(samplingPeriodMicros),
+    : samplingPeriod_(samplingPeriod),
       includeLines_(includeLines),
       withContexts_(withContexts),
       isMainThread_(isMainThread) {
@@ -490,7 +490,7 @@ WallProfiler::WallProfiler(int samplingPeriodMicros,
   collectCpuTime_ = collectCpuTime && withContexts;
 
   if (withContexts_) {
-    contexts_.reserve(durationMicros * 2 / samplingPeriodMicros);
+    contexts_.reserve(duration * 2 / samplingPeriod);
   }
 
   curContext_.store(&context1_, std::memory_order_relaxed);
@@ -525,61 +525,97 @@ void WallProfiler::Dispose(Isolate* isolate) {
 }
 
 NAN_METHOD(WallProfiler::New) {
-  if (info.Length() != 7) {
-    return Nan::ThrowTypeError("WallProfiler must have 7 arguments.");
-  }
-
-  if (!info[0]->IsNumber()) {
-    return Nan::ThrowTypeError("Sample period must be a number.");
-  }
-  if (!info[1]->IsNumber()) {
-    return Nan::ThrowTypeError("Duration must be a number.");
-  }
-  if (!info[2]->IsBoolean()) {
-    return Nan::ThrowTypeError("includeLines must be a boolean.");
-  }
-  if (!info[3]->IsBoolean()) {
-    return Nan::ThrowTypeError("withContext must be a boolean.");
-  }
-  if (!info[4]->IsBoolean()) {
-    return Nan::ThrowTypeError("workaroundV8bug must be a boolean.");
-  }
-  if (!info[5]->IsBoolean()) {
-    return Nan::ThrowTypeError("collectCpuTime must be a boolean.");
-  }
-  if (!info[6]->IsBoolean()) {
-    return Nan::ThrowTypeError("isMainThread must be a boolean.");
+  if (info.Length() != 1 || !info[0]->IsObject()) {
+    return Nan::ThrowTypeError("WallProfiler must have one object argument.");
   }
 
   if (info.IsConstructCall()) {
-    int interval = info[0].As<v8::Integer>()->Value();
-    int duration = info[1].As<v8::Integer>()->Value();
+    auto arg = info[0].As<v8::Object>();
+    auto intervalMicrosValue =
+        Nan::Get(arg, Nan::New<v8::String>("intervalMicros").ToLocalChecked());
+    if (intervalMicrosValue.IsEmpty() ||
+        !intervalMicrosValue.ToLocalChecked()->IsNumber()) {
+      return Nan::ThrowTypeError("intervalMicros must be a number.");
+    }
 
-    if (interval <= 0) {
+    std::chrono::microseconds interval{
+        intervalMicrosValue.ToLocalChecked().As<v8::Integer>()->Value()};
+
+    if (interval <= std::chrono::microseconds::zero()) {
       return Nan::ThrowTypeError("Sample rate must be positive.");
     }
-    if (duration <= 0) {
+
+    auto durationMillisValue =
+        Nan::Get(arg, Nan::New<v8::String>("durationMillis").ToLocalChecked());
+    if (durationMillisValue.IsEmpty() ||
+        !durationMillisValue.ToLocalChecked()->IsNumber()) {
+      return Nan::ThrowTypeError("durationMillis must be a number.");
+    }
+
+    std::chrono::milliseconds duration{
+        durationMillisValue.ToLocalChecked().As<v8::Integer>()->Value()};
+
+    if (duration <= std::chrono::microseconds::zero()) {
       return Nan::ThrowTypeError("Duration must be positive.");
     }
     if (duration < interval) {
       return Nan::ThrowTypeError("Duration must not be less than sample rate.");
     }
 
-    bool includeLines = info[2].As<v8::Boolean>()->Value();
-    bool withContext = info[3].As<v8::Boolean>()->Value();
-    bool workaroundV8bug = info[4].As<v8::Boolean>()->Value();
-    bool collectCpuTime = info[5].As<v8::Boolean>()->Value();
-    bool isMainThread = info[6].As<v8::Boolean>()->Value();
+    auto lineNumbersValue =
+        Nan::Get(arg, Nan::New<v8::String>("lineNumbers").ToLocalChecked());
+    if (lineNumbersValue.IsEmpty() ||
+        !lineNumbersValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("lineNumbers must be a boolean.");
+    }
+    bool lineNumbers =
+        lineNumbersValue.ToLocalChecked().As<v8::Boolean>()->Value();
 
-    if (withContext && !DD_WALL_USE_SIGPROF) {
+    auto withContextsValue =
+        Nan::Get(arg, Nan::New<v8::String>("withContexts").ToLocalChecked());
+    if (withContextsValue.IsEmpty() ||
+        !withContextsValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("withContext must be a boolean.");
+    }
+    bool withContexts =
+        withContextsValue.ToLocalChecked().As<v8::Boolean>()->Value();
+
+    auto workaroundV8BugValue =
+        Nan::Get(arg, Nan::New<v8::String>("workaroundV8Bug").ToLocalChecked());
+    if (workaroundV8BugValue.IsEmpty() ||
+        !workaroundV8BugValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("workaroundV8Bug must be a boolean.");
+    }
+    bool workaroundV8Bug =
+        workaroundV8BugValue.ToLocalChecked().As<v8::Boolean>()->Value();
+
+    auto collectCpuTimeValue =
+        Nan::Get(arg, Nan::New<v8::String>("collectCpuTime").ToLocalChecked());
+    if (collectCpuTimeValue.IsEmpty() ||
+        !collectCpuTimeValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("collectCpuTime must be a boolean.");
+    }
+    bool collectCpuTime =
+        collectCpuTimeValue.ToLocalChecked().As<v8::Boolean>()->Value();
+
+    auto isMainThreadValue =
+        Nan::Get(arg, Nan::New<v8::String>("isMainThread").ToLocalChecked());
+    if (isMainThreadValue.IsEmpty() ||
+        !isMainThreadValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("isMainThread must be a boolean.");
+    }
+    bool isMainThread =
+        isMainThreadValue.ToLocalChecked().As<v8::Boolean>()->Value();
+
+    if (withContexts && !DD_WALL_USE_SIGPROF) {
       return Nan::ThrowTypeError("Contexts are not supported.");
     }
 
-    if (collectCpuTime && !withContext) {
+    if (collectCpuTime && !withContexts) {
       return Nan::ThrowTypeError("Cpu time collection requires contexts.");
     }
 
-    if (includeLines && withContext) {
+    if (lineNumbers && withContexts) {
       // Currently custom contexts are not compatible with caller line
       // information, because it's not possible to associate context with line
       // ticks:
@@ -600,21 +636,18 @@ NAN_METHOD(WallProfiler::New) {
 
     WallProfiler* obj = new WallProfiler(interval,
                                          duration,
-                                         includeLines,
-                                         withContext,
-                                         workaroundV8bug,
+                                         lineNumbers,
+                                         withContexts,
+                                         workaroundV8Bug,
                                          collectCpuTime,
                                          isMainThread);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
-    const int argc = 7;
-    v8::Local<v8::Value> argv[argc] = {
-        info[0], info[1], info[2], info[3], info[4], info[5], info[6]};
+    v8::Local<v8::Value> arg = info[0];
     v8::Local<v8::Function> cons = Nan::New(
         PerIsolateData::For(info.GetIsolate())->WallProfilerConstructor());
-    info.GetReturnValue().Set(
-        Nan::NewInstance(cons, argc, argv).ToLocalChecked());
+    info.GetReturnValue().Set(Nan::NewInstance(cons, 1, &arg).ToLocalChecked());
   }
 }
 
@@ -747,7 +780,8 @@ bool WallProfiler::waitForSignal(uint64_t targetCallCount) {
   // wait for a maximum of 2 sample period
   // if a signal occurs it will interrupt sleep (we use nanosleep and not
   // uv_sleep because we want this behaviour)
-  timespec ts = {0, samplingPeriodMicros_ * maxRetries * 1000};
+  timespec ts = {
+      0, std::chrono::nanoseconds(samplingPeriod_ * maxRetries).count()};
   nanosleep(&ts, nullptr);
 #endif
   auto res =
@@ -951,7 +985,8 @@ v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
       return nullptr;
     }
     cpuProfiler_ = v8::CpuProfiler::New(isolate);
-    cpuProfiler_->SetSamplingInterval(samplingPeriodMicros_);
+    cpuProfiler_->SetSamplingInterval(
+        std::chrono::microseconds(samplingPeriod_).count());
   }
   return cpuProfiler_;
 }

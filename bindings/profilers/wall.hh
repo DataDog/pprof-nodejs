@@ -45,7 +45,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
 
-  int samplingPeriodMicros_ = 0;
+  std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
@@ -108,8 +108,8 @@ class WallProfiler : public Nan::ObjectWrap {
    * every period. The parameter is used to preallocate data structures that
    * should not be reallocated in async signal safe code.
    */
-  explicit WallProfiler(int samplingPeriodMicros,
-                        int durationMicros,
+  explicit WallProfiler(std::chrono::microseconds samplingPeriod,
+                        std::chrono::microseconds duration,
                         bool includeLines,
                         bool withContexts,
                         bool workaroundV8bug,
