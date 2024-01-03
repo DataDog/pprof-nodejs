@@ -17,7 +17,8 @@
     "fix": "gts fix",
     "lint": "jsgl --local . && gts check && clang-format --style file -n -Werror --glob='bindings/**/*.{h,hh,cpp,cc}'",
     "format": "clang-format --style file -i --glob='bindings/**/*.{h,hh,cpp,cc}'",
-    "prepare": "npm run compile && npm run rebuild",
+    "prebuild": "node scripts/prebuild.js",
+    "prepare": "node scripts/prepare.js",
     "pretest": "npm run compile"
   },
   "author": {
@@ -49,6 +50,8 @@
     "mocha": "^10.2.0",
     "nan": "^2.18.0",
     "nyc": "^15.1.0",
+    "rimraf": "^5.0.5",
+    "semver": "^7.5.4",
     "sinon": "^15.2.0",
     "source-map-support": "^0.5.21",
     "tmp": "0.2.1",
@@ -61,10 +64,8 @@
     "package-lock.json",
     "package.json",
     "README.md",
-    "scripts/preinstall.js",
-    "scripts/require-package-json.js",
-    "scripts/should_rebuild.js",
-    "prebuilds"
+    "prebuilds",
+    "build/*/*.node"
   ],
   "nyc": {
     "exclude": [
