@@ -941,6 +941,7 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
+  Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl,
                           "v8ProfilerStuckEventLoopDetected",
                           V8ProfilerStuckEventLoopDetected);
@@ -1034,6 +1035,11 @@ NAN_GETTER(WallProfiler::SharedArrayGetter) {
 NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
   info.GetReturnValue().Set(profiler->v8ProfilerStuckEventLoopDetected());
+}
+
+NAN_METHOD(WallProfiler::Dispose) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  delete profiler;
 }
 
 void WallProfiler::PushContext(int64_t time_from,
