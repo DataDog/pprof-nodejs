@@ -58,6 +58,33 @@
                     "defines": [
                         "NOMINMAX"
                     ],
+                    'msvs_settings': {
+                        'VCCLCompilerTool': {
+                            'AdditionalOptions': [
+                                '/Zc:__cplusplus',
+                                '-std:c++17',
+                            ],
+                        },                        
+                    },
+                },
+            ],
+            ["OS == 'linux'",
+                {
+                "cflags+":
+                    ["-Wno-deprecated-declarations", "-Werror"],
+                "cflags_cc!": ["-std=gnu++14", "-std=gnu++1y"],
+                "cflags_cc": ["-std=gnu++17"],
+                }
+            ],
+            ["OS == 'mac'",
+                {
+                'xcode_settings': {
+                    'OTHER_CFLAGS+': [
+                        "-Wno-deprecated-declarations",
+                        "-Werror",
+                        '-std=gnu++17',
+                        ],
+                    },
                 }
             ],
             ["address_sanitizer == 'true' and OS == 'mac'", {
