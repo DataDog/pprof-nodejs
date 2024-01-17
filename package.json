@@ -18,11 +18,13 @@
     "prepare": "npm run compile && npm run rebuild",
     "pretest:js-asan": "npm run compile && npm run build:asan",
     "pretest:js-tsan": "npm run compile && npm run build:tsan",
+    "pretest:js-valgrind": "npm run pretest",
     "pretest": "npm run compile",
     "rebuild": "node-gyp rebuild --jobs=max",
     "test:cpp": "node scripts/cctest.js",
     "test:js-asan": "LSAN_OPTIONS='suppressions=./suppressions/lsan_suppr.txt' LD_PRELOAD=`gcc -print-file-name=libasan.so` mocha out/test/test-*.js",
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
+    "test:js-valgrind": "valgrind --leak-check=full mocha out/test/test-*.js",
     "test:js": "nyc mocha -r source-map-support/register out/test/test-*.js",
     "test": "npm run test:js && npm run test:cpp"
   },

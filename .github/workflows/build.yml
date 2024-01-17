@@ -20,6 +20,20 @@ jobs:
       - run: npm install
       - run: npm run test:js-asan
 
+  valgrind:
+    strategy:
+      matrix:
+        version: [14, 16, 18, 20, 21]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.version }}
+      - run: sudo apt-get update && sudo apt-get install valgrind
+      - run: npm install
+      - run: npm run test:js-valgrind
+
   build:
     uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
     with:
