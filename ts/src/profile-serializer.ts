@@ -354,7 +354,7 @@ export function serializeTimeProfile(
     period: intervalNanos,
   };
 
-  if (prof.nonJSThreadsCpuTime) {
+  if (prof.hasCpuTime && prof.nonJSThreadsCpuTime) {
     const node: TimeProfileNode = {
       name: NON_JS_THREADS_FUNCTION_NAME,
       scriptName: '',
