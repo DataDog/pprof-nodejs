@@ -141,7 +141,7 @@ describe('Time Profiler', () => {
             labels[key] = value;
             if (
               enableEndPoint &&
-              key === 'local root span id' &&
+              key === rootSpanIdLabel &&
               value === rootSpanId
             ) {
               labels[endPointLabel] = endPoint;
@@ -219,7 +219,9 @@ describe('Time Profiler', () => {
         }
 
         function labelStr(label: Label) {
-          return label ? stringTable.strings[idx(label.str) + 1] : 'undefined';
+          return label
+            ? `${getString(label.key)}=${getString(label.str)}`
+            : 'undefined';
         }
 
         function getLabels(labels: Label[]) {
@@ -246,7 +248,7 @@ describe('Time Profiler', () => {
               if (enableEndPoint) {
                 assert(
                   labels.length < 4,
-                  'loop can have at most one label and one endpoint'
+                  'loop can have at most two labels and one endpoint'
                 );
                 labels.forEach(label => {
                   assert(
@@ -271,7 +273,12 @@ describe('Time Profiler', () => {
 
               break;
             case fn0Idx:
-              assert(labels.length < 2, 'fn0 can have at most one label');
+              assert(
+                labels.length < 2,
+                `fn0 can have at most one label, instead got: ${labels.map(
+                  labelStr
+                )}`
+              );
               labels.forEach(label => {
                 if (labelIs(label, 'label', 'value0')) {
                   fn0ObservedWithLabel0 = true;
