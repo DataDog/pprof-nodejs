@@ -192,11 +192,12 @@ describe('Time Profiler', () => {
       function validateProfile(profile: Profile) {
         // Get string table indices for strings we're interested in
         const stringTable = profile.stringTable;
-        const [loopIdx, fn0Idx, fn1Idx, fn2Idx] = [
+        const [loopIdx, fn0Idx, fn1Idx, fn2Idx, hrtimeBigIntIdx] = [
           'loop',
           'fn0',
           'fn1',
           'fn2',
+          'hrtimeBigInt',
         ].map(x => stringTable.dedup(x));
 
         function getString(n: number | bigint): string {
@@ -236,12 +237,20 @@ describe('Time Profiler', () => {
         let fn1ObservedWithLabel1 = false;
         let fn2ObservedWithoutLabels = false;
         profile.sample.forEach(sample => {
-          const locIdx = idx(sample.locationId[0]);
-          const loc = profile.location[locIdx];
-          const fnIdx = idx(loc.line[0].functionId);
-          const fn = profile.function[fnIdx];
-          const fnName = fn.name;
+          let locIdx = idx(sample.locationId[0]);
+          let loc = profile.location[locIdx];
+          let fnIdx = idx(loc.line[0].functionId);
+          let fn = profile.function[fnIdx];
+          let fnName = fn.name;
           const labels = sample.label;
+
+          if (fnName === hrtimeBigIntIdx) {
+            locIdx = idx(sample.locationId[1]);
+            loc = profile.location[locIdx];
+            fnIdx = idx(loc.line[0].functionId);
+            fn = profile.function[fnIdx];
+            fnName = fn.name;
+          }
 
           switch (fnName) {
             case loopIdx:

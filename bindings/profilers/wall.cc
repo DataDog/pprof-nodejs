@@ -391,6 +391,7 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
   auto V8toEpochOffset = GetV8ToEpochOffset();
   auto lastCpuTime = startCpuTime;
 
+  printf("sampleCount: %d, contextCount: %zu\n", sampleCount, contexts.size());
   // skip first sample because it's the one taken on profiler start, outside of
   // signal handler
   for (int i = 1; i < sampleCount; i++) {
@@ -408,6 +409,7 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
                                           profile->GetSampleTimestamp(i)) {
       // detected  out-of-order sample, process next sample
       deltaIdx = 1;
+      printf("Detected out-of-order sample at index %d\n", i);
     }
 
     auto sampleIdx = i + deltaIdx;
@@ -415,15 +417,41 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
 
     auto sampleTimestamp = profile->GetSampleTimestamp(sampleIdx);
 
+    printf("sampleIdx: %d, sampleTimestamp: %lld, funcName: ",
+      sampleIdx, sampleTimestamp);
+
+    auto node = profile->GetSample(sampleIdx);
+    while (node) {
+      auto name = node->GetFunctionNameStr();
+      printf("%s:", name);
+      if (strcmp(name, "hrtimeBigInt")) {
+        break;
+      }
+      node = node->GetParent();
+    }
+    printf("\n");
+
     // This loop will drop all contexts that are too old to be associated with
     // the current sample; association is done by matching each sample with
     // context whose [time_from,time_to] interval encompasses sample timestamp.
     while (contextIt != contexts.end()) {
       auto& sampleContext = *contextIt;
+      printf("sampleContext.time_from: %" PRId64, sampleContext.time_from);
+      auto value = sampleContext.context->Get(isolate);
+      if (!value.IsEmpty()) {
+        auto label = value.As<Object>()->Get(isolate->GetCurrentContext(), Nan::New<v8::String>("label").ToLocalChecked());
+        Nan::Utf8String label_str(label.ToLocalChecked().As<String>());
+        printf(" label: %s\n", *label_str);
+      } else {
+        printf(" label: empty\n");
+      }
+
       if (sampleContext.time_to < sampleTimestamp) {
         // Current sample context is too old, discard it and fetch the next one.
         ++contextIt;
+        printf("!!Unmatched context!!\n");
       } else if (sampleContext.time_from > sampleTimestamp) {
+        printf("!!Unmatched sample!!\n");
         // Current sample context is too recent, we'll try to match it to the
         // next sample.
         break;
