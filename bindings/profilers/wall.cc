@@ -1010,8 +1010,13 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
                            : &context1_;
   if (!value->IsNullOrUndefined()) {
     *newCurContext = std::make_shared<Global<Value>>(isolate, value);
+    auto label = value.As<Object>()->Get(isolate->GetCurrentContext(), Nan::New<v8::String>("label").ToLocalChecked());
+    Nan::Utf8String label_str(label.ToLocalChecked().As<String>());
+
+    printf("SetContext: %s\n", *label_str);
   } else {
     newCurContext->reset();
+    puts("Reset context");
   }
   std::atomic_signal_fence(std::memory_order_release);
   curContext_.store(newCurContext, std::memory_order_relaxed);
@@ -1052,10 +1057,16 @@ void WallProfiler::PushContext(int64_t time_from,
   std::atomic_signal_fence(std::memory_order_acquire);
   if (contexts_.size() < contexts_.capacity()) {
     contexts_.push_back({*context, time_from, time_to, cpu_time});
-    std::atomic_fetch_add_explicit(
+    auto count = std::atomic_fetch_add_explicit(
         reinterpret_cast<std::atomic<uint32_t>*>(&fields_[kSampleCount]),
         1U,
         std::memory_order_relaxed);
+    printf("pushcontext: from=%lld to=%lld count=%u\n",
+           time_from,
+           time_to,
+           count);
+  } else {
+    puts("context size too small");
   }
 }
 
