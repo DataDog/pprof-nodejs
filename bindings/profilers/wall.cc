@@ -1061,9 +1061,9 @@ void WallProfiler::PushContext(int64_t time_from,
         reinterpret_cast<std::atomic<uint32_t>*>(&fields_[kSampleCount]),
         1U,
         std::memory_order_relaxed);
-    printf("pushcontext: from=%lld to=%lld count=%u\n",
+    printf("pushcontext: from=%" PRId64 " dur=%" PRId64 " count=%u\n",
            time_from,
-           time_to,
+           time_to - time_from,
            count);
   } else {
     puts("context size too small");
