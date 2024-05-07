@@ -417,7 +417,7 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
 
     auto sampleTimestamp = profile->GetSampleTimestamp(sampleIdx);
 
-    printf("sampleIdx: %d, sampleTimestamp: %lld, funcName: ",
+    printf("sampleIdx: %d, sampleTimestamp: %" PRId64 ", funcName: ",
       sampleIdx, sampleTimestamp);
 
     auto node = profile->GetSample(sampleIdx);
