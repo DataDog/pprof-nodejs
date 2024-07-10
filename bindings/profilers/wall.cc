@@ -61,10 +61,9 @@ namespace dd {
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
-bool isIdleOrProgram(const v8::CpuProfileNode* node) {
+bool isIdle(const v8::CpuProfileNode* node) {
   auto* function_name = node->GetFunctionNameStr();
-  return strcmp(function_name, "(idle)") == 0 ||
-         strcmp(function_name, "(program)") == 0;
+  return strcmp(function_name, "(idle)") == 0;
 }
 
 int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
@@ -448,9 +447,9 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
                    timestampKey,
                    BigInt::New(isolate, sampleTimestamp + V8toEpochOffset));
 
-          // if current sample is idle/program, reports its cpu time to the next
+          // if current sample is idle, reports its cpu time to the next
           // sample
-          if (collectCpuTime_ && !isIdleOrProgram(sample)) {
+          if (collectCpuTime_ && !isIdle(sample)) {
             Nan::Set(
                 timedContext,
                 cpuTimeKey,

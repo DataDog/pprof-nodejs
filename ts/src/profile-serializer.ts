@@ -42,6 +42,7 @@ import {
 
 export const NON_JS_THREADS_FUNCTION_NAME = 'Non JS threads activity';
 export const GARBAGE_COLLECTION_FUNCTION_NAME = 'Garbage Collection';
+export const PROGRAM_FUNCTION_NAME = 'Program';
 
 /**
  * A stack of function IDs.
@@ -270,7 +271,7 @@ function computeTotalHitCount(root: TimeProfileNode): number {
 
 /** Perform some modifications on time profile:
  *  - Add non-JS thread activity node if available
- *  - Remove `(idle)` and `(program)` nodes
+ *  - Remove `(idle)` nodes
  *  - Convert `(garbage collector)` node to `Garbage Collection`
  *  - Put `non-JS thread activity` node and `Garbage Collection` under a top level `Node.js` node
  * This function does not change the input profile.
@@ -297,14 +298,17 @@ function updateTimeProfile(prof: TimeProfile): TimeProfile {
   }
 
   for (const child of prof.topDownRoot.children as TimeProfileNode[]) {
-    if (child.name === '(idle)' || child.name === '(program)') {
+    if (child.name === '(idle)') {
       continue;
     }
-    if (child.name === '(garbage collector)') {
+    if (child.name === '(garbage collector)' || child.name === '(program)') {
       // Create a new node to avoid modifying the input one
       const newChild: TimeProfileNode = {
         ...child,
-        name: GARBAGE_COLLECTION_FUNCTION_NAME,
+        name:
+          child.name === '(garbage collector)'
+            ? GARBAGE_COLLECTION_FUNCTION_NAME
+            : PROGRAM_FUNCTION_NAME,
       };
       getRuntimeNode().children.push(newChild);
     } else {
