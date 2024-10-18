@@ -10,7 +10,7 @@ jobs:
   asan:
     strategy:
       matrix:
-        version: [16, 18, 20, 22]
+        version: [16, 18, 20, 22, 23]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -23,7 +23,7 @@ jobs:
   valgrind:
     strategy:
       matrix:
-        version: [16, 18, 20, 22]
+        version: [16, 18, 20, 22, 23]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -35,13 +35,13 @@ jobs:
       - run: npm run test:js-valgrind
 
   build:
-    uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
+    uses: Datadog/action-prebuildify/.github/workflows/build.yml@ugaitz/support-node-23
     with:
       target-name: 'dd_pprof' # target name in binding.gyp
       package-manager: 'npm' # npm or yarn
       cache: true # enable caching of dependencies based on lockfile
       min-node-version: 16
-      skip: 'linux-arm linux-ia32' # skip building for these platforms
+      skip: 'linux-arm,linux-ia32' # skip building for these platforms
 
   dev_publish:
     needs: build

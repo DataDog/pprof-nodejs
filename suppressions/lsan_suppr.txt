@@ -1,1 +1,2 @@
 leak:PKCS5_PBKDF2_HMAC
+leak:CRYPTO_zalloc
