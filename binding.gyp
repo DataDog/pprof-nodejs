@@ -62,9 +62,9 @@
                         'VCCLCompilerTool': {
                             'AdditionalOptions': [
                                 '/Zc:__cplusplus',
-                                '-std:c++17',
+                                '-std:c++20',
                             ],
-                        },                        
+                        },
                     },
                 },
             ],
