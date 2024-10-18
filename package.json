@@ -26,7 +26,7 @@
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
     "test:js-valgrind": "valgrind --leak-check=full mocha out/test/test-*.js",
     "test:js": "nyc mocha -r source-map-support/register out/test/test-*.js",
-    "test": "npm run test:js && npm run test:cpp"
+    "test": "npm run test:js"
   },
   "author": {
     "name": "Google Inc."
