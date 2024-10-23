@@ -29,12 +29,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm install
       - run: npm publish
-
-  tag:
-    needs: publish
-    permissions:
-      content: write
-    steps:
       - id: pkg
         run: |
           content=`cat ./package.json | tr '\n' ' '`
