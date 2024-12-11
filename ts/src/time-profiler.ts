@@ -93,7 +93,7 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler({...options, isMainThread});
+  gProfiler = new TimeProfiler({...options, isMainThread, useCPED: false});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
