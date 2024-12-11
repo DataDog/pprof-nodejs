@@ -37,6 +37,34 @@ struct Result {
   std::string msg;
 };
 
+using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
+
+class AtomicContextPtr {
+  ContextPtr ptr1;
+  ContextPtr ptr2;
+  std::atomic<ContextPtr*> currentPtr = &ptr1;
+
+  void Set(v8::Isolate* isolate, v8::Local<v8::Value> value) {
+    auto newPtr =
+        currentPtr.load(std::memory_order_relaxed) == &ptr1 ? &ptr2 : &ptr1;
+    if (!value->IsNullOrUndefined()) {
+      *newPtr = std::make_shared<v8::Global<v8::Value>>(isolate, value);
+    } else {
+      newPtr->reset();
+    }
+    std::atomic_signal_fence(std::memory_order_release);
+    currentPtr.store(newPtr, std::memory_order_relaxed);
+  }
+
+  ContextPtr Get() {
+    auto ptr = currentPtr.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
+    return ptr ? *ptr : std::shared_ptr<v8::Global<v8::Value>>();
+  }
+
+  friend class WallProfiler;
+};
+
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
@@ -44,22 +72,18 @@ class WallProfiler : public Nan::ObjectWrap {
  private:
   enum Fields { kSampleCount, kFieldCount };
 
-  using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
-
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
-  // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
-  // avoid heap allocation. Need to figure out the right move/copy semantics in
-  // and out of the ring buffer.
 
-  // We're using a pair of shared pointers and an atomic pointer-to-current as
-  // a way to ensure signal safety on update.
-  ContextPtr context1_;
-  ContextPtr context2_;
-  std::atomic<ContextPtr*> curContext_;
+  bool useCPED_ = false;
+  // If we aren't using the CPED, we use a single context ptr stored here.
+  AtomicContextPtr curContext_;
+  // Otherwise we'll use a private symbol to store the context in CPED objects.
+  v8::Global<v8::Symbol> cpedSymbol_;
 
   std::atomic<int> gcCount = 0;
   int64_t gcAsyncId;
+  ContextPtr gcContext;
 
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
@@ -105,6 +129,8 @@ class WallProfiler : public Nan::ObjectWrap {
       GENERAL_REGS_ONLY;
 
   bool waitForSignal(uint64_t targetCallCount = 0);
+  ContextPtr GetContextPtr(v8::Isolate* isolate);
+  ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
 
  public:
   /**
@@ -113,6 +139,10 @@ class WallProfiler : public Nan::ObjectWrap {
    * parameter is informative; it is up to the caller to call the Stop method
    * every period. The parameter is used to preallocate data structures that
    * should not be reallocated in async signal safe code.
+   * @param useCPED whether to use the V8 ContinuationPreservingEmbedderData
+   * to store the current sampling context. It can be used if AsyncLocalStorage
+   * uses the AsyncContextFrame implementation (experimental in Node 23, default
+   * in Node 24.)
    */
   explicit WallProfiler(std::chrono::microseconds samplingPeriod,
                         std::chrono::microseconds duration,
@@ -120,14 +150,15 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool withContexts,
                         bool workaroundV8bug,
                         bool collectCpuTime,
-                        bool isMainThread);
+                        bool isMainThread,
+                        bool useCPED);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);
   void PushContext(int64_t time_from,
                    int64_t time_to,
                    int64_t cpu_time,
-                   int64_t async_id);
+                   v8::Isolate* isolate);
   Result StartImpl();
   std::string StartInternal();
   Result StopImpl(bool restart,
