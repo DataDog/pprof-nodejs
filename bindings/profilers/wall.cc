@@ -58,6 +58,8 @@ using namespace v8;
 
 namespace dd {
 
+using ContextPtr = std::shared_ptr<Global<Value>>;
+
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
@@ -321,8 +323,7 @@ void SignalHandler::HandleProfilerSignal(int sig,
   auto time_from = Now();
   old_handler(sig, info, context);
   auto time_to = Now();
-  double async_id = node::AsyncHooksGetExecutionAsyncId(isolate);
-  prof->PushContext(time_from, time_to, cpu_time, async_id);
+  prof->PushContext(time_from, time_to, cpu_time, isolate);
 }
 #else
 class SignalHandler {
@@ -484,14 +485,24 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
   return contextsByNode;
 }
 
+void GCPrologueCallback(Isolate* isolate, GCType type, GCCallbackFlags flags, void* data) {
+    static_cast<WallProfiler*>(data)->OnGCStart();
+}
+
+void GCEpilogueCallback(Isolate* isolate, GCType type, GCCallbackFlags flags, void* data) {
+    static_cast<WallProfiler*>(data)->OnGCEnd();
+}
+
 WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            std::chrono::microseconds duration,
                            bool includeLines,
                            bool withContexts,
                            bool workaroundV8Bug,
                            bool collectCpuTime,
-                           bool isMainThread)
+                           bool isMainThread,
+                           bool useCPED)
     : samplingPeriod_(samplingPeriod),
+      useCPED_(useCPED),
       includeLines_(includeLines),
       withContexts_(withContexts),
       isMainThread_(isMainThread) {
@@ -506,7 +517,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
     contexts_.reserve(duration * 2 / samplingPeriod);
   }
 
-  curContext_.store(&context1_, std::memory_order_relaxed);
   collectionMode_.store(CollectionMode::kNoCollect, std::memory_order_relaxed);
 
   auto isolate = v8::Isolate::GetCurrent();
@@ -515,13 +525,16 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 
   v8::Local<v8::Uint32Array> jsArray =
       v8::Uint32Array::New(buffer, 0, kFieldCount);
-#if (V8_MAJOR_VERSION >= 8)
   fields_ = static_cast<uint32_t*>(buffer->GetBackingStore()->Data());
-#else
-  fields_ = static_cast<uint32_t*>(buffer->GetContents().Data());
-#endif
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
+
+  gcCount = 0;
+  if (useCPED_) {
+    cpedSymbol_ = v8::Global<v8::Symbol>(isolate, v8::Symbol::New(isolate));
+    isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
+    isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
+  }
 }
 
 WallProfiler::~WallProfiler() {
@@ -534,6 +547,10 @@ void WallProfiler::Dispose(Isolate* isolate) {
     cpuProfiler_ = nullptr;
 
     g_profilers.RemoveProfiler(isolate, this);
+  }
+  if (isolate != nullptr && useCPED_) {
+    isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
+    isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 }
 
@@ -647,13 +664,23 @@ NAN_METHOD(WallProfiler::New) {
           "Include line option is not compatible with contexts.");
     }
 
+    auto useCPEDValue =
+        Nan::Get(arg, Nan::New<v8::String>("useCPED").ToLocalChecked());
+    if (useCPEDValue.IsEmpty() ||
+        !useCPEDValue.ToLocalChecked()->IsBoolean()) {
+      return Nan::ThrowTypeError("useCPED must be a boolean.");
+    }
+    bool useCPED =
+        useCPEDValue.ToLocalChecked().As<v8::Boolean>()->Value();
+
     WallProfiler* obj = new WallProfiler(interval,
                                          duration,
                                          lineNumbers,
                                          withContexts,
                                          workaroundV8Bug,
                                          collectCpuTime,
-                                         isMainThread);
+                                         isMainThread,
+                                         useCPED);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
@@ -966,28 +993,98 @@ v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
 }
 
 v8::Local<v8::Value> WallProfiler::GetContext(Isolate* isolate) {
-  auto context = *curContext_.load(std::memory_order_relaxed);
+  auto context = GetContextPtr(isolate);
   if (!context) return v8::Undefined(isolate);
   return context->Get(isolate);
 }
 
-void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
-  // Need to be careful here, because we might be interrupted by a
-  // signal handler that will make use of curContext_.
-  // Update of shared_ptr is not atomic, so instead we use a pointer
-  // (curContext_) that points on two shared_ptr (context1_ and context2_),
-  // update the shared_ptr that is not currently in use and then atomically
-  // update curContext_.
-  auto newCurContext = curContext_.load(std::memory_order_relaxed) == &context1_
-                           ? &context2_
-                           : &context1_;
-  if (!value->IsNullOrUndefined()) {
-    *newCurContext = std::make_shared<Global<Value>>(isolate, value);
-  } else {
-    newCurContext->reset();
+class PersistentContextPtr : AtomicContextPtr {
+  Persistent<Object> per;
+
+  void BindLifecycleTo(Isolate* isolate, Local<Object>& obj) {
+    // Register a callback to delete this object when the object is GCed
+    per.Reset(isolate, obj);
+    per.SetWeak(this, [](const WeakCallbackInfo<PersistentContextPtr>& data) {
+      auto &per = data.GetParameter()->per;
+      if (!per.IsEmpty()) {
+        per.ClearWeak();
+        per.Reset();
+      }
+      // Using SetSecondPassCallback as shared_ptr can trigger ~Global and any V8 API use needs to be in the second pass
+      data.SetSecondPassCallback([](const WeakCallbackInfo<PersistentContextPtr>& data) {
+        delete data.GetParameter();
+      });
+    }, WeakCallbackType::kParameter);
   }
-  std::atomic_signal_fence(std::memory_order_release);
-  curContext_.store(newCurContext, std::memory_order_relaxed);
+
+  friend class WallProfiler;
+};
+
+void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
+  if (!useCPED_) {
+    curContext_.Set(isolate, value);
+    return;
+  }
+
+  auto cped = isolate->GetContinuationPreservedEmbedderData();
+  // No Node AsyncContextFrame in this continuation yet
+  if (!cped->IsObject()) return;
+
+  auto cpedObj = cped.As<Object>();
+  auto localSymbol = cpedSymbol_.Get(isolate);
+  auto v8Ctx = isolate->GetCurrentContext();
+  auto maybeProfData = cpedObj->Get(v8Ctx, localSymbol);
+  if (maybeProfData.IsEmpty()) return;
+  auto profData = maybeProfData.ToLocalChecked();
+
+  PersistentContextPtr* contextPtr = nullptr;
+  if (profData->IsUndefined()) {
+    contextPtr = new PersistentContextPtr();
+
+    auto maybeSetResult = cpedObj->Set(v8Ctx, localSymbol, External::New(isolate, contextPtr));
+    if (maybeSetResult.IsNothing()) {
+      delete contextPtr;
+      return;
+    }
+    contextPtr->BindLifecycleTo(isolate, cpedObj);
+  } else {
+    contextPtr = static_cast<PersistentContextPtr*>(profData.As<External>()->Value());
+  }
+
+  contextPtr->Set(isolate, value);
+}
+
+ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
+  if (!useCPED_) {
+    // Not strictly necessary but we can avoid HandleScope creation for this case.
+    return curContext_.Get();
+  }
+
+  if (gcCount == 0) {
+    auto handleScope = HandleScope(isolate);
+    return GetContextPtr(isolate);
+  }
+
+  return gcContext;
+}
+
+ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
+  if (!useCPED_) {
+    return curContext_.Get();
+  }
+
+  auto cped = isolate->GetContinuationPreservedEmbedderData(); // signal safe?
+  if (!cped->IsObject()) return std::shared_ptr<Global<Value>>();
+
+  auto cpedObj = cped.As<Object>();
+  auto localSymbol = cpedSymbol_.Get(isolate); // signal safe?
+  auto maybeProfData = cpedObj->Get(isolate->GetEnteredOrMicrotaskContext(), localSymbol); // signal safe?
+  if (maybeProfData.IsEmpty()) return std::shared_ptr<Global<Value>>();
+  auto profData = maybeProfData.ToLocalChecked();
+
+  if (profData->IsUndefined()) return std::shared_ptr<Global<Value>>();
+
+  return static_cast<PersistentContextPtr*>(profData.As<External>()->Value())->Get();
 }
 
 NAN_GETTER(WallProfiler::GetContext) {
@@ -1018,14 +1115,13 @@ NAN_METHOD(WallProfiler::Dispose) {
 void WallProfiler::PushContext(int64_t time_from,
                                int64_t time_to,
                                int64_t cpu_time,
-                               double async_id) {
+                               Isolate* isolate) {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations).
   // Our ring buffer avoids allocations.
-  auto context = curContext_.load(std::memory_order_relaxed);
-  std::atomic_signal_fence(std::memory_order_acquire);
   if (contexts_.size() < contexts_.capacity()) {
-    contexts_.push_back({*context, time_from, time_to, cpu_time, async_id});
+    double async_id = node::AsyncHooksGetExecutionAsyncId(isolate);
+    contexts_.push_back({GetContextPtrSignalSafe(isolate), time_from, time_to, cpu_time, async_id});
     std::atomic_fetch_add_explicit(
         reinterpret_cast<std::atomic<uint32_t>*>(&fields_[kSampleCount]),
         1U,
