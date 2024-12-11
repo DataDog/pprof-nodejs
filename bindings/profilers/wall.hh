@@ -51,11 +51,7 @@ class WallProfiler : public Nan::ObjectWrap {
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
 
-  // We're using a pair of shared pointers and an atomic pointer-to-current as
-  // a way to ensure signal safety on update.
-  ContextPtr context1_;
-  ContextPtr context2_;
-  std::atomic<ContextPtr*> curContext_;
+  ContextPtr curContext_;
 
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
@@ -99,6 +95,7 @@ class WallProfiler : public Nan::ObjectWrap {
                                    int64_t startCpuTime);
 
   bool waitForSignal(uint64_t targetCallCount = 0);
+  ContextPtr GetContextPtr();
 
  public:
   /**
