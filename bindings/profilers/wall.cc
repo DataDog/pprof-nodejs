@@ -61,12 +61,6 @@ namespace dd {
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
-bool isIdleOrProgram(const v8::CpuProfileNode* node) {
-  auto* function_name = node->GetFunctionNameStr();
-  return strcmp(function_name, "(idle)") == 0 ||
-         strcmp(function_name, "(program)") == 0;
-}
-
 int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
   int count = node->GetHitCount();
   auto child_count = node->GetChildrenCount();
@@ -450,23 +444,17 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
           array = it->second.contexts;
           ++it->second.hitcount;
         }
-        if (sampleContext.context) {
-          // Conforms to TimeProfileNodeContext defined in v8-types.ts
-          Local<Object> timedContext = Object::New(isolate);
-          timedContext
-              ->Set(v8Context,
-                    contextKey,
-                    sampleContext.context.get()->Get(isolate))
-              .Check();
-          timedContext
-              ->Set(v8Context,
-                    timestampKey,
-                    BigInt::New(isolate, sampleTimestamp + V8toEpochOffset))
-              .Check();
-
-          // if current sample is idle/program, reports its cpu time to the next
-          // sample
-          if (collectCpuTime_ && !isIdleOrProgram(sample)) {
+        // Conforms to TimeProfileNodeContext defined in v8-types.ts
+        Local<Object> timedContext = Object::New(isolate);
+        timedContext
+            ->Set(v8Context,
+                  timestampKey,
+                  BigInt::New(isolate, sampleTimestamp + V8toEpochOffset))
+            .Check();
+        auto* function_name = sample->GetFunctionNameStr();
+        // If current sample is program, reports its cpu time to the next sample
+        if (strcmp(function_name, "(program)") != 0) {
+          if (collectCpuTime_) {
             timedContext
                 ->Set(v8Context,
                       cpuTimeKey,
@@ -475,13 +463,24 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
                 .Check();
             lastCpuTime = sampleContext.cpu_time;
           }
-          timedContext
-              ->Set(v8Context,
-                    asyncIdKey,
-                    NewNumberFromInt64(isolate, sampleContext.async_id))
-              .Check();
-          array->Set(v8Context, array->Length(), timedContext).Check();
+          // If current sample is neither program nor idle, associate a sampling
+          // context and async ID
+          if (strcmp(function_name, "(idle)") != 0) {
+            if (sampleContext.context) {
+              timedContext
+                  ->Set(v8Context,
+                        contextKey,
+                        sampleContext.context.get()->Get(isolate))
+                  .Check();
+            }
+            timedContext
+                ->Set(v8Context,
+                      asyncIdKey,
+                      NewNumberFromInt64(isolate, sampleContext.async_id))
+                .Check();
+          }
         }
+        array->Set(v8Context, array->Length(), timedContext).Check();
 
         // Sample context was consumed, fetch the next one
         ++contextIt;
