@@ -270,7 +270,7 @@ function computeTotalHitCount(root: TimeProfileNode): number {
 
 /** Perform some modifications on time profile:
  *  - Add non-JS thread activity node if available
- *  - Remove `(idle)` and `(program)` nodes
+ *  - remove `(program)` nodes
  *  - Convert `(garbage collector)` node to `Garbage Collection`
  *  - Put `non-JS thread activity` node and `Garbage Collection` under a top level `Node.js` node
  * This function does not change the input profile.
@@ -297,7 +297,7 @@ function updateTimeProfile(prof: TimeProfile): TimeProfile {
   }
 
   for (const child of prof.topDownRoot.children as TimeProfileNode[]) {
-    if (child.name === '(idle)' || child.name === '(program)') {
+    if (child.name === '(program)') {
       continue;
     }
     if (child.name === '(garbage collector)') {
@@ -380,14 +380,14 @@ export function serializeTimeProfile(
     for (const context of entry.node.contexts || []) {
       const labels = generateLabels
         ? generateLabels({node: entry.node, context})
-        : context.context;
+        : context.context ?? {};
       if (Object.keys(labels).length > 0) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
         // have zero hit count (since they do not count as wall time) and should not be assigned any
         // wall time.
         const values = unlabelledHits > 0 ? [1, intervalNanos] : [0, 0];
         if (prof.hasCpuTime) {
-          values.push(context.cpuTime);
+          values.push(context.cpuTime ?? 0);
         }
         const sample = new Sample({
           locationId: entry.stack,
@@ -397,7 +397,7 @@ export function serializeTimeProfile(
         samples.push(sample);
         unlabelledHits--;
       } else if (prof.hasCpuTime) {
-        unlabelledCpuTime += context.cpuTime;
+        unlabelledCpuTime += context.cpuTime ?? 0;
       }
     }
     if (unlabelledHits > 0 || unlabelledCpuTime > 0) {
