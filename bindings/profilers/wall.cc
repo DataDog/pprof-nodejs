@@ -531,6 +531,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 
   curContext_.store(&context1_, std::memory_order_relaxed);
   collectionMode_.store(CollectionMode::kNoCollect, std::memory_order_relaxed);
+  gcCount.store(0, std::memory_order_relaxed);
 
   // TODO: bind to this isolate? Would fix the Dispose(nullptr) issue.
   auto isolate = v8::Isolate::GetCurrent();
@@ -543,7 +544,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
-  gcCount = 0;
   isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
   isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
 }
@@ -1042,6 +1042,42 @@ NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
 NAN_METHOD(WallProfiler::Dispose) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
   delete profiler;
+}
+
+int64_t GetAsyncIdNoGC(v8::Isolate* isolate) {
+  return isolate->InContext()
+             ? static_cast<int64_t>(
+                   node::AsyncHooksGetExecutionAsyncId(isolate))
+             : -1;
+}
+
+int64_t WallProfiler::GetAsyncId(v8::Isolate* isolate) {
+  auto curGcCount = gcCount.load(std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_acquire);
+  if (curGcCount > 0) {
+    return gcAsyncId;
+  }
+  return GetAsyncIdNoGC(isolate);
+}
+
+void WallProfiler::OnGCStart(v8::Isolate* isolate) {
+  auto curCount = gcCount.load(std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_acquire);
+  if (curCount == 0) {
+    gcAsyncId = GetAsyncIdNoGC(isolate);
+  }
+  gcCount.store(curCount + 1, std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_release);
+}
+
+void WallProfiler::OnGCEnd() {
+  auto newCount = gcCount.load(std::memory_order_relaxed) - 1;
+  std::atomic_signal_fence(std::memory_order_acquire);
+  gcCount.store(newCount, std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_release);
+  if (newCount == 0) {
+    gcAsyncId = -1;
+  }
 }
 
 void WallProfiler::PushContext(int64_t time_from,
