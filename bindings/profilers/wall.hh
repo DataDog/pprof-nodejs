@@ -58,6 +58,9 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr context2_;
   std::atomic<ContextPtr*> curContext_;
 
+  std::atomic<int> gcCount = 0;
+  int64_t gcAsyncId;
+
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
   std::string profileId_;
@@ -148,6 +151,10 @@ class WallProfiler : public Nan::ObjectWrap {
   ThreadCpuClock::duration GetAndResetThreadCpu() {
     return threadCpuStopWatch_.GetAndReset();
   }
+
+  int64_t GetAsyncId(v8::Isolate* isolate);
+  void OnGCStart(v8::Isolate* isolate);
+  void OnGCEnd();
 
   static NAN_METHOD(New) GENERAL_REGS_ONLY;
   static NAN_METHOD(Start);
