@@ -66,6 +66,7 @@ export interface TimeProfilerOptions {
   withContexts?: boolean;
   workaroundV8Bug?: boolean;
   collectCpuTime?: boolean;
+  useCPED?: boolean;
 }
 
 const DEFAULT_OPTIONS: TimeProfilerOptions = {
@@ -75,6 +76,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   withContexts: false,
   workaroundV8Bug: true,
   collectCpuTime: false,
+  useCPED: false,
 };
 
 export async function profile(options: TimeProfilerOptions = {}) {
@@ -98,8 +100,8 @@ export function start(options: TimeProfilerOptions = {}) {
 
   gProfiler.start();
 
-  // If contexts are enabled, set an initial empty context
-  if (options.withContexts) {
+  // If contexts are enabled without using CPED, set an initial empty context
+  if (options.withContexts && !options.useCPED) {
     setContext({});
   }
 }
