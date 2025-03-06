@@ -474,11 +474,13 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
                         sampleContext.context.get()->Get(isolate))
                   .Check();
             }
-            timedContext
-                ->Set(v8Context,
-                      asyncIdKey,
-                      NewNumberFromInt64(isolate, sampleContext.async_id))
-                .Check();
+            if (collectAsyncId_) {
+              timedContext
+                  ->Set(v8Context,
+                        asyncIdKey,
+                        NewNumberFromInt64(isolate, sampleContext.async_id))
+                  .Check();
+            }
           }
         }
         array->Set(v8Context, array->Length(), timedContext).Check();
@@ -513,6 +515,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            bool withContexts,
                            bool workaroundV8Bug,
                            bool collectCpuTime,
+                           bool collectAsyncId,
                            bool isMainThread)
     : samplingPeriod_(samplingPeriod),
       includeLines_(includeLines),
@@ -524,6 +527,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   // event just after triggers the issue.
   workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF && detectV8Bug_;
   collectCpuTime_ = collectCpuTime && withContexts;
+  collectAsyncId_ = collectAsyncId && withContexts;
 
   if (withContexts_) {
     contexts_.reserve(duration * 2 / samplingPeriod);
@@ -544,8 +548,10 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
-  isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
-  isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
+  if (collectAsyncId_) {
+    isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
+    isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
+  }
 }
 
 WallProfiler::~WallProfiler() {
@@ -559,12 +565,20 @@ void WallProfiler::Dispose(Isolate* isolate) {
 
     g_profilers.RemoveProfiler(isolate, this);
 
-    if (isolate != nullptr) {
+    if (isolate != nullptr && collectAsyncId_) {
       isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
   }
 }
+
+#define DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(name)                              \
+  auto name##Value =                                                           \
+      Nan::Get(arg, Nan::New<v8::String>(#name).ToLocalChecked());             \
+  if (name##Value.IsEmpty() || !name##Value.ToLocalChecked()->IsBoolean()) {   \
+    return Nan::ThrowTypeError(#name " must be a boolean.");                   \
+  }                                                                            \
+  bool name = name##Value.ToLocalChecked().As<v8::Boolean>()->Value();
 
 NAN_METHOD(WallProfiler::New) {
   if (info.Length() != 1 || !info[0]->IsObject()) {
@@ -604,50 +618,12 @@ NAN_METHOD(WallProfiler::New) {
       return Nan::ThrowTypeError("Duration must not be less than sample rate.");
     }
 
-    auto lineNumbersValue =
-        Nan::Get(arg, Nan::New<v8::String>("lineNumbers").ToLocalChecked());
-    if (lineNumbersValue.IsEmpty() ||
-        !lineNumbersValue.ToLocalChecked()->IsBoolean()) {
-      return Nan::ThrowTypeError("lineNumbers must be a boolean.");
-    }
-    bool lineNumbers =
-        lineNumbersValue.ToLocalChecked().As<v8::Boolean>()->Value();
-
-    auto withContextsValue =
-        Nan::Get(arg, Nan::New<v8::String>("withContexts").ToLocalChecked());
-    if (withContextsValue.IsEmpty() ||
-        !withContextsValue.ToLocalChecked()->IsBoolean()) {
-      return Nan::ThrowTypeError("withContext must be a boolean.");
-    }
-    bool withContexts =
-        withContextsValue.ToLocalChecked().As<v8::Boolean>()->Value();
-
-    auto workaroundV8BugValue =
-        Nan::Get(arg, Nan::New<v8::String>("workaroundV8Bug").ToLocalChecked());
-    if (workaroundV8BugValue.IsEmpty() ||
-        !workaroundV8BugValue.ToLocalChecked()->IsBoolean()) {
-      return Nan::ThrowTypeError("workaroundV8Bug must be a boolean.");
-    }
-    bool workaroundV8Bug =
-        workaroundV8BugValue.ToLocalChecked().As<v8::Boolean>()->Value();
-
-    auto collectCpuTimeValue =
-        Nan::Get(arg, Nan::New<v8::String>("collectCpuTime").ToLocalChecked());
-    if (collectCpuTimeValue.IsEmpty() ||
-        !collectCpuTimeValue.ToLocalChecked()->IsBoolean()) {
-      return Nan::ThrowTypeError("collectCpuTime must be a boolean.");
-    }
-    bool collectCpuTime =
-        collectCpuTimeValue.ToLocalChecked().As<v8::Boolean>()->Value();
-
-    auto isMainThreadValue =
-        Nan::Get(arg, Nan::New<v8::String>("isMainThread").ToLocalChecked());
-    if (isMainThreadValue.IsEmpty() ||
-        !isMainThreadValue.ToLocalChecked()->IsBoolean()) {
-      return Nan::ThrowTypeError("isMainThread must be a boolean.");
-    }
-    bool isMainThread =
-        isMainThreadValue.ToLocalChecked().As<v8::Boolean>()->Value();
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(lineNumbers);
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(withContexts);
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(workaroundV8Bug);
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(collectCpuTime);
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(collectAsyncId);
+    DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(isMainThread);
 
     if (withContexts && !DD_WALL_USE_SIGPROF) {
       return Nan::ThrowTypeError("Contexts are not supported.");
@@ -655,6 +631,10 @@ NAN_METHOD(WallProfiler::New) {
 
     if (collectCpuTime && !withContexts) {
       return Nan::ThrowTypeError("Cpu time collection requires contexts.");
+    }
+
+    if (collectAsyncId && !withContexts) {
+      return Nan::ThrowTypeError("Async ID collection requires contexts.");
     }
 
     if (lineNumbers && withContexts) {
@@ -682,6 +662,7 @@ NAN_METHOD(WallProfiler::New) {
                                          withContexts,
                                          workaroundV8Bug,
                                          collectCpuTime,
+                                         collectAsyncId,
                                          isMainThread);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
@@ -692,6 +673,8 @@ NAN_METHOD(WallProfiler::New) {
     info.GetReturnValue().Set(Nan::NewInstance(cons, 1, &arg).ToLocalChecked());
   }
 }
+
+#undef DD_WALL_PROFILER_GET_BOOLEAN_CONFIG
 
 NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
@@ -1052,6 +1035,9 @@ int64_t GetAsyncIdNoGC(v8::Isolate* isolate) {
 }
 
 int64_t WallProfiler::GetAsyncId(v8::Isolate* isolate) {
+  if (!collectAsyncId_) {
+    return -1;
+  }
   auto curGcCount = gcCount.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
   if (curGcCount > 0) {

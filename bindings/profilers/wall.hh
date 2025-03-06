@@ -71,6 +71,7 @@ class WallProfiler : public Nan::ObjectWrap {
   bool workaroundV8Bug_;
   static inline constexpr bool detectV8Bug_ = true;
   bool collectCpuTime_;
+  bool collectAsyncId_;
   bool isMainThread_;
   int v8ProfilerStuckEventLoopDetected_ = 0;
   ProcessCpuClock::time_point startProcessCpuTime_{};
@@ -120,6 +121,7 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool withContexts,
                         bool workaroundV8bug,
                         bool collectCpuTime,
+                        bool collectAsyncId,
                         bool isMainThread);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);

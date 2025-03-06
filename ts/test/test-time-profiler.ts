@@ -39,7 +39,7 @@ describe('Time Profiler', () => {
       assert.equal(profile.stringTable.strings!.indexOf('(program)'), -1);
     });
 
-    it('should update state', function () {
+    it('should update state', function shouldUpdateState() {
       if (process.platform !== 'darwin' && process.platform !== 'linux') {
         this.skip();
       }
@@ -90,7 +90,7 @@ describe('Time Profiler', () => {
       assert(checked, 'No context found');
     });
 
-    it('should assign labels', function () {
+    it('should have labels', function shouldHaveLabels() {
       if (process.platform !== 'darwin' && process.platform !== 'linux') {
         this.skip();
       }
@@ -129,10 +129,8 @@ describe('Time Profiler', () => {
         if (!context) {
           return {};
         }
-        assert(
-          typeof context.asyncId === 'number',
-          'context.asyncId should be a number'
-        );
+        // Does not collect async IDs by default
+        assert(typeof context.asyncId === 'undefined');
         const labels: LabelSet = {};
         for (const [key, value] of Object.entries(context.context ?? {})) {
           if (typeof value === 'string') {
@@ -354,6 +352,51 @@ describe('Time Profiler', () => {
         );
       }
     });
+  });
+
+  it('should have async IDs when enabled', async function shouldCollectAsyncIDs() {
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      this.skip();
+    }
+    this.timeout(3000);
+
+    time.start({
+      intervalMicros: PROFILE_OPTIONS.intervalMicros,
+      durationMillis: PROFILE_OPTIONS.durationMillis,
+      withContexts: true,
+      lineNumbers: false,
+      collectAsyncId: true,
+    });
+    let setDone: () => void;
+    const done = new Promise<void>(resolve => {
+      setDone = resolve;
+    });
+
+    const testStart = hrtime.bigint();
+    const testDurationNanos = PROFILE_OPTIONS.durationMillis * 1_000_000;
+    setTimeout(loop, 0);
+
+    function loop() {
+      const loopDurationNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
+      const loopStart = hrtime.bigint();
+      while (hrtime.bigint() - loopStart < loopDurationNanos);
+      if (hrtime.bigint() - testStart < testDurationNanos) {
+        setTimeout(loop, 0);
+      } else {
+        setDone();
+      }
+    }
+
+    await done;
+
+    let asyncIdObserved = false;
+    time.stop(false, ({context}: GenerateTimeLabelsArgs) => {
+      if (!asyncIdObserved && typeof context?.asyncId === 'number') {
+        asyncIdObserved = context?.asyncId !== -1;
+      }
+      return {};
+    });
+    assert(asyncIdObserved, 'Async ID was not observed');
   });
 
   describe('profile (w/ stubs)', () => {
