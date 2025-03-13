@@ -38,10 +38,10 @@ export interface ProfileNode {
 }
 
 export interface TimeProfileNodeContext {
-  context: object;
+  context?: object;
   timestamp: bigint; // end of sample taking; in microseconds since epoch
-  cpuTime: number; // cpu time in nanoseconds
-  asyncId: number; // async_hooks.executionAsyncId() at the time of sample taking
+  cpuTime?: number; // cpu time in nanoseconds
+  asyncId?: number; // async_hooks.executionAsyncId() at the time of sample taking
 }
 
 export interface TimeProfileNode extends ProfileNode {

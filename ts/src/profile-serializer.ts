@@ -270,7 +270,9 @@ function computeTotalHitCount(root: TimeProfileNode): number {
 
 /** Perform some modifications on time profile:
  *  - Add non-JS thread activity node if available
- *  - Remove `(idle)` and `(program)` nodes
+ *  - remove `(program)` nodes
+ *  - remove `(idle)` nodes with no context
+ *  - set `(idle)` nodes' wall time to zero when they have a context
  *  - Convert `(garbage collector)` node to `Garbage Collection`
  *  - Put `non-JS thread activity` node and `Garbage Collection` under a top level `Node.js` node
  * This function does not change the input profile.
@@ -297,7 +299,10 @@ function updateTimeProfile(prof: TimeProfile): TimeProfile {
   }
 
   for (const child of prof.topDownRoot.children as TimeProfileNode[]) {
-    if (child.name === '(idle)' || child.name === '(program)') {
+    if (child.name === '(program)') {
+      continue;
+    }
+    if (child.name === '(idle)' && child.contexts?.length === 0) {
       continue;
     }
     if (child.name === '(garbage collector)') {
@@ -377,17 +382,19 @@ export function serializeTimeProfile(
   ) => {
     let unlabelledHits = entry.node.hitCount;
     let unlabelledCpuTime = 0;
+    const isIdle = entry.node.name === '(idle)';
     for (const context of entry.node.contexts || []) {
       const labels = generateLabels
         ? generateLabels({node: entry.node, context})
-        : context.context;
+        : context.context ?? {};
       if (Object.keys(labels).length > 0) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
         // have zero hit count (since they do not count as wall time) and should not be assigned any
-        // wall time.
-        const values = unlabelledHits > 0 ? [1, intervalNanos] : [0, 0];
+        // wall time. Also, `(idle)` nodes should be assigned zero wall time.
+        const values =
+          unlabelledHits > 0 ? [1, isIdle ? 0 : intervalNanos] : [0, 0];
         if (prof.hasCpuTime) {
-          values.push(context.cpuTime);
+          values.push(context.cpuTime ?? 0);
         }
         const sample = new Sample({
           locationId: entry.stack,
@@ -397,14 +404,14 @@ export function serializeTimeProfile(
         samples.push(sample);
         unlabelledHits--;
       } else if (prof.hasCpuTime) {
-        unlabelledCpuTime += context.cpuTime;
+        unlabelledCpuTime += context.cpuTime ?? 0;
       }
     }
-    if (unlabelledHits > 0 || unlabelledCpuTime > 0) {
+    if ((!isIdle && unlabelledHits > 0) || unlabelledCpuTime > 0) {
       const labels = generateLabels ? generateLabels({node: entry.node}) : {};
       const values =
         unlabelledHits > 0
-          ? [unlabelledHits, unlabelledHits * intervalNanos]
+          ? [unlabelledHits, isIdle ? 0 : unlabelledHits * intervalNanos]
           : [0, 0];
       if (prof.hasCpuTime) {
         values.push(unlabelledCpuTime);
