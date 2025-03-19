@@ -66,6 +66,7 @@ export interface TimeProfilerOptions {
   withContexts?: boolean;
   workaroundV8Bug?: boolean;
   collectCpuTime?: boolean;
+  collectAsyncId?: boolean;
 }
 
 const DEFAULT_OPTIONS: TimeProfilerOptions = {
@@ -75,6 +76,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   withContexts: false,
   workaroundV8Bug: true,
   collectCpuTime: false,
+  collectAsyncId: false,
 };
 
 export async function profile(options: TimeProfilerOptions = {}) {
