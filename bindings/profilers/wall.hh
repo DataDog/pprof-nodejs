@@ -58,6 +58,9 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr context2_;
   std::atomic<ContextPtr*> curContext_;
 
+  std::atomic<int> gcCount = 0;
+  int64_t gcAsyncId;
+
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
   std::string profileId_;
@@ -68,6 +71,7 @@ class WallProfiler : public Nan::ObjectWrap {
   bool workaroundV8Bug_;
   static inline constexpr bool detectV8Bug_ = true;
   bool collectCpuTime_;
+  bool collectAsyncId_;
   bool isMainThread_;
   int v8ProfilerStuckEventLoopDetected_ = 0;
   ProcessCpuClock::time_point startProcessCpuTime_{};
@@ -117,6 +121,7 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool withContexts,
                         bool workaroundV8bug,
                         bool collectCpuTime,
+                        bool collectAsyncId,
                         bool isMainThread);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
@@ -148,6 +153,10 @@ class WallProfiler : public Nan::ObjectWrap {
   ThreadCpuClock::duration GetAndResetThreadCpu() {
     return threadCpuStopWatch_.GetAndReset();
   }
+
+  int64_t GetAsyncId(v8::Isolate* isolate);
+  void OnGCStart(v8::Isolate* isolate);
+  void OnGCEnd();
 
   static NAN_METHOD(New) GENERAL_REGS_ONLY;
   static NAN_METHOD(Start);
