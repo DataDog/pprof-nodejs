@@ -524,6 +524,11 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF && detectV8Bug_;
   collectCpuTime_ = collectCpuTime && withContexts;
   collectAsyncId_ = collectAsyncId && withContexts;
+#if NODE_MAJOR_VERSION >= 23
+  useCPED_ = useCPED && withContexts;
+#else
+  useCPED_ = false;
+#endif
 
   if (withContexts_) {
     contexts_.reserve(duration * 2 / samplingPeriod);
@@ -628,6 +633,13 @@ NAN_METHOD(WallProfiler::New) {
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(collectAsyncId);
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(isMainThread);
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(useCPED);
+
+#if NODE_MAJOR_VERSION < 23
+    if (useCPED) {
+      return Nan::ThrowTypeError(
+          "useCPED is not supported on this Node.js version.");
+    }
+#endif
 
     if (withContexts && !DD_WALL_USE_SIGPROF) {
       return Nan::ThrowTypeError("Contexts are not supported.");
@@ -1017,6 +1029,7 @@ class PersistentContextPtr : AtomicContextPtr {
 };
 
 void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
+#if NODE_MAJOR_VERSION >= 23
   if (!useCPED_) {
     curContext_.Set(isolate, value);
     return;
@@ -1050,6 +1063,9 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   }
 
   contextPtr->Set(isolate, value);
+#else
+  curContext_.Set(isolate, value);
+#endif
 }
 
 ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
@@ -1072,6 +1088,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
 }
 
 ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
+#if NODE_MAJOR_VERSION >= 23
   if (!useCPED_) {
     return curContext_.Get();
   }
@@ -1089,6 +1106,9 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 
   return static_cast<PersistentContextPtr*>(profData.As<External>()->Value())
       ->Get();
+#else
+  return curContext_.Get();
+#endif
 }
 
 NAN_GETTER(WallProfiler::GetContext) {
@@ -1143,7 +1163,7 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
     if (useCPED_) {
       gcContext = GetContextPtrSignalSafe(isolate);
     }
-}
+  }
   gcCount.store(curCount + 1, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
 }
