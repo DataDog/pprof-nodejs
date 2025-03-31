@@ -17,11 +17,10 @@
 #pragma once
 
 #include <v8-profiler.h>
-#include "general-regs-only.hh"
 
 namespace dd {
 
 v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node) GENERAL_REGS_ONLY;
+    v8::AllocationProfile::Node* node);
 
 }  // namespace dd
