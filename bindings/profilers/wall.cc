@@ -1020,14 +1020,12 @@ NAN_METHOD(WallProfiler::Dispose) {
   delete profiler;
 }
 
-int64_t GetAsyncIdNoGC(v8::Isolate* isolate) {
-  return isolate->InContext()
-             ? static_cast<int64_t>(
-                   node::AsyncHooksGetExecutionAsyncId(isolate))
-             : -1;
+double GetAsyncIdNoGC(v8::Isolate* isolate) {
+  return isolate->InContext() ? node::AsyncHooksGetExecutionAsyncId(isolate)
+                              : -1;
 }
 
-int64_t WallProfiler::GetAsyncId(v8::Isolate* isolate) {
+double WallProfiler::GetAsyncId(v8::Isolate* isolate) {
   if (!collectAsyncId_) {
     return -1;
   }
