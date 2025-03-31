@@ -366,17 +366,10 @@ static int64_t GetV8ToEpochOffset() {
   return V8toEpochOffset;
 }
 
-Local<Number> NewNumberFromInt64(Isolate* isolate, int64_t value) {
-  return Number::New(isolate, static_cast<double>(value));
-}
-
-std::shared_ptr<ContextsByNode> CreateContextsByNode() {
-  return std::make_shared<ContextsByNode>();
-}
-
-std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
-    CpuProfile* profile, ContextBuffer& contexts, int64_t startCpuTime) {
-  auto contextsByNode = CreateContextsByNode();
+ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
+                                               ContextBuffer& contexts,
+                                               int64_t startCpuTime) {
+  ContextsByNode contextsByNode;
 
   auto sampleCount = profile->GetSamplesCount();
   if (contexts.empty() || sampleCount == 0) {
@@ -436,11 +429,11 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
         break;
       } else {
         // This sample context is the closest to this sample.
-        auto it = contextsByNode->find(sample);
+        auto it = contextsByNode.find(sample);
         Local<Array> array;
-        if (it == contextsByNode->end()) {
+        if (it == contextsByNode.end()) {
           array = Array::New(isolate);
-          (*contextsByNode)[sample] = {array, 1};
+          contextsByNode[sample] = {array, 1};
         } else {
           array = it->second.contexts;
           ++it->second.hitcount;
@@ -457,10 +450,10 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
         if (strcmp(function_name, "(program)") != 0) {
           if (collectCpuTime_) {
             timedContext
-                ->Set(v8Context,
-                      cpuTimeKey,
-                      NewNumberFromInt64(isolate,
-                                         sampleContext.cpu_time - lastCpuTime))
+                ->Set(
+                    v8Context,
+                    cpuTimeKey,
+                    Number::New(isolate, sampleContext.cpu_time - lastCpuTime))
                 .Check();
             lastCpuTime = sampleContext.cpu_time;
           }
@@ -478,7 +471,7 @@ std::shared_ptr<ContextsByNode> WallProfiler::GetContextsByNode(
               timedContext
                   ->Set(v8Context,
                         asyncIdKey,
-                        NewNumberFromInt64(isolate, sampleContext.async_id))
+                        Number::New(isolate, sampleContext.async_id))
                   .Check();
             }
           }
@@ -893,7 +886,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
 
     profile = TranslateTimeProfile(v8_profile,
                                    includeLines_,
-                                   contextsByNode,
+                                   &contextsByNode,
                                    collectCpuTime_,
                                    nonJSThreadsCpuTime);
 
@@ -1027,14 +1020,12 @@ NAN_METHOD(WallProfiler::Dispose) {
   delete profiler;
 }
 
-int64_t GetAsyncIdNoGC(v8::Isolate* isolate) {
-  return isolate->InContext()
-             ? static_cast<int64_t>(
-                   node::AsyncHooksGetExecutionAsyncId(isolate))
-             : -1;
+double GetAsyncIdNoGC(v8::Isolate* isolate) {
+  return isolate->InContext() ? node::AsyncHooksGetExecutionAsyncId(isolate)
+                              : -1;
 }
 
-int64_t WallProfiler::GetAsyncId(v8::Isolate* isolate) {
+double WallProfiler::GetAsyncId(v8::Isolate* isolate) {
   if (!collectAsyncId_) {
     return -1;
   }
@@ -1069,7 +1060,7 @@ void WallProfiler::OnGCEnd() {
 void WallProfiler::PushContext(int64_t time_from,
                                int64_t time_to,
                                int64_t cpu_time,
-                               int64_t async_id) {
+                               double async_id) {
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations).
   // Our ring buffer avoids allocations.

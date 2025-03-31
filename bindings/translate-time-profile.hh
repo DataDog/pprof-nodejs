@@ -18,15 +18,14 @@
 
 #include <v8-profiler.h>
 #include "contexts.hh"
-#include "general-regs-only.hh"
 
 namespace dd {
 
 v8::Local<v8::Value> TranslateTimeProfile(
     const v8::CpuProfile* profile,
     bool includeLineInfo,
-    std::shared_ptr<ContextsByNode> contextsByNode = nullptr,
+    ContextsByNode* contextsByNode = nullptr,
     bool hasCpuTime = false,
-    int64_t nonJSThreadsCpuTime = 0) GENERAL_REGS_ONLY;
+    int64_t nonJSThreadsCpuTime = 0);
 
 }  // namespace dd
