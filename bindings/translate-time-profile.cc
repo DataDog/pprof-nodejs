@@ -15,6 +15,7 @@
  */
 
 #include "translate-time-profile.hh"
+#include "general-regs-only.hh"
 #include "profile-translator.hh"
 
 namespace dd {
@@ -40,8 +41,8 @@ class TimeProfileTranslator : ProfileTranslator {
   FIELDS
 #undef X
 
-  v8::Local<v8::Array> getContextsForNode(
-      const v8::CpuProfileNode* node, uint32_t& hitcount) GENERAL_REGS_ONLY {
+  v8::Local<v8::Array> getContextsForNode(const v8::CpuProfileNode* node,
+                                          uint32_t& hitcount) {
     hitcount = node->GetHitCount();
     if (!contextsByNode) {
       // custom contexts are not enabled, keep the node hitcount and return
@@ -70,8 +71,7 @@ class TimeProfileTranslator : ProfileTranslator {
                                        v8::Local<v8::Integer> columnNumber,
                                        v8::Local<v8::Integer> hitCount,
                                        v8::Local<v8::Array> children,
-                                       v8::Local<v8::Array> contexts)
-      GENERAL_REGS_ONLY {
+                                       v8::Local<v8::Array> contexts) {
     v8::Local<v8::Object> js_node = NewObject();
 #define X(name) Set(js_node, str_##name, name);
     FIELDS
@@ -133,8 +133,7 @@ class TimeProfileTranslator : ProfileTranslator {
   }
 
   v8::Local<v8::Object> TranslateLineNumbersTimeProfileNode(
-      const v8::CpuProfileNode* parent,
-      const v8::CpuProfileNode* node) GENERAL_REGS_ONLY {
+      const v8::CpuProfileNode* parent, const v8::CpuProfileNode* node) {
     return CreateTimeNode(parent->GetFunctionName(),
                           parent->GetScriptResourceName(),
                           NewInteger(parent->GetScriptId()),
@@ -149,7 +148,7 @@ class TimeProfileTranslator : ProfileTranslator {
   // and column number refer to the line/column from which the function was
   // called.
   v8::Local<v8::Value> TranslateLineNumbersTimeProfileRoot(
-      const v8::CpuProfileNode* node) GENERAL_REGS_ONLY {
+      const v8::CpuProfileNode* node) {
     int32_t count = node->GetChildrenCount();
     std::vector<v8::Local<v8::Array>> childrenArrs(count);
     int32_t childCount = 0;
@@ -180,8 +179,8 @@ class TimeProfileTranslator : ProfileTranslator {
                           emptyArray);
   }
 
-  v8::Local<v8::Value> TranslateTimeProfileNode(const v8::CpuProfileNode* node)
-      GENERAL_REGS_ONLY {
+  v8::Local<v8::Value> TranslateTimeProfileNode(
+      const v8::CpuProfileNode* node) {
     int32_t count = node->GetChildrenCount();
     v8::Local<v8::Array> children = NewArray(count);
     for (int32_t i = 0; i < count; i++) {
@@ -208,8 +207,7 @@ class TimeProfileTranslator : ProfileTranslator {
   v8::Local<v8::Value> TranslateTimeProfile(const v8::CpuProfile* profile,
                                             bool includeLineInfo,
                                             bool hasCpuTime,
-                                            int64_t nonJSThreadsCpuTime)
-      GENERAL_REGS_ONLY {
+                                            int64_t nonJSThreadsCpuTime) {
     v8::Local<v8::Object> js_profile = NewObject();
 
     if (includeLineInfo) {
