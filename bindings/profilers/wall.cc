@@ -1215,21 +1215,21 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
       gcContext = GetContextPtrSignalSafe(isolate);
     }
   }
-  gcCount.store(curCount + 1, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
+  gcCount.store(curCount + 1, std::memory_order_relaxed);
 }
 
 void WallProfiler::OnGCEnd() {
   auto newCount = gcCount.load(std::memory_order_relaxed) - 1;
   std::atomic_signal_fence(std::memory_order_acquire);
   gcCount.store(newCount, std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_release);
   if (newCount == 0) {
     gcAsyncId = -1;
     if (useCPED_) {
       gcContext.reset();
     }
   }
-  std::atomic_signal_fence(std::memory_order_release);
 }
 
 void WallProfiler::PushContext(int64_t time_from,
