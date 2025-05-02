@@ -1037,14 +1037,17 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   // No Node AsyncContextFrame in this continuation yet
   if (!cped->IsObject()) return;
 
+  auto v8Ctx = isolate->GetCurrentContext();
+  // This should always be called from a V8 context, but check just in case.
+  if (v8Ctx.IsEmpty()) return;
+
   auto cpedObj = cped.As<Object>();
   auto localSymbol = cpedSymbol_.Get(isolate);
-  auto v8Ctx = isolate->GetCurrentContext();
   auto maybeProfData = cpedObj->Get(v8Ctx, localSymbol);
   if (maybeProfData.IsEmpty()) return;
-  auto profData = maybeProfData.ToLocalChecked();
 
   PersistentContextPtr* contextPtr = nullptr;
+  auto profData = maybeProfData.ToLocalChecked();
   if (profData->IsUndefined()) {
     contextPtr = new PersistentContextPtr();
 
@@ -1092,18 +1095,23 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
   }
 
   auto cped = isolate->GetContinuationPreservedEmbedderData();
-  if (!cped->IsObject()) return std::shared_ptr<Global<Value>>();
+  if (!cped->IsObject()) return ContextPtr();
+
+  auto v8Ctx = isolate->GetCurrentContext();
+  if (v8Ctx.IsEmpty()) return ContextPtr();
 
   auto cpedObj = cped.As<Object>();
   auto localSymbol = cpedSymbol_.Get(isolate);
-  auto maybeProfData = cpedObj->Get(isolate->GetCurrentContext(), localSymbol);
-  if (maybeProfData.IsEmpty()) return std::shared_ptr<Global<Value>>();
-  auto profData = maybeProfData.ToLocalChecked();
+  auto maybeProfData = cpedObj->Get(v8Ctx, localSymbol);
+  if (maybeProfData.IsEmpty()) return ContextPtr();
 
-  if (profData->IsUndefined()) return std::shared_ptr<Global<Value>>();
+  auto profData = maybeProfData.ToLocalChecked();
+  if (profData->IsUndefined()) return ContextPtr();
 
   return static_cast<PersistentContextPtr*>(profData.As<External>()->Value())
       ->Get();
+
+#undef RETURN_EMPTY_IF
 #else
   return curContext_.Get();
 #endif
