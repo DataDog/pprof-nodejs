@@ -1052,8 +1052,12 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   if (profData->IsUndefined()) {
     contextPtr = new PersistentContextPtr();
 
-    auto maybeSetResult =
-        cpedObj->Set(v8Ctx, localSymbol, External::New(isolate, contextPtr));
+    auto external = External::New(isolate, contextPtr);
+    setInProgress.store(true, std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_release);
+    auto maybeSetResult = cpedObj->Set(v8Ctx, localSymbol, external);
+    std::atomic_signal_fence(std::memory_order_release);
+    setInProgress.store(false, std::memory_order_relaxed);
     if (maybeSetResult.IsNothing()) {
       delete contextPtr;
       return;
@@ -1075,6 +1079,14 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
     // Not strictly necessary but we can avoid HandleScope creation for this
     // case.
     return curContext_.Get();
+  }
+
+  auto isSetInProgress = setInProgress.load(std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_acquire);
+  if (isSetInProgress) {
+    // SetContext is just calling Object::Set on the CPED object, safe behavior
+    // is to not try attempt Object::Get on it and just return empty right now.
+    return std::shared_ptr<Global<Value>>();
   }
 
   auto curGcCount = gcCount.load(std::memory_order_relaxed);

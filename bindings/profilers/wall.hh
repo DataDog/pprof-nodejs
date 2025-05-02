@@ -89,6 +89,7 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::Global<v8::Symbol> cpedSymbol_;
 
   std::atomic<int> gcCount = 0;
+  std::atomic<bool> setInProgress = false;
   double gcAsyncId;
   ContextPtr gcContext;
 
