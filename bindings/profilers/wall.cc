@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
+#include <nan.h>
+#include <node.h>
+#include <v8-profiler.h>
 #include <cinttypes>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <vector>
-
-#include <nan.h>
-#include <node.h>
-#include <v8-profiler.h>
 
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
