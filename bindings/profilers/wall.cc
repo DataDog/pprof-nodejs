@@ -1081,12 +1081,10 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
   std::atomic_signal_fence(std::memory_order_acquire);
   if (curGcCount > 0) {
     return gcContext;
-  } else if (isolate->InContext()) {
-    auto handleScope = HandleScope(isolate);
-    return GetContextPtr(isolate);
   }
-  // not in a V8 Context
-  return std::shared_ptr<Global<Value>>();
+
+  auto handleScope = HandleScope(isolate);
+  return GetContextPtr(isolate);
 }
 
 ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
@@ -1098,7 +1096,7 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   if (!cped->IsObject()) return ContextPtr();
 
-  auto v8Ctx = isolate->GetCurrentContext();
+  auto v8Ctx = isolate->GetEnteredOrMicrotaskContext();
   if (v8Ctx.IsEmpty()) return ContextPtr();
 
   auto cpedObj = cped.As<Object>();
