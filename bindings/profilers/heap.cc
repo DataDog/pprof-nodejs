@@ -323,7 +323,7 @@ static int CreateTempFile(uv_loop_t& loop, std::string& filepath) {
 }
 
 static void ExportProfile(HeapProfilerState& state) {
-  const int64_t timeoutMs = 5000;
+  const int64_t timeoutMs = 15000;
   uv_loop_t loop;
   int r;
 
@@ -355,6 +355,14 @@ static void ExportProfile(HeapProfilerState& state) {
   options.file = args[0];
   options.args = args.data();
   options.exit_cb = &OnExit;
+  uv_stdio_container_t child_stdio[3];
+  child_stdio[0].flags = UV_IGNORE;
+  child_stdio[1].flags = UV_INHERIT_FD;
+  child_stdio[1].data.fd = 2;
+  child_stdio[2].flags = UV_INHERIT_FD;
+  child_stdio[2].data.fd = 2;
+  options.stdio = child_stdio;
+  options.stdio_count = 3;
   uv_process_t child_req;
   uv_timer_t timer;
   timer.data = &child_req;
