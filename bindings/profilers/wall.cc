@@ -671,7 +671,7 @@ NAN_METHOD(WallProfiler::New) {
 
 NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
-      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+      Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
 
   if (info.Length() != 0) {
     return Nan::ThrowTypeError("Start must not have any arguments.");
@@ -766,7 +766,7 @@ NAN_METHOD(WallProfiler::Stop) {
   bool restart = info[0].As<Boolean>()->Value();
 
   WallProfiler* wallProfiler =
-      Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+      Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
 
   v8::Local<v8::Value> profile;
   auto err = wallProfiler->StopImpl(restart, profile);
@@ -996,27 +996,27 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 }
 
 NAN_GETTER(WallProfiler::GetContext) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->GetContext(info.GetIsolate()));
 }
 
 NAN_SETTER(WallProfiler::SetContext) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   profiler->SetContext(info.GetIsolate(), value);
 }
 
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->jsArray_.Get(v8::Isolate::GetCurrent()));
 }
 
 NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->v8ProfilerStuckEventLoopDetected());
 }
 
 NAN_METHOD(WallProfiler::Dispose) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.Holder());
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   delete profiler;
 }
 
