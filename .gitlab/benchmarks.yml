@@ -32,10 +32,11 @@ benchmarks:
     - ./steps/run-benchmarks.sh
   parallel:
     matrix:
-      - MAJOR_NODE_VERSION: 16
       - MAJOR_NODE_VERSION: 18
       - MAJOR_NODE_VERSION: 20
       - MAJOR_NODE_VERSION: 22
+      # TODO: Re-enable this once supports for Node 24 is merged on main
+      # - MAJOR_NODE_VERSION: 24
   artifacts:
     name: "reports"
     paths:
