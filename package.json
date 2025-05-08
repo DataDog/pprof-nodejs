@@ -83,5 +83,7 @@
   },
   "engines": {
     "node": ">=16"
-  }
+  },
+  "//": "Temporary fix to make nan@2.22.2 work with Node 24",
+  "postinstall": "sed -i '' 's/^.* Holder() const.*//' ./node_modules/nan/nan_callbacks_12_inl.h"
 }
