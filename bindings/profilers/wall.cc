@@ -1022,6 +1022,7 @@ NAN_METHOD(WallProfiler::Dispose) {
 
 double GetAsyncIdNoGC(v8::Isolate* isolate) {
 #if NODE_MAJOR_VERSION >= 24
+  HandleScope scope(isolate);
   auto context = isolate->GetEnteredOrMicrotaskContext();
   return context.IsEmpty() ? -1 : node::AsyncHooksGetExecutionAsyncId(context);
 #else
