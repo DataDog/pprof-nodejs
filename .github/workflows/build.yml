@@ -35,7 +35,7 @@ jobs:
       - run: npm run test:js-valgrind
 
   build:
-    uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
+    uses: Datadog/action-prebuildify/.github/workflows/build.yml@node-24
     with:
       target-name: 'dd_pprof' # target name in binding.gyp
       package-manager: 'npm' # npm or yarn
