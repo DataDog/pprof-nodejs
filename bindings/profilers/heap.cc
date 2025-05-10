@@ -56,6 +56,11 @@ struct HeapProfilerState {
   explicit HeapProfilerState(v8::Isolate* isolate) : isolate(isolate) {}
 
   ~HeapProfilerState() {
+    auto profiler = isolate->GetHeapProfiler();
+    if (profiler) {
+      profiler->StopSamplingHeapProfiler();
+    }
+
     UninstallNearHeapLimitCallback();
     if (async) {
       // defer deletion of async when uv_close callback is invoked
