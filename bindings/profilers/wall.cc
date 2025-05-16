@@ -1055,7 +1055,11 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     auto external = External::New(isolate, contextPtr);
     setInProgress.store(true, std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_release);
-    auto maybeSetResult = cpedObj->Set(v8Ctx, localSymbol, external);
+    auto maybeSetResult = cpedObj->DefineOwnProperty(
+        v8Ctx,
+        localSymbol,
+        external,
+        static_cast<v8::PropertyAttribute>(ReadOnly | DontEnum | DontDelete));
     std::atomic_signal_fence(std::memory_order_release);
     setInProgress.store(false, std::memory_order_relaxed);
     if (maybeSetResult.IsNothing()) {
