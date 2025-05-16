@@ -548,14 +548,15 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 }
 
 WallProfiler::~WallProfiler() {
-  Dispose(nullptr);
+  Dispose();
 }
 
-void WallProfiler::Dispose(Isolate* isolate) {
+void WallProfiler::Dispose() {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
     cpuProfiler_ = nullptr;
 
+    auto isolate = Isolate::GetCurrent();
     g_profilers.RemoveProfiler(isolate, this);
 
     if (isolate != nullptr && collectAsyncId_) {
@@ -896,7 +897,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   v8_profile->Delete();
 
   if (!restart) {
-    Dispose(v8::Isolate::GetCurrent());
+    Dispose();
   } else if (workaroundV8Bug_) {
     waitForSignal(callCount + 1);
     collectionMode_.store(withContexts_ ? CollectionMode::kCollectContexts
