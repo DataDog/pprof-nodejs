@@ -23,8 +23,14 @@ import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
 import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
+import {satisfies} from 'semver';
+import { AsyncLocalStorage } from 'async_hooks';
 
 const assert = require('assert');
+
+const useCPED =
+  satisfies(process.versions.node, '>=24.0.0') &&
+  !process.execArgv.includes('--no-async-context-frame');
 
 const PROFILE_OPTIONS = {
   durationMillis: 500,
@@ -49,7 +55,14 @@ describe('Time Profiler', () => {
         durationMillis: PROFILE_OPTIONS.durationMillis,
         withContexts: true,
         lineNumbers: false,
+        useCPED,
       });
+      let als;
+      if (useCPED) {
+        // Ensure an async context frame is created to hold the profiler context.
+        als = new AsyncLocalStorage();
+        als.enterWith(1);
+      }
       const initialContext: {[key: string]: string} = {};
       time.setContext(initialContext);
       const kSampleCount = time.constants.kSampleCount;
@@ -102,7 +115,14 @@ describe('Time Profiler', () => {
         durationMillis: PROFILE_OPTIONS.durationMillis,
         withContexts: true,
         lineNumbers: false,
+        useCPED,
       });
+      let als;
+      if (useCPED) {
+        // Ensure an async context frame is created to hold the profiler context.
+        als = new AsyncLocalStorage();
+        als.enterWith(1);
+      }
       // By repeating the test few times, we also exercise the profiler
       // start-stop overlap behavior.
       const repeats = 3;
