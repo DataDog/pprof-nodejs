@@ -560,7 +560,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
     contexts_.reserve(duration * 2 / samplingPeriod);
   }
 
-  curContext_.store(&context1_, std::memory_order_relaxed);
   collectionMode_.store(CollectionMode::kNoCollect, std::memory_order_relaxed);
   gcCount.store(0, std::memory_order_relaxed);
 
@@ -1006,28 +1005,13 @@ v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
 }
 
 v8::Local<v8::Value> WallProfiler::GetContext(Isolate* isolate) {
-  auto context = *curContext_.load(std::memory_order_relaxed);
+  auto context = curContext_.Get();
   if (!context) return v8::Undefined(isolate);
   return context->Get(isolate);
 }
 
 void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
-  // Need to be careful here, because we might be interrupted by a
-  // signal handler that will make use of curContext_.
-  // Update of shared_ptr is not atomic, so instead we use a pointer
-  // (curContext_) that points on two shared_ptr (context1_ and context2_),
-  // update the shared_ptr that is not currently in use and then atomically
-  // update curContext_.
-  auto newCurContext = curContext_.load(std::memory_order_relaxed) == &context1_
-                           ? &context2_
-                           : &context1_;
-  if (!value->IsNullOrUndefined()) {
-    *newCurContext = std::make_shared<Global<Value>>(isolate, value);
-  } else {
-    newCurContext->reset();
-  }
-  std::atomic_signal_fence(std::memory_order_release);
-  curContext_.store(newCurContext, std::memory_order_relaxed);
+  curContext_.Set(isolate, value);
 }
 
 NAN_GETTER(WallProfiler::GetContext) {
@@ -1102,10 +1086,10 @@ void WallProfiler::PushContext(int64_t time_from,
   // Be careful this is called in a signal handler context therefore all
   // operations must be async signal safe (in particular no allocations).
   // Our ring buffer avoids allocations.
-  auto context = curContext_.load(std::memory_order_relaxed);
+  auto context = curContext_.Get();
   std::atomic_signal_fence(std::memory_order_acquire);
   if (contexts_.size() < contexts_.capacity()) {
-    contexts_.push_back({*context, time_from, time_to, cpu_time, async_id});
+    contexts_.push_back({context, time_from, time_to, cpu_time, async_id});
     std::atomic_fetch_add_explicit(
         reinterpret_cast<std::atomic<uint32_t>*>(&fields_[kSampleCount]),
         1U,
