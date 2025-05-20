@@ -36,6 +36,41 @@ struct Result {
   std::string msg;
 };
 
+using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
+
+/**
+ * Class that allows atomic updates to a ContextPtr. Since update of shared_ptr
+ * is not atomic, we use a pointer that alternates between pointing to one of
+ * two shared_ptrs instead, and we use atomic operations to update the pointer.
+ */
+class AtomicContextPtr {
+  ContextPtr ptr1;
+  ContextPtr ptr2;
+  std::atomic<ContextPtr*> currentPtr = &ptr1;
+
+  void Set(v8::Isolate* isolate, v8::Local<v8::Value> value) {
+    auto oldPtr = currentPtr.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
+    auto newPtr = oldPtr == &ptr1 ? &ptr2 : &ptr1;
+    if (!value->IsNullOrUndefined()) {
+      *newPtr = std::make_shared<v8::Global<v8::Value>>(isolate, value);
+    } else {
+      newPtr->reset();
+    }
+    std::atomic_signal_fence(std::memory_order_release);
+    currentPtr.store(newPtr, std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_release);
+  }
+
+  ContextPtr Get() {
+    auto ptr = currentPtr.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
+    return ptr ? *ptr : ContextPtr();
+  }
+
+  friend class WallProfiler;
+};
+
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
@@ -43,19 +78,13 @@ class WallProfiler : public Nan::ObjectWrap {
  private:
   enum Fields { kSampleCount, kFieldCount };
 
-  using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
-
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
 
-  // We're using a pair of shared pointers and an atomic pointer-to-current as
-  // a way to ensure signal safety on update.
-  ContextPtr context1_;
-  ContextPtr context2_;
-  std::atomic<ContextPtr*> curContext_;
+  AtomicContextPtr curContext_;
 
   std::atomic<int> gcCount = 0;
   double gcAsyncId;
