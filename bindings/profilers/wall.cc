@@ -58,8 +58,6 @@ using namespace v8;
 
 namespace dd {
 
-using ContextPtr = std::shared_ptr<Global<Value>>;
-
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
@@ -613,11 +611,9 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
 
-    for (auto it = liveContextPtrs_.begin(); it != liveContextPtrs_.end();) {
-      auto ptr = *it;
+    for (auto ptr : liveContextPtrs_) {
       ptr->UnregisterFromGC();
       delete ptr;
-      ++it;
     }
     liveContextPtrs_.clear();
     deadContextPtrs_.clear();
@@ -1085,11 +1081,9 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   }
 
   // Clean up dead context pointers
-  for (auto it = deadContextPtrs_.begin(); it != deadContextPtrs_.end();) {
-    auto ptr = *it;
+  for (auto ptr : deadContextPtrs_) {
     liveContextPtrs_.erase(ptr);
     delete ptr;
-    ++it;
   }
   deadContextPtrs_.clear();
 
@@ -1112,11 +1106,11 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     contextPtr = new PersistentContextPtr(&deadContextPtrs_);
 
     auto external = External::New(isolate, contextPtr);
-    setInProgress.store(true, std::memory_order_relaxed);
+    setInProgress_.store(true, std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_release);
     auto maybeSetResult = cpedObj->SetPrivate(v8Ctx, localSymbol, external);
     std::atomic_signal_fence(std::memory_order_release);
-    setInProgress.store(false, std::memory_order_relaxed);
+    setInProgress_.store(false, std::memory_order_relaxed);
     if (maybeSetResult.IsNothing()) {
       delete contextPtr;
       return;
@@ -1135,7 +1129,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 }
 
 ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
-  auto isSetInProgress = setInProgress.load(std::memory_order_relaxed);
+  auto isSetInProgress = setInProgress_.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
   if (isSetInProgress) {
     // New sample context is being set. Safe behavior is to not try attempt
@@ -1147,7 +1141,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
     auto curGcCount = gcCount.load(std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_acquire);
     if (curGcCount > 0) {
-      return gcContext;
+      return gcContext_;
     }
   }
 
@@ -1252,7 +1246,7 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
       gcAsyncId = GetAsyncIdNoGC(isolate);
     }
     if (useCPED_) {
-      gcContext = GetContextPtrSignalSafe(isolate);
+      gcContext_ = GetContextPtrSignalSafe(isolate);
     }
   }
   std::atomic_signal_fence(std::memory_order_release);
@@ -1264,7 +1258,7 @@ void WallProfiler::OnGCEnd() {
   if (oldCount == 1 && useCPED_) {
     // Not strictly necessary, as we'll reset it to something else on next GC,
     // but why retain it longer than needed?
-    gcContext.reset();
+    gcContext_.reset();
   }
 }
 
