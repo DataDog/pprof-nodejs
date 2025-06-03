@@ -48,6 +48,7 @@ class AtomicContextPtr {
   ContextPtr ptr2;
   std::atomic<ContextPtr*> currentPtr = &ptr1;
 
+public:
   void Set(v8::Isolate* isolate, v8::Local<v8::Value> value) {
     auto oldPtr = currentPtr.load(std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_acquire);
@@ -67,8 +68,6 @@ class AtomicContextPtr {
     std::atomic_signal_fence(std::memory_order_acquire);
     return ptr ? *ptr : ContextPtr();
   }
-
-  friend class WallProfiler;
 };
 
 class PersistentContextPtr;

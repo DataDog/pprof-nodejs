@@ -57,8 +57,6 @@ using namespace v8;
 
 namespace dd {
 
-using ContextPtr = std::shared_ptr<Global<Value>>;
-
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
@@ -565,10 +563,12 @@ WallProfiler::~WallProfiler() {
   Dispose(nullptr);
 }
 
-class PersistentContextPtr : AtomicContextPtr {
+class PersistentContextPtr {
   std::vector<PersistentContextPtr*>* dead;
   Persistent<Object> per;
+  ContextPtr currentPtr;
 
+public:
   PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
 
   void UnregisterFromGC() {
@@ -576,6 +576,18 @@ class PersistentContextPtr : AtomicContextPtr {
       per.ClearWeak();
       per.Reset();
     }
+  }
+
+  void Set(v8::Isolate* isolate, v8::Local<v8::Value> value) {
+    if (!value->IsNullOrUndefined()) {
+      currentPtr = std::make_shared<v8::Global<v8::Value>>(isolate, value);
+    } else {
+      currentPtr.reset();
+    }
+  }
+
+  ContextPtr Get() {
+    return currentPtr;
   }
 
   void MarkDead() { dead->push_back(this); }
@@ -592,8 +604,6 @@ class PersistentContextPtr : AtomicContextPtr {
         },
         WeakCallbackType::kParameter);
   }
-
-  friend class WallProfiler;
 };
 
 void WallProfiler::Dispose(Isolate* isolate) {
@@ -608,11 +618,9 @@ void WallProfiler::Dispose(Isolate* isolate) {
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
 
-    for (auto it = liveContextPtrs_.begin(); it != liveContextPtrs_.end();) {
-      auto ptr = *it;
+    for (auto ptr: liveContextPtrs_) {
       ptr->UnregisterFromGC();
       delete ptr;
-      ++it;
     }
     liveContextPtrs_.clear();
     deadContextPtrs_.clear();
