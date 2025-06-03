@@ -144,6 +144,7 @@ class WallProfiler : public Nan::ObjectWrap {
                                    int64_t startCpuTime);
 
   bool waitForSignal(uint64_t targetCallCount = 0);
+public:
   ContextPtr GetContextPtr(v8::Isolate* isolate);
   ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
 

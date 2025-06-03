@@ -24,12 +24,16 @@
 #include <mutex>
 #include <vector>
 
+#include <signal.h>
+#include <sys/time.h>
+
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
 #include "wall.hh"
 
 #ifndef _WIN32
 #define DD_WALL_USE_SIGPROF true
+#define NODE_MAJOR_VERSION 24
 
 // Declare v8::base::TimeTicks::Now. It is exported from the node executable so
 // our addon will be able to dynamically link to the symbol when loaded.
@@ -319,6 +323,20 @@ void SignalHandler::HandleProfilerSignal(int sig,
   auto time_to = Now();
   prof->PushContext(time_from, time_to, cpu_time, isolate);
 }
+
+
+void HandleSignal(int sig, siginfo_t* info, void* context) {
+  auto isolate = Isolate::GetCurrent();
+  if (!isolate || isolate->IsDead()) {
+    return;
+  }
+  WallProfiler* prof = g_profilers.GetProfiler(isolate);
+
+  if (!prof) {
+    return;
+  }
+  prof->GetContextPtrSignalSafe(isolate);
+}
 #else
 class SignalHandler {
  public:
@@ -553,7 +571,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   if (useCPED_) {
     cpedSymbol_.Reset(
         isolate,
-        Symbol::ForApi(isolate,
+        Symbol::For(isolate,
                        String::NewFromUtf8Literal(
                            isolate, "dd::WallProfiler::cpedSymbol_")));
   }
@@ -757,6 +775,25 @@ NAN_METHOD(WallProfiler::Start) {
 Result WallProfiler::StartImpl() {
   if (started_) {
     return Result{"Start called on already started profiler, stop it first."};
+  }
+
+  if (0) {
+    struct itimerval it = {
+      .it_interval = {
+        .tv_sec = 0,
+        .tv_usec = 100
+      },
+      .it_value = {
+        .tv_sec = 0,
+        .tv_usec = 100
+      }
+    };
+    setitimer(ITIMER_REAL, &it, nullptr);
+    struct sigaction sa;
+    sa.sa_sigaction = &HandleSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
+    sigaction(SIGALRM, &sa, nullptr);
   }
 
   profileIdx_ = 0;
@@ -1090,7 +1127,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
         v8Ctx,
         localSymbol,
         external,
-        static_cast<PropertyAttribute>(ReadOnly | DontEnum | DontDelete));
+        static_cast<PropertyAttribute>(ReadOnly | DontDelete));
     std::atomic_signal_fence(std::memory_order_release);
     setInProgress.store(false, std::memory_order_relaxed);
     if (maybeSetResult.IsNothing()) {
@@ -1155,6 +1192,8 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
                      profData.As<External>()->Value())
               ->Get();
         }
+      } else {
+        fprintf(stderr, "!!!!!!!!GetContextPtr: maybeProfData is empty\n");
       }
     }
   }
