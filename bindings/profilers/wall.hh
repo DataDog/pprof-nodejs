@@ -97,9 +97,9 @@ class WallProfiler : public Nan::ObjectWrap {
   std::vector<PersistentContextPtr*> deadContextPtrs_;
 
   std::atomic<int> gcCount = 0;
-  std::atomic<bool> setInProgress = false;
+  std::atomic<bool> setInProgress_ = false;
   double gcAsyncId;
-  ContextPtr gcContext;
+  ContextPtr gcContext_;
 
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
