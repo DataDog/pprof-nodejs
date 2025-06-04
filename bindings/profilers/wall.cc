@@ -72,6 +72,54 @@ class SignalMutex {
   inline ~SignalMutex() { store(false); }
 };
 
+void SetContextPtr(ContextPtr& contextPtr,
+                   Isolate* isolate,
+                   Local<Value> value) {
+  if (!value->IsNullOrUndefined()) {
+    contextPtr = std::make_shared<Global<Value>>(isolate, value);
+  } else {
+    contextPtr.reset();
+  }
+}
+
+class PersistentContextPtr {
+  ContextPtr context;
+  std::vector<PersistentContextPtr*>* dead;
+  Persistent<Object> per;
+
+  PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
+
+  void UnregisterFromGC() {
+    if (!per.IsEmpty()) {
+      per.ClearWeak();
+      per.Reset();
+    }
+  }
+
+  void MarkDead() { dead->push_back(this); }
+
+  void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
+    // Register a callback to delete this object when the object is GCed
+    per.Reset(isolate, obj);
+    per.SetWeak(
+        this,
+        [](const WeakCallbackInfo<PersistentContextPtr>& data) {
+          auto ptr = data.GetParameter();
+          ptr->MarkDead();
+          ptr->UnregisterFromGC();
+        },
+        WeakCallbackType::kParameter);
+  }
+
+  void Set(Isolate* isolate, const Local<Value>& value) {
+    SetContextPtr(context, isolate, value);
+  }
+
+  ContextPtr Get() const { return context; }
+
+  friend class WallProfiler;
+};
+
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
@@ -633,56 +681,6 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
     deadContextPtrs_.clear();
   }
 }
-
-void SetContextPtr(ContextPtr& contextPtr,
-                   Isolate* isolate,
-                   Local<Value> value) {
-  if (contextPtr) {
-    contextPtr = std::make_shared<Global<Value>>(isolate, value);
-  } else {
-    contextPtr.reset();
-  }
-}
-
-class PersistentContextPtr {
-  ContextPtr context;
-  std::vector<PersistentContextPtr*>* dead;
-  Persistent<Object> per;
-
-  PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
-
-  void UnregisterFromGC() {
-    if (!per.IsEmpty()) {
-      per.ClearWeak();
-      per.Reset();
-    }
-  }
-
-  void MarkDead() { dead->push_back(this); }
-
-  void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
-    // Register a callback to delete this object when the object is GCed
-    per.Reset(isolate, obj);
-    per.SetWeak(
-        this,
-        [](const WeakCallbackInfo<PersistentContextPtr>& data) {
-          auto ptr = data.GetParameter();
-          ptr->MarkDead();
-          ptr->UnregisterFromGC();
-        },
-        WeakCallbackType::kParameter);
-  }
-
-  void Set(Isolate* isolate, const Local<Value>& value) {
-    SetContextPtr(context, isolate, value);
-  }
-
-  ContextPtr Get() const {
-    return context;
-  }
-
-  friend class WallProfiler;
-};
 
 #define DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(name)                              \
   auto name##Value =                                                           \
