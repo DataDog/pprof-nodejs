@@ -38,39 +38,6 @@ struct Result {
 
 using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
 
-/**
- * Class that allows atomic updates to a ContextPtr. Since update of shared_ptr
- * is not atomic, we use a pointer that alternates between pointing to one of
- * two shared_ptrs instead, and we use atomic operations to update the pointer.
- */
-class AtomicContextPtr {
-  ContextPtr ptr1;
-  ContextPtr ptr2;
-  std::atomic<ContextPtr*> currentPtr = &ptr1;
-
-  void Set(v8::Isolate* isolate, v8::Local<v8::Value> value) {
-    auto oldPtr = currentPtr.load(std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_acquire);
-    auto newPtr = oldPtr == &ptr1 ? &ptr2 : &ptr1;
-    if (!value->IsNullOrUndefined()) {
-      *newPtr = std::make_shared<v8::Global<v8::Value>>(isolate, value);
-    } else {
-      newPtr->reset();
-    }
-    std::atomic_signal_fence(std::memory_order_release);
-    currentPtr.store(newPtr, std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
-  }
-
-  ContextPtr Get() {
-    auto ptr = currentPtr.load(std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_acquire);
-    return ptr ? *ptr : ContextPtr();
-  }
-
-  friend class WallProfiler;
-};
-
 class PersistentContextPtr;
 
 class WallProfiler : public Nan::ObjectWrap {
@@ -85,7 +52,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   bool useCPED_ = false;
   // If we aren't using the CPED, we use a single context ptr stored here.
-  AtomicContextPtr curContext_;
+  ContextPtr curContext_;
   // Otherwise we'll use a private symbol to store the context in CPED objects.
   v8::Global<v8::Private> cpedSymbol_;
   // We track live context pointers in a set to avoid memory leaks. They will
@@ -150,6 +117,8 @@ class WallProfiler : public Nan::ObjectWrap {
 
   ContextPtr GetContextPtr(v8::Isolate* isolate);
   ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
+
+  void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
 
  public:
   /**
