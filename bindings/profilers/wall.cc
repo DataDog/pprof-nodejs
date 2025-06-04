@@ -58,6 +58,20 @@ using namespace v8;
 
 namespace dd {
 
+class SignalMutex {
+  std::atomic<bool>& mutex_;
+
+  inline void store(bool value) {
+    std::atomic_signal_fence(std::memory_order_release);
+    mutex_.store(value, std::memory_order_relaxed);
+  }
+
+ public:
+  inline SignalMutex(std::atomic<bool>& mutex) : mutex_(mutex) { store(true); }
+
+  inline ~SignalMutex() { store(false); }
+};
+
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
@@ -620,7 +634,18 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   }
 }
 
-class PersistentContextPtr : AtomicContextPtr {
+void SetContextPtr(ContextPtr& contextPtr,
+                   Isolate* isolate,
+                   Local<Value> value) {
+  if (contextPtr) {
+    contextPtr = std::make_shared<Global<Value>>(isolate, value);
+  } else {
+    contextPtr.reset();
+  }
+}
+
+class PersistentContextPtr {
+  ContextPtr context;
   std::vector<PersistentContextPtr*>* dead;
   Persistent<Object> per;
 
@@ -646,6 +671,14 @@ class PersistentContextPtr : AtomicContextPtr {
           ptr->UnregisterFromGC();
         },
         WeakCallbackType::kParameter);
+  }
+
+  void Set(Isolate* isolate, const Local<Value>& value) {
+    SetContextPtr(context, isolate, value);
+  }
+
+  ContextPtr Get() const {
+    return context;
   }
 
   friend class WallProfiler;
@@ -1073,10 +1106,15 @@ Local<Value> WallProfiler::GetContext(Isolate* isolate) {
   return Undefined(isolate);
 }
 
+void WallProfiler::SetCurrentContextPtr(Isolate* isolate, Local<Value> value) {
+  SignalMutex m(setInProgress_);
+  SetContextPtr(curContext_, isolate, value);
+}
+
 void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 #if NODE_MAJOR_VERSION >= 23
   if (!useCPED_) {
-    curContext_.Set(isolate, value);
+    SetCurrentContextPtr(isolate, value);
     return;
   }
 
@@ -1102,15 +1140,12 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
   PersistentContextPtr* contextPtr = nullptr;
   auto profData = maybeProfData.ToLocalChecked();
+  SignalMutex m(setInProgress_);
   if (profData->IsUndefined()) {
     contextPtr = new PersistentContextPtr(&deadContextPtrs_);
 
     auto external = External::New(isolate, contextPtr);
-    setInProgress_.store(true, std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
     auto maybeSetResult = cpedObj->SetPrivate(v8Ctx, localSymbol, external);
-    std::atomic_signal_fence(std::memory_order_release);
-    setInProgress_.store(false, std::memory_order_relaxed);
     if (maybeSetResult.IsNothing()) {
       delete contextPtr;
       return;
@@ -1124,7 +1159,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
   contextPtr->Set(isolate, value);
 #else
-  curContext_.Set(isolate, value);
+  SetCurrentContextPtr(isolate, value);
 #endif
 }
 
@@ -1151,7 +1186,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
 ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 #if NODE_MAJOR_VERSION >= 23
   if (!useCPED_) {
-    return curContext_.Get();
+    return curContext_;
   }
 
   if (!isolate->IsInUse()) {
@@ -1179,7 +1214,7 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
   }
   return ContextPtr();
 #else
-  return curContext_.Get();
+  return curContext_;
 #endif
 }
 
