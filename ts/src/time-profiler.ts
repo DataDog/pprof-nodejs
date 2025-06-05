@@ -30,7 +30,7 @@ import {
 import {GenerateTimeLabelsFunction} from './v8-types';
 import {isMainThread} from 'worker_threads';
 
-const {kSampleCount} = profilerConstants;
+const {kSampleCount, kCPEDContextCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
 const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
@@ -178,6 +178,7 @@ export function v8ProfilerStuckEventLoopDetected() {
 
 export const constants = {
   kSampleCount,
+  kCPEDContextCount,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
 };

@@ -72,6 +72,27 @@ class SignalMutex {
   inline ~SignalMutex() { store(false); }
 };
 
+// This class is used to update the context count metric when it goes out of
+// scope.
+class ContextCountMetricUpdater {
+  uint32_t* fields_;
+  std::unordered_set<PersistentContextPtr*>& liveContextPtrs_;
+
+ public:
+  inline ContextCountMetricUpdater(
+      uint32_t* fields,
+      std::unordered_set<PersistentContextPtr*>& liveContextPtrs)
+      : fields_(fields), liveContextPtrs_(liveContextPtrs) {}
+
+  inline ~ContextCountMetricUpdater() {
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint32_t>*>(
+            &fields_[WallProfiler::Fields::kCPEDContextCount]),
+        liveContextPtrs_.size(),
+        std::memory_order_relaxed);
+  }
+};
+
 void SetContextPtr(ContextPtr& contextPtr,
                    Isolate* isolate,
                    Local<Value> value) {
@@ -673,6 +694,7 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
 
+    ContextCountMetricUpdater updater(fields_, liveContextPtrs_);
     for (auto ptr : liveContextPtrs_) {
       ptr->UnregisterFromGC();
       delete ptr;
@@ -853,6 +875,7 @@ v8::ProfilerId WallProfiler::StartInternal() {
   if (withContexts_ || workaroundV8Bug_) {
     SignalHandler::IncreaseUseCount();
     fields_[kSampleCount] = 0;
+    fields_[kCPEDContextCount] = 0;
   }
 
   if (collectCpuTime_) {
@@ -1072,6 +1095,11 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                          Nan::New<Integer>(kSampleCount),
                          ReadOnlyDontDelete)
       .FromJust();
+  Nan::DefineOwnProperty(constants,
+                         Nan::New("kCPEDContextCount").ToLocalChecked(),
+                         Nan::New<Integer>(kCPEDContextCount),
+                         ReadOnlyDontDelete)
+      .FromJust();
   Nan::DefineOwnProperty(target,
                          Nan::New("constants").ToLocalChecked(),
                          constants,
@@ -1116,6 +1144,8 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     return;
   }
 
+  ContextCountMetricUpdater updater(fields_, liveContextPtrs_);
+
   // Clean up dead context pointers
   for (auto ptr : deadContextPtrs_) {
     liveContextPtrs_.erase(ptr);
@@ -1140,6 +1170,12 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   auto profData = maybeProfData.ToLocalChecked();
   SignalMutex m(setInProgress_);
   if (profData->IsUndefined()) {
+    if (value->IsNullOrUndefined()) {
+      // Don't go to the trouble of mutating the CPED for null or undefined as
+      // the absence of a sample context will be interpreted as undefined in
+      // GetContextPtr anyway.
+      return;
+    }
     contextPtr = new PersistentContextPtr(&deadContextPtrs_);
 
     auto external = External::New(isolate, contextPtr);
