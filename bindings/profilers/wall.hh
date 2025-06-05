@@ -62,7 +62,7 @@ class WallProfiler : public Nan::ObjectWrap {
 
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
-  std::string profileId_;
+  v8::ProfilerId profileId_;
   uint64_t profileIdx_ = 0;
   bool includeLines_ = false;
   bool withContexts_ = false;
@@ -93,7 +93,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextBuffer contexts_;
 
   ~WallProfiler();
-  void Dispose(v8::Isolate* isolate);
+  void Dispose(v8::Isolate* isolate, bool removeFromMap);
 
   // A new CPU profiler object will be created each time profiling is started
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
@@ -104,6 +104,8 @@ class WallProfiler : public Nan::ObjectWrap {
                                    int64_t startCpuTime);
 
   bool waitForSignal(uint64_t targetCallCount = 0);
+  static void CleanupHook(void* data);
+  void Cleanup(v8::Isolate* isolate);
 
  public:
   /**
@@ -129,7 +131,7 @@ class WallProfiler : public Nan::ObjectWrap {
                    int64_t cpu_time,
                    double async_id);
   Result StartImpl();
-  std::string StartInternal();
+  v8::ProfilerId StartInternal();
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
 
   CollectionMode collectionMode() {
@@ -142,6 +144,8 @@ class WallProfiler : public Nan::ObjectWrap {
   }
 
   bool collectCpuTime() const { return collectCpuTime_; }
+
+  bool interceptSignal() const { return withContexts_ || workaroundV8Bug_; }
 
   int v8ProfilerStuckEventLoopDetected() const {
     return v8ProfilerStuckEventLoopDetected_;

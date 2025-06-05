@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 #include <vector>
 
 #include <nan.h>
@@ -120,6 +121,18 @@ class ProtectedProfilerMap {
     return profiler;
   }
 
+  WallProfiler* RemoveProfilerForIsolate(const v8::Isolate* isolate) {
+    return UpdateProfilers([isolate](auto map) {
+      auto it = map->find(isolate);
+      if (it != map->end()) {
+        auto profiler = it->second;
+        map->erase(it);
+        return profiler;
+      }
+      return static_cast<WallProfiler*>(nullptr);
+    });
+  }
+
   bool RemoveProfiler(const v8::Isolate* isolate, WallProfiler* profiler) {
     return UpdateProfilers([isolate, profiler, this](auto map) {
       terminatedWorkersCpu_ += profiler->GetAndResetThreadCpu();
@@ -177,8 +190,10 @@ class ProtectedProfilerMap {
   }
 
  private:
+  using ProfilerMap = std::unordered_map<const Isolate*, WallProfiler*>;
+
   template <typename F>
-  bool UpdateProfilers(F updateFn) {
+  std::invoke_result_t<F, ProfilerMap*> UpdateProfilers(F updateFn) {
     // use mutex to prevent two isolates of updating profilers concurrently
     std::lock_guard<std::mutex> lock(update_mutex_);
 
@@ -207,7 +222,6 @@ class ProtectedProfilerMap {
     return res;
   }
 
-  using ProfilerMap = std::unordered_map<const Isolate*, WallProfiler*>;
   mutable std::atomic<ProfilerMap*> profilers_;
   std::mutex update_mutex_;
   bool init_ = false;
@@ -364,6 +378,27 @@ static int64_t GetV8ToEpochOffset() {
     }
   }
   return V8toEpochOffset;
+}
+
+void WallProfiler::CleanupHook(void* data) {
+  auto isolate = static_cast<Isolate*>(data);
+  auto prof = g_profilers.RemoveProfilerForIsolate(isolate);
+  if (prof) {
+    prof->Cleanup(isolate);
+    delete prof;
+  }
+}
+
+// This is only called when isolate is terminated without `beforeExit`
+// notification.
+void WallProfiler::Cleanup(Isolate* isolate) {
+  if (started_) {
+    cpuProfiler_->Stop(profileId_);
+    if (interceptSignal()) {
+      SignalHandler::DecreaseUseCount();
+    }
+    Dispose(isolate, false);
+  }
 }
 
 ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
@@ -548,20 +583,25 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 }
 
 WallProfiler::~WallProfiler() {
-  Dispose(nullptr);
+  Dispose(nullptr, true);
 }
 
-void WallProfiler::Dispose(Isolate* isolate) {
+void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
     cpuProfiler_ = nullptr;
 
-    g_profilers.RemoveProfiler(isolate, this);
+    if (removeFromMap) {
+      g_profilers.RemoveProfiler(isolate, this);
+    }
 
     if (isolate != nullptr && collectAsyncId_) {
       isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
+
+    node::RemoveEnvironmentCleanupHook(
+        isolate, &WallProfiler::CleanupHook, isolate);
   }
 }
 
@@ -702,17 +742,19 @@ Result WallProfiler::StartImpl() {
                                                 : CollectionMode::kNoCollect);
   collectionMode_.store(collectionMode, std::memory_order_relaxed);
   started_ = true;
+  auto isolate = Isolate::GetCurrent();
+  node::AddEnvironmentCleanupHook(isolate, &WallProfiler::CleanupHook, isolate);
   return {};
 }
 
-std::string WallProfiler::StartInternal() {
+v8::ProfilerId WallProfiler::StartInternal() {
   // Reuse the same names for the profiles because strings used for profile
   // names are not released until v8::CpuProfiler object is destroyed.
   // https://github.com/nodejs/node/blob/b53c51995380b1f8d642297d848cab6010d2909c/deps/v8/src/profiler/profile-generator.h#L516
   char buf[128];
   snprintf(buf, sizeof(buf), "pprof-%" PRId64, (profileIdx_++) % 2);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
-  cpuProfiler_->StartProfiling(
+  auto result = cpuProfiler_->Start(
       title,
       includeLines_ ? CpuProfilingMode::kCallerLineNumbers
                     : CpuProfilingMode::kLeafNodeLineNumbers,
@@ -752,7 +794,7 @@ std::string WallProfiler::StartInternal() {
     cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
   }
 
-  return buf;
+  return result.id;
 }
 
 NAN_METHOD(WallProfiler::Stop) {
@@ -837,12 +879,11 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     std::atomic_signal_fence(std::memory_order_acquire);
   }
 
-  if (withContexts_ || workaroundV8Bug_) {
+  if (interceptSignal()) {
     SignalHandler::DecreaseUseCount();
   }
 
-  auto v8_profile = cpuProfiler_->StopProfiling(
-      Nan::New<String>(oldProfileId).ToLocalChecked());
+  auto v8_profile = cpuProfiler_->Stop(oldProfileId);
 
   ContextBuffer contexts;
   if (withContexts_) {
@@ -896,7 +937,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   v8_profile->Delete();
 
   if (!restart) {
-    Dispose(v8::Isolate::GetCurrent());
+    Dispose(v8::Isolate::GetCurrent(), true);
   } else if (workaroundV8Bug_) {
     waitForSignal(callCount + 1);
     collectionMode_.store(withContexts_ ? CollectionMode::kCollectContexts
@@ -1016,6 +1057,7 @@ NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
 }
 
 NAN_METHOD(WallProfiler::Dispose) {
+  // Profiler should already be stopped when this is called.
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   delete profiler;
 }
