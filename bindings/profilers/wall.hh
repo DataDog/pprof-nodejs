@@ -43,10 +43,9 @@ class PersistentContextPtr;
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
+  enum Fields { kSampleCount, kCPEDContextCount, kFieldCount };
 
  private:
-  enum Fields { kSampleCount, kFieldCount };
-
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
 
