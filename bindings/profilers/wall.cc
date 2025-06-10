@@ -582,10 +582,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   }
 }
 
-WallProfiler::~WallProfiler() {
-  Dispose(nullptr, true);
-}
-
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -595,7 +591,7 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
       g_profilers.RemoveProfiler(isolate, this);
     }
 
-    if (isolate != nullptr && collectAsyncId_) {
+    if (collectAsyncId_) {
       isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
@@ -1057,8 +1053,11 @@ NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
 }
 
 NAN_METHOD(WallProfiler::Dispose) {
-  // Profiler should already be stopped when this is called.
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+  // Profiler must already be stopped when this is called.
+  if (profiler->started_) {
+    return Nan::ThrowTypeError("Profiler is still running, stop it first.");
+  }
   delete profiler;
 }
 
