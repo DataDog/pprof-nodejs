@@ -3,13 +3,18 @@ import {pbkdf2} from 'crypto';
 import {time} from '../src/index';
 import {Profile, ValueType} from 'pprof-format';
 import {getAndVerifyPresence, getAndVerifyString} from './profiles-for-tests';
+import {satisfies} from 'semver';
 
 import assert from 'assert';
+import {AsyncLocalStorage} from 'async_hooks';
 
 const DURATION_MILLIS = 1000;
 const intervalMicros = 10000;
 const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
+const useCPED =
+  satisfies(process.versions.node, '>=24.0.0') &&
+  !process.execArgv.includes('--no-async-context-frame');
 
 function createWorker(durationMs: number): Promise<Profile[]> {
   return new Promise((resolve, reject) => {
@@ -52,15 +57,20 @@ function getCpuUsage() {
 }
 
 async function main(durationMs: number) {
+  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs * 3,
     intervalMicros,
     withContexts,
     collectCpuTime: withContexts,
+    useCPED: useCPED,
   });
+  if (withContexts) {
+    time.setContext({});
+  }
 
   const cpu0 = getCpuUsage();
-  const nbWorkers = Number(process.argv[2] || 2);
+  const nbWorkers = Number(process.argv[2] ?? 2);
 
   // start workers
   const workers = executeWorkers(nbWorkers, durationMs);
@@ -91,12 +101,17 @@ async function main(durationMs: number) {
 }
 
 async function worker(durationMs: number) {
+  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs,
     intervalMicros,
     withContexts,
     collectCpuTime: withContexts,
+    useCPED: useCPED,
   });
+  if (withContexts) {
+    time.setContext({});
+  }
 
   const deadline = Date.now() + durationMs;
   await Promise.all([bar(deadline), foo(deadline)]);
