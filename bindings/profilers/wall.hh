@@ -47,6 +47,8 @@ class WallProfiler : public Nan::ObjectWrap {
 
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
+  v8::Isolate* isolate_ = nullptr;
+
   // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
   // avoid heap allocation. Need to figure out the right move/copy semantics in
   // and out of the ring buffer.
@@ -93,7 +95,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextBuffer contexts_;
 
   ~WallProfiler() = default;
-  void Dispose(v8::Isolate* isolate, bool removeFromMap);
+  void Dispose(bool removeFromMap);
 
   // A new CPU profiler object will be created each time profiling is started
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
@@ -105,7 +107,11 @@ class WallProfiler : public Nan::ObjectWrap {
 
   bool waitForSignal(uint64_t targetCallCount = 0);
   static void CleanupHook(void* data);
-  void Cleanup(v8::Isolate* isolate);
+  void Cleanup();
+
+  v8::Local<v8::Uint32Array> GetSharedArray() const {
+    return jsArray_.Get(isolate_);
+  }
 
  public:
   /**
@@ -124,8 +130,8 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool collectAsyncId,
                         bool isMainThread);
 
-  v8::Local<v8::Value> GetContext(v8::Isolate*);
-  void SetContext(v8::Isolate*, v8::Local<v8::Value>);
+  v8::Local<v8::Value> GetContext();
+  void SetContext(v8::Local<v8::Value>);
   void PushContext(int64_t time_from,
                    int64_t time_to,
                    int64_t cpu_time,
@@ -155,8 +161,8 @@ class WallProfiler : public Nan::ObjectWrap {
     return threadCpuStopWatch_.GetAndReset();
   }
 
-  double GetAsyncId(v8::Isolate* isolate);
-  void OnGCStart(v8::Isolate* isolate);
+  double GetAsyncId();
+  void OnGCStart();
   void OnGCEnd();
 
   static NAN_METHOD(New);

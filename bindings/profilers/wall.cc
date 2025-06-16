@@ -332,7 +332,7 @@ void SignalHandler::HandleProfilerSignal(int sig,
   auto time_from = Now();
   old_handler(sig, info, context);
   auto time_to = Now();
-  auto async_id = prof->GetAsyncId(isolate);
+  auto async_id = prof->GetAsyncId();
   prof->PushContext(time_from, time_to, cpu_time, async_id);
 }
 #else
@@ -384,20 +384,20 @@ void WallProfiler::CleanupHook(void* data) {
   auto isolate = static_cast<Isolate*>(data);
   auto prof = g_profilers.RemoveProfilerForIsolate(isolate);
   if (prof) {
-    prof->Cleanup(isolate);
+    prof->Cleanup();
     delete prof;
   }
 }
 
 // This is only called when isolate is terminated without `beforeExit`
 // notification.
-void WallProfiler::Cleanup(Isolate* isolate) {
+void WallProfiler::Cleanup() {
   if (started_) {
     cpuProfiler_->Stop(profileId_);
     if (interceptSignal()) {
       SignalHandler::DecreaseUseCount();
     }
-    Dispose(isolate, false);
+    Dispose(false);
   }
 }
 
@@ -411,18 +411,17 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
     return contextsByNode;
   }
 
-  auto isolate = Isolate::GetCurrent();
-  auto v8Context = isolate->GetCurrentContext();
+  auto v8Context = isolate_->GetCurrentContext();
   auto contextIt = contexts.begin();
 
   // deltaIdx is the offset of the sample to process compared to current
   // iteration index
   int deltaIdx = 0;
 
-  auto contextKey = String::NewFromUtf8Literal(isolate, "context");
-  auto timestampKey = String::NewFromUtf8Literal(isolate, "timestamp");
-  auto cpuTimeKey = String::NewFromUtf8Literal(isolate, "cpuTime");
-  auto asyncIdKey = String::NewFromUtf8Literal(isolate, "asyncId");
+  auto contextKey = String::NewFromUtf8Literal(isolate_, "context");
+  auto timestampKey = String::NewFromUtf8Literal(isolate_, "timestamp");
+  auto cpuTimeKey = String::NewFromUtf8Literal(isolate_, "cpuTime");
+  auto asyncIdKey = String::NewFromUtf8Literal(isolate_, "asyncId");
   auto V8toEpochOffset = GetV8ToEpochOffset();
   auto lastCpuTime = startCpuTime;
 
@@ -467,18 +466,18 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
         auto it = contextsByNode.find(sample);
         Local<Array> array;
         if (it == contextsByNode.end()) {
-          array = Array::New(isolate);
+          array = Array::New(isolate_);
           contextsByNode[sample] = {array, 1};
         } else {
           array = it->second.contexts;
           ++it->second.hitcount;
         }
         // Conforms to TimeProfileNodeContext defined in v8-types.ts
-        Local<Object> timedContext = Object::New(isolate);
+        Local<Object> timedContext = Object::New(isolate_);
         timedContext
             ->Set(v8Context,
                   timestampKey,
-                  BigInt::New(isolate, sampleTimestamp + V8toEpochOffset))
+                  BigInt::New(isolate_, sampleTimestamp + V8toEpochOffset))
             .Check();
         auto* function_name = sample->GetFunctionNameStr();
         // If current sample is program, reports its cpu time to the next sample
@@ -488,7 +487,7 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
                 ->Set(
                     v8Context,
                     cpuTimeKey,
-                    Number::New(isolate, sampleContext.cpu_time - lastCpuTime))
+                    Number::New(isolate_, sampleContext.cpu_time - lastCpuTime))
                 .Check();
             lastCpuTime = sampleContext.cpu_time;
           }
@@ -499,14 +498,14 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
               timedContext
                   ->Set(v8Context,
                         contextKey,
-                        sampleContext.context.get()->Get(isolate))
+                        sampleContext.context.get()->Get(isolate_))
                   .Check();
             }
             if (collectAsyncId_) {
               timedContext
                   ->Set(v8Context,
                         asyncIdKey,
-                        Number::New(isolate, sampleContext.async_id))
+                        Number::New(isolate_, sampleContext.async_id))
                   .Check();
             }
           }
@@ -527,7 +526,7 @@ void GCPrologueCallback(Isolate* isolate,
                         GCType type,
                         GCCallbackFlags flags,
                         void* data) {
-  static_cast<WallProfiler*>(data)->OnGCStart(isolate);
+  static_cast<WallProfiler*>(data)->OnGCStart();
 }
 
 void GCEpilogueCallback(Isolate* isolate,
@@ -565,39 +564,38 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   collectionMode_.store(CollectionMode::kNoCollect, std::memory_order_relaxed);
   gcCount.store(0, std::memory_order_relaxed);
 
-  // TODO: bind to this isolate? Would fix the Dispose(nullptr) issue.
-  auto isolate = v8::Isolate::GetCurrent();
+  isolate_ = v8::Isolate::GetCurrent();
   v8::Local<v8::ArrayBuffer> buffer =
-      v8::ArrayBuffer::New(isolate, sizeof(uint32_t) * kFieldCount);
+      v8::ArrayBuffer::New(isolate_, sizeof(uint32_t) * kFieldCount);
 
   v8::Local<v8::Uint32Array> jsArray =
       v8::Uint32Array::New(buffer, 0, kFieldCount);
   fields_ = static_cast<uint32_t*>(buffer->GetBackingStore()->Data());
-  jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
+  jsArray_ = v8::Global<v8::Uint32Array>(isolate_, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
   if (collectAsyncId_) {
-    isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
-    isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
+    isolate_->AddGCPrologueCallback(&GCPrologueCallback, this);
+    isolate_->AddGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 }
 
-void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
+void WallProfiler::Dispose(bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
     cpuProfiler_ = nullptr;
 
     if (removeFromMap) {
-      g_profilers.RemoveProfiler(isolate, this);
+      g_profilers.RemoveProfiler(isolate_, this);
     }
 
     if (collectAsyncId_) {
-      isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
-      isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
+      isolate_->RemoveGCPrologueCallback(&GCPrologueCallback, this);
+      isolate_->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
 
     node::RemoveEnvironmentCleanupHook(
-        isolate, &WallProfiler::CleanupHook, isolate);
+        isolate_, &WallProfiler::CleanupHook, isolate_);
   }
 }
 
@@ -738,8 +736,8 @@ Result WallProfiler::StartImpl() {
                                                 : CollectionMode::kNoCollect);
   collectionMode_.store(collectionMode, std::memory_order_relaxed);
   started_ = true;
-  auto isolate = Isolate::GetCurrent();
-  node::AddEnvironmentCleanupHook(isolate, &WallProfiler::CleanupHook, isolate);
+  node::AddEnvironmentCleanupHook(
+      isolate_, &WallProfiler::CleanupHook, isolate_);
   return {};
 }
 
@@ -786,8 +784,8 @@ v8::ProfilerId WallProfiler::StartInternal() {
   // we wait for one signal before starting a new profile which should leave
   // time to process in-flight tick samples.
   if (detectV8Bug_ && !workaroundV8Bug_) {
-    cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
-    cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
+    cpuProfiler_->CollectSample(isolate_);
+    cpuProfiler_->CollectSample(isolate_);
   }
 
   return result.id;
@@ -933,7 +931,7 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   v8_profile->Delete();
 
   if (!restart) {
-    Dispose(v8::Isolate::GetCurrent(), true);
+    Dispose(true);
   } else if (workaroundV8Bug_) {
     waitForSignal(callCount + 1);
     collectionMode_.store(withContexts_ ? CollectionMode::kCollectContexts
@@ -968,12 +966,11 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    Nan::New("state").ToLocalChecked(),
                    SharedArrayGetter);
 
-  PerIsolateData::For(Isolate::GetCurrent())
-      ->WallProfilerConstructor()
-      .Reset(Nan::GetFunction(tpl).ToLocalChecked());
+  auto isolate = Isolate::GetCurrent();
+  PerIsolateData::For(isolate)->WallProfilerConstructor().Reset(
+      Nan::GetFunction(tpl).ToLocalChecked());
   Nan::Set(target, className, Nan::GetFunction(tpl).ToLocalChecked());
 
-  auto isolate = v8::Isolate::GetCurrent();
   v8::PropertyAttribute ReadOnlyDontDelete =
       static_cast<v8::PropertyAttribute>(ReadOnly | DontDelete);
 
@@ -992,28 +989,26 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 
 v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
   if (cpuProfiler_ == nullptr) {
-    v8::Isolate* isolate = v8::Isolate::GetCurrent();
-
-    bool inserted = g_profilers.AddProfiler(isolate, this);
+    bool inserted = g_profilers.AddProfiler(isolate_, this);
 
     if (!inserted) {
       // refuse to create a new profiler if one is already active
       return nullptr;
     }
-    cpuProfiler_ = v8::CpuProfiler::New(isolate);
+    cpuProfiler_ = v8::CpuProfiler::New(isolate_);
     cpuProfiler_->SetSamplingInterval(
         std::chrono::microseconds(samplingPeriod_).count());
   }
   return cpuProfiler_;
 }
 
-v8::Local<v8::Value> WallProfiler::GetContext(Isolate* isolate) {
+v8::Local<v8::Value> WallProfiler::GetContext() {
   auto context = *curContext_.load(std::memory_order_relaxed);
-  if (!context) return v8::Undefined(isolate);
-  return context->Get(isolate);
+  if (!context) return v8::Undefined(isolate_);
+  return context->Get(isolate_);
 }
 
-void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
+void WallProfiler::SetContext(Local<Value> value) {
   // Need to be careful here, because we might be interrupted by a
   // signal handler that will make use of curContext_.
   // Update of shared_ptr is not atomic, so instead we use a pointer
@@ -1024,7 +1019,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
                            ? &context2_
                            : &context1_;
   if (!value->IsNullOrUndefined()) {
-    *newCurContext = std::make_shared<Global<Value>>(isolate, value);
+    *newCurContext = std::make_shared<Global<Value>>(isolate_, value);
   } else {
     newCurContext->reset();
   }
@@ -1034,17 +1029,17 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
 NAN_GETTER(WallProfiler::GetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
-  info.GetReturnValue().Set(profiler->GetContext(info.GetIsolate()));
+  info.GetReturnValue().Set(profiler->GetContext());
 }
 
 NAN_SETTER(WallProfiler::SetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
-  profiler->SetContext(info.GetIsolate(), value);
+  profiler->SetContext(value);
 }
 
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
-  info.GetReturnValue().Set(profiler->jsArray_.Get(v8::Isolate::GetCurrent()));
+  info.GetReturnValue().Set(profiler->GetSharedArray());
 }
 
 NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
@@ -1071,7 +1066,7 @@ double GetAsyncIdNoGC(v8::Isolate* isolate) {
 #endif
 }
 
-double WallProfiler::GetAsyncId(v8::Isolate* isolate) {
+double WallProfiler::GetAsyncId() {
   if (!collectAsyncId_) {
     return -1;
   }
@@ -1080,14 +1075,14 @@ double WallProfiler::GetAsyncId(v8::Isolate* isolate) {
   if (curGcCount > 0) {
     return gcAsyncId;
   }
-  return GetAsyncIdNoGC(isolate);
+  return GetAsyncIdNoGC(isolate_);
 }
 
-void WallProfiler::OnGCStart(v8::Isolate* isolate) {
+void WallProfiler::OnGCStart() {
   auto curCount = gcCount.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
   if (curCount == 0) {
-    gcAsyncId = GetAsyncIdNoGC(isolate);
+    gcAsyncId = GetAsyncIdNoGC(isolate_);
   }
   gcCount.store(curCount + 1, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
