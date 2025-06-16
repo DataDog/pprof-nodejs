@@ -52,6 +52,10 @@ Nan::Global<v8::Function>& PerIsolateData::WallProfilerConstructor() {
   return wall_profiler_constructor;
 }
 
+v8::Global<v8::ObjectTemplate>& PerIsolateData::TimeProfileNodeTemplate() {
+  return time_profile_node_template;
+}
+
 std::shared_ptr<HeapProfilerState>& PerIsolateData::GetHeapProfilerState() {
   return heap_profiler_state;
 }

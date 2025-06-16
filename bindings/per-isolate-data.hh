@@ -28,6 +28,7 @@ struct HeapProfilerState;
 class PerIsolateData {
  private:
   Nan::Global<v8::Function> wall_profiler_constructor;
+  v8::Global<v8::ObjectTemplate> time_profile_node_template;
   std::shared_ptr<HeapProfilerState> heap_profiler_state;
 
   PerIsolateData() {}
@@ -37,6 +38,7 @@ class PerIsolateData {
 
   Nan::Global<v8::Function>& WallProfilerConstructor();
   std::shared_ptr<HeapProfilerState>& GetHeapProfilerState();
+  v8::Global<v8::ObjectTemplate>& TimeProfileNodeTemplate();
 };
 
 }  // namespace dd

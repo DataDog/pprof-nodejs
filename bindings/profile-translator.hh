@@ -18,11 +18,11 @@
 
 namespace dd {
 class ProfileTranslator {
+ protected:
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Array> emptyArray = v8::Array::New(isolate, 0);
 
- protected:
   v8::Local<v8::Object> NewObject() { return v8::Object::New(isolate); }
 
   v8::Local<v8::Integer> NewInteger(int x) {

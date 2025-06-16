@@ -15,6 +15,7 @@
  */
 
 #include "translate-time-profile.hh"
+#include "per-isolate-data.hh"
 #include "profile-translator.hh"
 
 namespace dd {
@@ -25,6 +26,8 @@ class TimeProfileTranslator : ProfileTranslator {
   ContextsByNode* contextsByNode;
   v8::Local<v8::Array> emptyArray = NewArray(0);
   v8::Local<v8::Integer> zero = NewInteger(0);
+  v8::Local<v8::ObjectTemplate> nodeTemplate;
+  v8::Local<v8::Context> v8Context;
 
 #define FIELDS                                                                 \
   X(name)                                                                      \
@@ -71,11 +74,11 @@ class TimeProfileTranslator : ProfileTranslator {
                                        v8::Local<v8::Integer> hitCount,
                                        v8::Local<v8::Array> children,
                                        v8::Local<v8::Array> contexts) {
-    v8::Local<v8::Object> js_node = NewObject();
+    v8::Local<v8::Object> js_node =
+        nodeTemplate->NewInstance(v8Context).ToLocalChecked();
 #define X(name) Set(js_node, str_##name, name);
     FIELDS
 #undef X
-#undef FIELDS
     return js_node;
   }
 
@@ -199,9 +202,35 @@ class TimeProfileTranslator : ProfileTranslator {
                           contexts);
   }
 
+  v8::Local<v8::ObjectTemplate> CreateTimeProfileNodeTemplate() {
+    v8::Local<v8::ObjectTemplate> node_template =
+        v8::ObjectTemplate::New(isolate);
+    auto def_name = NewString("");
+    auto def_scriptName = def_name;
+    auto def_scriptId = NewInteger(0);
+    auto def_lineNumber = def_scriptId;
+    auto def_columnNumber = def_scriptId;
+    auto def_hitCount = def_scriptId;
+    auto def_children = v8::Null(isolate);
+    auto def_contexts = def_children;
+#define X(name) node_template->Set(str_##name, def_##name);
+    FIELDS
+#undef X
+    return node_template;
+  }
+
  public:
   explicit TimeProfileTranslator(ContextsByNode* nls = nullptr)
-      : contextsByNode(nls) {}
+      : contextsByNode(nls) {
+    v8Context = isolate->GetCurrentContext();
+    auto& nodeTemplateGlobal =
+        PerIsolateData::For(isolate)->TimeProfileNodeTemplate();
+    nodeTemplate = nodeTemplateGlobal.Get(isolate);
+    if (nodeTemplate.IsEmpty()) {
+      nodeTemplate = CreateTimeProfileNodeTemplate();
+      nodeTemplateGlobal.Reset(isolate, nodeTemplate);
+    }
+  }
 
   v8::Local<v8::Value> TranslateTimeProfile(const v8::CpuProfile* profile,
                                             bool includeLineInfo,
@@ -227,6 +256,7 @@ class TimeProfileTranslator : ProfileTranslator {
         NewNumber(nonJSThreadsCpuTime));
     return js_profile;
   }
+#undef FIELDS
 };
 }  // namespace
 
