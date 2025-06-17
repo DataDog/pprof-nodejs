@@ -836,10 +836,9 @@ bool WallProfiler::waitForSignal(uint64_t targetCallCount) {
       0, std::chrono::nanoseconds(samplingPeriod_ * maxRetries).count()};
   nanosleep(&ts, nullptr);
 #endif
-  auto res =
-      noCollectCallCount_.load(std::memory_order_relaxed) >= targetCallCount;
-  std::atomic_signal_fence(std::memory_order_release);
-  return res;
+  auto res = noCollectCallCount_.load(std::memory_order_relaxed);
+  std::atomic_signal_fence(std::memory_order_acquire);
+  return res >= targetCallCount;
 }
 
 Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
@@ -850,14 +849,14 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   uint64_t callCount = 0;
   auto oldProfileId = profileId_;
   if (restart && workaroundV8Bug_) {
+    std::atomic_signal_fence(std::memory_order_release);
     collectionMode_.store(CollectionMode::kNoCollect,
                           std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
     waitForSignal();
   } else if (withContexts_) {
+    std::atomic_signal_fence(std::memory_order_release);
     collectionMode_.store(CollectionMode::kNoCollect,
                           std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
 
     // make sure timestamp changes to avoid having samples from previous profile
     auto now = Now();
@@ -899,9 +898,9 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     auto now = Now();
     while (Now() == now) {
     }
+    std::atomic_signal_fence(std::memory_order_release);
     collectionMode_.store(CollectionMode::kCollectContexts,
                           std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
   }
 
   if (withContexts_) {
@@ -936,10 +935,10 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
     Dispose(v8::Isolate::GetCurrent(), true);
   } else if (workaroundV8Bug_) {
     waitForSignal(callCount + 1);
+    std::atomic_signal_fence(std::memory_order_release);
     collectionMode_.store(withContexts_ ? CollectionMode::kCollectContexts
                                         : CollectionMode::kPassThrough,
                           std::memory_order_relaxed);
-    std::atomic_signal_fence(std::memory_order_release);
   }
 
   started_ = restart;
@@ -1089,18 +1088,12 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
   if (curCount == 0) {
     gcAsyncId = GetAsyncIdNoGC(isolate);
   }
-  gcCount.store(curCount + 1, std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_release);
+  gcCount.store(curCount + 1, std::memory_order_relaxed);
 }
 
 void WallProfiler::OnGCEnd() {
-  auto newCount = gcCount.load(std::memory_order_relaxed) - 1;
-  std::atomic_signal_fence(std::memory_order_acquire);
-  gcCount.store(newCount, std::memory_order_relaxed);
-  std::atomic_signal_fence(std::memory_order_release);
-  if (newCount == 0) {
-    gcAsyncId = -1;
-  }
+  gcCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void WallProfiler::PushContext(int64_t time_from,
