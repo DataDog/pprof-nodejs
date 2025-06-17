@@ -1093,12 +1093,7 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 }
 
 void WallProfiler::OnGCEnd() {
-  auto newCount = gcCount.load(std::memory_order_relaxed) - 1;
-  std::atomic_signal_fence(std::memory_order_acq_rel);
-  gcCount.store(newCount, std::memory_order_relaxed);
-  if (newCount == 0) {
-    gcAsyncId = -1;
-  }
+  gcCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void WallProfiler::PushContext(int64_t time_from,
