@@ -118,6 +118,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
 
   void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
+  void UpdateContextCount();
 
  public:
   /**

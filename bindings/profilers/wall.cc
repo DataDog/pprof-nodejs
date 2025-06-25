@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "defer.hh"
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
 #include "wall.hh"
@@ -58,39 +59,18 @@ using namespace v8;
 
 namespace dd {
 
-class SignalMutex {
-  std::atomic<bool>& mutex_;
+class SignalGuard {
+  std::atomic<bool>& guard_;
 
   inline void store(bool value) {
     std::atomic_signal_fence(std::memory_order_release);
-    mutex_.store(value, std::memory_order_relaxed);
+    guard_.store(value, std::memory_order_relaxed);
   }
 
  public:
-  inline SignalMutex(std::atomic<bool>& mutex) : mutex_(mutex) { store(true); }
+  inline SignalGuard(std::atomic<bool>& guard) : guard_(guard) { store(true); }
 
-  inline ~SignalMutex() { store(false); }
-};
-
-// This class is used to update the context count metric when it goes out of
-// scope.
-class ContextCountMetricUpdater {
-  uint32_t* fields_;
-  std::unordered_set<PersistentContextPtr*>& liveContextPtrs_;
-
- public:
-  inline ContextCountMetricUpdater(
-      uint32_t* fields,
-      std::unordered_set<PersistentContextPtr*>& liveContextPtrs)
-      : fields_(fields), liveContextPtrs_(liveContextPtrs) {}
-
-  inline ~ContextCountMetricUpdater() {
-    std::atomic_store_explicit(
-        reinterpret_cast<std::atomic<uint32_t>*>(
-            &fields_[WallProfiler::Fields::kCPEDContextCount]),
-        liveContextPtrs_.size(),
-        std::memory_order_relaxed);
-  }
+  inline ~SignalGuard() { store(false); }
 };
 
 void SetContextPtr(ContextPtr& contextPtr,
@@ -108,6 +88,7 @@ class PersistentContextPtr {
   std::vector<PersistentContextPtr*>* dead;
   Persistent<Object> per;
 
+ public:
   PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
 
   void UnregisterFromGC() {
@@ -137,8 +118,6 @@ class PersistentContextPtr {
   }
 
   ContextPtr Get() const { return context; }
-
-  friend class WallProfiler;
 };
 
 // Maximum number of rounds in the GetV8ToEpochOffset
@@ -677,6 +656,14 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   }
 }
 
+void WallProfiler::UpdateContextCount() {
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint32_t>*>(
+            &fields_[WallProfiler::Fields::kCPEDContextCount]),
+        liveContextPtrs_.size(),
+        std::memory_order_relaxed);
+}
+
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -694,13 +681,13 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
 
-    ContextCountMetricUpdater updater(fields_, liveContextPtrs_);
     for (auto ptr : liveContextPtrs_) {
       ptr->UnregisterFromGC();
       delete ptr;
     }
     liveContextPtrs_.clear();
     deadContextPtrs_.clear();
+    UpdateContextCount();
   }
 }
 
@@ -1133,7 +1120,7 @@ Local<Value> WallProfiler::GetContext(Isolate* isolate) {
 }
 
 void WallProfiler::SetCurrentContextPtr(Isolate* isolate, Local<Value> value) {
-  SignalMutex m(setInProgress_);
+  SignalGuard m(setInProgress_);
   SetContextPtr(curContext_, isolate, value);
 }
 
@@ -1144,7 +1131,9 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     return;
   }
 
-  ContextCountMetricUpdater updater(fields_, liveContextPtrs_);
+  defer {
+    UpdateContextCount();
+  };
 
   // Clean up dead context pointers
   for (auto ptr : deadContextPtrs_) {
@@ -1168,7 +1157,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
   PersistentContextPtr* contextPtr = nullptr;
   auto profData = maybeProfData.ToLocalChecked();
-  SignalMutex m(setInProgress_);
+  SignalGuard m(setInProgress_);
   if (profData->IsUndefined()) {
     if (value->IsNullOrUndefined()) {
       // Don't go to the trouble of mutating the CPED for null or undefined as
