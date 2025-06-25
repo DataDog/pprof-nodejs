@@ -36,29 +36,36 @@ struct Result {
   std::string msg;
 };
 
+using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
+
+class PersistentContextPtr;
+
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
+  enum Fields { kSampleCount, kCPEDContextCount, kFieldCount };
 
  private:
-  enum Fields { kSampleCount, kFieldCount };
-
-  using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
-
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
-  // TODO: Investigate use of v8::Persistent instead of shared_ptr<Global> to
-  // avoid heap allocation. Need to figure out the right move/copy semantics in
-  // and out of the ring buffer.
 
-  // We're using a pair of shared pointers and an atomic pointer-to-current as
-  // a way to ensure signal safety on update.
-  ContextPtr context1_;
-  ContextPtr context2_;
-  std::atomic<ContextPtr*> curContext_;
+  bool useCPED_ = false;
+  // If we aren't using the CPED, we use a single context ptr stored here.
+  ContextPtr curContext_;
+  // Otherwise we'll use a private symbol to store the context in CPED objects.
+  v8::Global<v8::Private> cpedSymbol_;
+  // We track live context pointers in a set to avoid memory leaks. They will
+  // be deleted when the profiler is disposed.
+  std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
+  // Context pointers belonging to GC'd CPED objects register themselves here.
+  // They will be deleted and removed from liveContextPtrs_ next time SetContext
+  // is invoked.
+  std::vector<PersistentContextPtr*> deadContextPtrs_;
 
   std::atomic<int> gcCount = 0;
+  std::atomic<bool> setInProgress_ = false;
   double gcAsyncId;
+  ContextPtr gcContext_;
 
   std::atomic<CollectionMode> collectionMode_;
   std::atomic<uint64_t> noCollectCallCount_;
@@ -107,6 +114,12 @@ class WallProfiler : public Nan::ObjectWrap {
   static void CleanupHook(void* data);
   void Cleanup(v8::Isolate* isolate);
 
+  ContextPtr GetContextPtr(v8::Isolate* isolate);
+  ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
+
+  void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
+  void UpdateContextCount();
+
  public:
   /**
    * @param samplingPeriodMicros sampling interval, in microseconds
@@ -114,6 +127,10 @@ class WallProfiler : public Nan::ObjectWrap {
    * parameter is informative; it is up to the caller to call the Stop method
    * every period. The parameter is used to preallocate data structures that
    * should not be reallocated in async signal safe code.
+   * @param useCPED whether to use the V8 ContinuationPreservedEmbedderData to
+   * store the current sampling context. It can be used if AsyncLocalStorage
+   * uses the AsyncContextFrame implementation (experimental in Node 23, default
+   * in Node 24.)
    */
   explicit WallProfiler(std::chrono::microseconds samplingPeriod,
                         std::chrono::microseconds duration,
@@ -122,14 +139,15 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool workaroundV8bug,
                         bool collectCpuTime,
                         bool collectAsyncId,
-                        bool isMainThread);
+                        bool isMainThread,
+                        bool useCPED);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);
   void PushContext(int64_t time_from,
                    int64_t time_to,
                    int64_t cpu_time,
-                   double async_id);
+                   v8::Isolate* isolate);
   Result StartImpl();
   v8::ProfilerId StartInternal();
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
