@@ -657,11 +657,11 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 }
 
 void WallProfiler::UpdateContextCount() {
-    std::atomic_store_explicit(
-        reinterpret_cast<std::atomic<uint32_t>*>(
-            &fields_[WallProfiler::Fields::kCPEDContextCount]),
-        liveContextPtrs_.size(),
-        std::memory_order_relaxed);
+  std::atomic_store_explicit(
+      reinterpret_cast<std::atomic<uint32_t>*>(
+          &fields_[WallProfiler::Fields::kCPEDContextCount]),
+      liveContextPtrs_.size(),
+      std::memory_order_relaxed);
 }
 
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
