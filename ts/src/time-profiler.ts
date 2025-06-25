@@ -30,7 +30,7 @@ import {
 import {GenerateTimeLabelsFunction} from './v8-types';
 import {isMainThread} from 'worker_threads';
 
-const {kSampleCount} = profilerConstants;
+const {kSampleCount, kCPEDContextCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
 const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
@@ -67,6 +67,7 @@ export interface TimeProfilerOptions {
   workaroundV8Bug?: boolean;
   collectCpuTime?: boolean;
   collectAsyncId?: boolean;
+  useCPED?: boolean;
 }
 
 const DEFAULT_OPTIONS: TimeProfilerOptions = {
@@ -77,6 +78,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   workaroundV8Bug: true,
   collectCpuTime: false,
   collectAsyncId: false,
+  useCPED: false,
 };
 
 export async function profile(options: TimeProfilerOptions = {}) {
@@ -100,8 +102,8 @@ export function start(options: TimeProfilerOptions = {}) {
 
   gProfiler.start();
 
-  // If contexts are enabled, set an initial empty context
-  if (options.withContexts) {
+  // If contexts are enabled without using CPED, set an initial empty context
+  if (options.withContexts && !options.useCPED) {
     setContext({});
   }
 }
@@ -176,6 +178,7 @@ export function v8ProfilerStuckEventLoopDetected() {
 
 export const constants = {
   kSampleCount,
+  kCPEDContextCount,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
 };
