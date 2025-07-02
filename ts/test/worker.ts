@@ -15,7 +15,8 @@ const withContexts =
 const useCPED =
   satisfies(process.versions.node, '>=24.0.0') &&
   !process.execArgv.includes('--no-async-context-frame');
-const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
+const collectAsyncId =
+  withContexts && satisfies(process.versions.node, '>=24.0.0');
 
 function createWorker(durationMs: number): Promise<Profile[]> {
   return new Promise((resolve, reject) => {
