@@ -1,5 +1,6 @@
 import {parentPort} from 'node:worker_threads';
 import {time} from '../src/index';
+import {satisfies} from 'semver';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
@@ -13,7 +14,7 @@ time.start({
   intervalMicros: INTERVAL_MICROS,
   withContexts: withContexts,
   collectCpuTime: withContexts,
-  collectAsyncId: false,
+  collectAsyncId: satisfies(process.versions.node, '>=24.0.0'),
 });
 
 parentPort?.on('message', () => {
