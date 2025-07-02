@@ -9,12 +9,15 @@ const INTERVAL_MICROS = 10000;
 const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
 
+const collectAsyncId =
+  withContexts && satisfies(process.versions.node, '>=24.0.0');
+
 time.start({
   durationMillis: DURATION_MILLIS,
   intervalMicros: INTERVAL_MICROS,
   withContexts: withContexts,
   collectCpuTime: withContexts,
-  collectAsyncId: satisfies(process.versions.node, '>=24.0.0'),
+  collectAsyncId: collectAsyncId,
 });
 
 parentPort?.on('message', () => {
