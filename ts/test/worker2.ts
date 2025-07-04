@@ -9,6 +9,10 @@ const INTERVAL_MICROS = 10000;
 const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
 
+const useCPED =
+  satisfies(process.versions.node, '>=24.0.0') &&
+  !process.execArgv.includes('--no-async-context-frame');
+
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
 
@@ -18,6 +22,7 @@ time.start({
   withContexts: withContexts,
   collectCpuTime: withContexts,
   collectAsyncId: collectAsyncId,
+  useCPED: useCPED,
 });
 
 parentPort?.on('message', () => {
