@@ -104,10 +104,9 @@ Install [`pprof`][npm-url] with `npm` or add to your `package.json`.
 
 [build-image]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml/badge.svg?branch=main
 [build-url]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml
-[coveralls-image]: https://coveralls.io/repos/google/pprof-nodejs/badge.svg?branch=main&service=github
-[npm-image]: https://badge.fury.io/js/pprof.svg
-[npm-url]: https://npmjs.org/package/pprof
+[npm-image]: https://badge.fury.io/js/@datadog%2Fpprof.svg
+[npm-url]: https://npmjs.org/package/@datadog/pprof
 [pprof-url]: https://github.com/google/pprof
 [pprof-install-url]: https://github.com/google/pprof#building-pprof
-[snyk-image]: https://snyk.io/test/github/google/pprof-nodejs/badge.svg
-[snyk-url]: https://snyk.io/test/github/google/pprof-nodejs
+[snyk-image]: https://snyk.io/test/github/Datadog/pprof-nodejs/badge.svg
+[snyk-url]: https://snyk.io/test/github/Datadog/pprof-nodejs
