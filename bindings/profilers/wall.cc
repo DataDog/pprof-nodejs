@@ -598,6 +598,33 @@ void GCEpilogueCallback(Isolate* isolate,
   static_cast<WallProfiler*>(data)->OnGCEnd();
 }
 
+static void dbg(Local<Value> value, const char* msg) {
+  auto isolate = Isolate::GetCurrent();
+  isolate->SetContinuationPreservedEmbedderData(value);
+  v8::internal::Address addr = *reinterpret_cast<v8::internal::Address*>(reinterpret_cast<uint64_t>(isolate) +
+      v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
+  printf("====\n%s\n=====\n", msg);
+  printf("address %lx\n", addr);
+  bool isHeapObject = v8::internal::Internals::HasHeapObjectTag(addr);
+  printf("Is heap object %d\n", isHeapObject);
+  if (isHeapObject) {
+    int instanceType = v8::internal::Internals::GetInstanceType(addr);
+    printf("Instance type %d\n", instanceType);
+    bool canHaveInternalField = v8::internal::Internals::CanHaveInternalField(instanceType);
+    printf("Can have internal field %d\n", canHaveInternalField);
+    if (canHaveInternalField) {
+      Object* cpedObj = reinterpret_cast<Object*>(addr - v8::internal::kHeapObjectTag);
+      if (cpedObj->InternalFieldCount() == 0) {
+        printf("Object has no internal fields\n");
+      } else {
+        printf("Object has %d internal fields\n", cpedObj->InternalFieldCount());
+        void *internalField = cpedObj->GetAlignedPointerFromInternalField(isolate, 0);
+        printf("Internal field %p\n", internalField);
+      }
+    }
+  }
+}
+
 WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            std::chrono::microseconds duration,
                            bool includeLines,
@@ -648,11 +675,23 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
     isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 
-  if (useCPED_) {
+  dbg(Undefined(isolate), "Undefined");
+  dbg(Null(isolate), "Null");
+  dbg(True(isolate), "True");
+  dbg(Number::New(isolate, 1), "Number 1");
+  dbg(Number::New(isolate, 1l << 50), "Number 1 << 50");
+  dbg(Symbol::New(isolate, String::NewFromUtf8Literal(isolate, "Symbol")), "Symbol");
+  dbg(Object::New(isolate), "Object");
+
+  //if (useCPED_) {
     Local<ObjectTemplate> cpedObjTpl = Nan::New<ObjectTemplate>();
     cpedObjTpl->SetInternalFieldCount(1);
     cpedProxyTemplate_.Reset(isolate, cpedObjTpl);
-  }
+    auto cpedObj = cpedProxyTemplate_.Get(isolate)->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
+    cpedObj->SetAlignedPointerInInternalField(0, this);
+    printf("CPED object internal field count %d\n", cpedObj->InternalFieldCount());
+    dbg(cpedObj, "Object with internal field");
+  //}
 }
 
 void WallProfiler::UpdateContextCount() {
