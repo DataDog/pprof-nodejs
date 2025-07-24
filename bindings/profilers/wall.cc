@@ -648,11 +648,9 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   }
 
   if (useCPED_) {
-    cpedSymbol_.Reset(
-        isolate,
-        Private::ForApi(isolate,
-                        String::NewFromUtf8Literal(
-                            isolate, "dd::WallProfiler::cpedSymbol_")));
+    Local<ObjectTemplate> cpedObjTpl = Nan::New<ObjectTemplate>();
+    cpedObjTpl->SetInternalFieldCount(1);
+    cpedProxyTemplate_.Reset(isolate, cpedObjTpl);
   }
 }
 
@@ -1146,40 +1144,27 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   // No Node AsyncContextFrame in this continuation yet
   if (!cped->IsObject()) return;
 
-  auto v8Ctx = isolate->GetCurrentContext();
-  // This should always be called from a V8 context, but check just in case.
-  if (v8Ctx.IsEmpty()) return;
-
   auto cpedObj = cped.As<Object>();
-  auto localSymbol = cpedSymbol_.Get(isolate);
-  auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
-  if (maybeProfData.IsEmpty()) return;
-
   PersistentContextPtr* contextPtr = nullptr;
-  auto profData = maybeProfData.ToLocalChecked();
   SignalGuard m(setInProgress_);
-  if (profData->IsUndefined()) {
-    if (value->IsNullOrUndefined()) {
-      // Don't go to the trouble of mutating the CPED for null or undefined as
-      // the absence of a sample context will be interpreted as undefined in
-      // GetContextPtr anyway.
-      return;
-    }
+  if (cpedObj->InternalFieldCount() == 0) {
+    auto v8Ctx = isolate->GetCurrentContext();
+    // This should always be called from a V8 context, but check just in case.
+    if (v8Ctx.IsEmpty()) return;
+    // Create a new CPED object with an internal field for the context pointer
+    auto newCpedObj = cpedProxyTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+    // Set its prototype to the existing CPED object so all properties and
+    // methods are forwarded.
+    newCpedObj->SetPrototype(v8Ctx, cpedObj).Check();
     contextPtr = new PersistentContextPtr(&deadContextPtrs_);
-
-    auto external = External::New(isolate, contextPtr);
-    auto maybeSetResult = cpedObj->SetPrivate(v8Ctx, localSymbol, external);
-    if (maybeSetResult.IsNothing()) {
-      delete contextPtr;
-      return;
-    }
     liveContextPtrs_.insert(contextPtr);
     contextPtr->RegisterForGC(isolate, cpedObj);
+    newCpedObj->SetAlignedPointerInInternalField(0, contextPtr);
+    isolate->SetContinuationPreservedEmbedderData(newCpedObj);
   } else {
-    contextPtr =
-        static_cast<PersistentContextPtr*>(profData.As<External>()->Value());
+    contextPtr = static_cast<PersistentContextPtr*>(
+        cpedObj->GetAlignedPointerFromInternalField(0));
   }
-
   contextPtr->Set(isolate, value);
 #else
   SetCurrentContextPtr(isolate, value);
@@ -1220,19 +1205,11 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   if (cped->IsObject()) {
-    auto v8Ctx = isolate->GetEnteredOrMicrotaskContext();
-    if (!v8Ctx.IsEmpty()) {
-      auto cpedObj = cped.As<Object>();
-      auto localSymbol = cpedSymbol_.Get(isolate);
-      auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
-      if (!maybeProfData.IsEmpty()) {
-        auto profData = maybeProfData.ToLocalChecked();
-        if (!profData->IsUndefined()) {
-          return static_cast<PersistentContextPtr*>(
-                     profData.As<External>()->Value())
-              ->Get();
-        }
-      }
+    auto cpedObj = cped.As<Object>();
+    if (cpedObj->InternalFieldCount() > 0) {
+      return static_cast<PersistentContextPtr*>(
+                 cpedObj->GetAlignedPointerFromInternalField(0))
+          ->Get();
     }
   }
   return ContextPtr();
