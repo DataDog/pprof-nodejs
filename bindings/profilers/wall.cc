@@ -16,6 +16,7 @@
 
 #include <nan.h>
 #include <node.h>
+#include <v8-internal.h>
 #include <v8-profiler.h>
 #include <cinttypes>
 #include <cstdint>
@@ -1344,15 +1345,20 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
     // Must not try to create a handle scope if isolate is not in use.
     return ContextPtr();
   }
-  HandleScope scope(isolate);
 
-  auto cped = isolate->GetContinuationPreservedEmbedderData();
-  if (cped->IsObject()) {
-    auto cpedObj = cped.As<Object>();
-    if (cpedObj->InternalFieldCount() > 0) {
-      return static_cast<PersistentContextPtr*>(
-                 cpedObj->GetAlignedPointerFromInternalField(0))
-          ->Get();
+  auto addr = reinterpret_cast<internal::Address*>(
+      reinterpret_cast<uint64_t>(isolate) +
+      internal::Internals::kContinuationPreservedEmbedderDataOffset);
+
+  if (internal::Internals::HasHeapObjectTag(*addr)) {
+    auto cped = reinterpret_cast<Value*>(addr);
+    if (cped->IsObject()) {
+      auto cpedObj = static_cast<Object*>(cped);
+      if (cpedObj->InternalFieldCount() > 0) {
+        return static_cast<PersistentContextPtr*>(
+                   cpedObj->GetAlignedPointerFromInternalField(0))
+            ->Get();
+      }
     }
   }
   return ContextPtr();
