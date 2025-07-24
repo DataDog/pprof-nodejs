@@ -17,6 +17,7 @@
 #include <nan.h>
 #include <node.h>
 #include <v8-profiler.h>
+#include <v8-internal.h>
 #include <cinttypes>
 #include <cstdint>
 #include <limits>
@@ -1201,16 +1202,21 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
     // Must not try to create a handle scope if isolate is not in use.
     return ContextPtr();
   }
-  HandleScope scope(isolate);
 
-  auto cped = isolate->GetContinuationPreservedEmbedderData();
-  if (cped->IsObject()) {
-    auto cpedObj = cped.As<Object>();
-    if (cpedObj->InternalFieldCount() > 0) {
-      return static_cast<PersistentContextPtr*>(
-                 cpedObj->GetAlignedPointerFromInternalField(0))
-          ->Get();
-    }
+// BELOW PRESUMES NO COMPRESSED POINTERS
+  auto cpedAddr = *reinterpret_cast<v8::internal::Address*>(
+      reinterpret_cast<uint64_t>(isolate) +
+      v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
+  int instanceType = v8::internal::Internals::GetInstanceType(cpedAddr);
+  if (!v8::internal::Internals::CanHaveInternalField(instanceType)) {
+    // This object type can't have an internal field, return empty context.
+    return ContextPtr();
+  }
+  Object* cpedObj = reinterpret_cast<Object*>(cpedAddr - v8::internal::kHeapObjectTag);
+  if (cpedObj->InternalFieldCount() > 0) {
+    return static_cast<PersistentContextPtr*>(
+                cpedObj->GetAlignedPointerFromInternalField(0))
+        ->Get();
   }
   return ContextPtr();
 #else
