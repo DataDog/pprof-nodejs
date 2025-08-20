@@ -182,6 +182,8 @@ class WallProfiler : public Nan::ObjectWrap {
   void OnGCStart(v8::Isolate* isolate);
   void OnGCEnd();
 
+  void MarkDeadPersistentContextPtr(PersistentContextPtr* ptr);
+
   static NAN_METHOD(New);
   static NAN_METHOD(Start);
   static NAN_METHOD(Stop);
