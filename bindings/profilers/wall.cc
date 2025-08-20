@@ -92,11 +92,11 @@ void SetContextPtr(ContextPtr& contextPtr,
 
 class PersistentContextPtr {
   ContextPtr context;
-  std::vector<PersistentContextPtr*>* dead;
+  WallProfiler* owner;
   Persistent<Object> per;
 
  public:
-  PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
+  PersistentContextPtr(WallProfiler* owner) : owner(owner) {}
 
   void UnregisterFromGC() {
     if (!per.IsEmpty()) {
@@ -105,7 +105,7 @@ class PersistentContextPtr {
     }
   }
 
-  void MarkDead() { dead->push_back(this); }
+  void MarkDead() { owner->MarkDeadPersistentContextPtr(this); }
 
   void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
     // Register a callback to delete this object when the object is GCed
@@ -126,6 +126,10 @@ class PersistentContextPtr {
 
   ContextPtr Get() const { return context; }
 };
+
+void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
+  deadContextPtrs_.push_back(ptr);
+}
 
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
@@ -1303,7 +1307,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     proxyObj->SetPrototype(v8Ctx, proxyProto).Check();
     proxyObj->Set(v8Ctx, cpedProxySymbol_.Get(isolate), cpedObj).Check();
     // Set up the context pointer in the internal field
-    contextPtr = new PersistentContextPtr(&deadContextPtrs_);
+    contextPtr = new PersistentContextPtr(this);
     liveContextPtrs_.insert(contextPtr);
     contextPtr->RegisterForGC(isolate, cpedObj);
     proxyObj->SetAlignedPointerInInternalField(0, contextPtr);
