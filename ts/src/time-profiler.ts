@@ -110,7 +110,8 @@ export function start(options: TimeProfilerOptions = {}) {
 
 export function stop(
   restart = false,
-  generateLabels?: GenerateTimeLabelsFunction
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels?: string[]
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -131,19 +132,20 @@ export function stop(
     gV8ProfilerStuckEventLoopDetected = 0;
   }
 
-  const serialized_profile = serializeTimeProfile(
+  const serializedProfile = serializeTimeProfile(
     profile,
     gIntervalMicros,
     gSourceMapper,
     true,
-    generateLabels
+    generateLabels,
+    lowCardinalityLabels
   );
   if (!restart) {
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
   }
-  return serialized_profile;
+  return serializedProfile;
 }
 
 export function getState() {
