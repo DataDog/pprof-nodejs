@@ -891,8 +891,14 @@ export const decodedHeapProfileExcludePath = Object.freeze(
   Profile.decode(encodedHeapProfileExcludePath)
 );
 
-const mapDir = tmp.dirSync();
-export const mapDirPath = mapDir.name;
+export const mapDirPath = ((name: string) => {
+  if (process.platform === 'win32') {
+    // map-source turns drive letters to lowercase, so we should do it too so the
+    // string comparisons of paths in assertions succeed.
+    return name.substring(0, 1).toLowerCase().concat(name.substring(1));
+  }
+  return name;
+})(tmp.dirSync().name);
 
 export const mapFoo = new SourceMapGenerator({file: 'foo.js'});
 mapFoo.addMapping({
