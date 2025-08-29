@@ -52,8 +52,13 @@ class WallProfiler : public Nan::ObjectWrap {
   bool useCPED_ = false;
   // If we aren't using the CPED, we use a single context ptr stored here.
   ContextPtr curContext_;
-  // Otherwise we'll use a private symbol to store the context in CPED objects.
-  v8::Global<v8::Private> cpedSymbol_;
+  // Otherwise we'll use an internal field in objects stored in CPED. We must
+  // construct objects with an internal field count of 1 and a specially
+  // constructed prototype.
+  v8::Global<v8::ObjectTemplate> cpedProxyTemplate_;
+  v8::Global<v8::Object> cpedProxyProto_;
+  v8::Global<v8::Symbol> cpedProxySymbol_;
+
   // We track live context pointers in a set to avoid memory leaks. They will
   // be deleted when the profiler is disposed.
   std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
