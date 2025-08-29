@@ -520,6 +520,196 @@ describe('Time Profiler', () => {
     });
   });
 
+  describe('lowCardinalityLabels', () => {
+    it('should handle lowCardinalityLabels parameter in stop function', async function testLowCardinalityLabels() {
+      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+        this.skip();
+      }
+      this.timeout(3000);
+
+      if (useCPED) {
+        // Ensure an async context frame is created to hold the profiler context.
+        new AsyncLocalStorage().enterWith(1);
+      }
+
+      // Set up some contexts with labels that we'll mark as low cardinality
+      const lowCardLabel = 'service_name';
+      const highCardLabel = 'trace_id';
+      const lowCardValues = ['web-service', 'api-service']; // Low cardinality values
+      const context1 = {
+        [lowCardLabel]: lowCardValues[0],
+        [highCardLabel]: '12345',
+      };
+      const context2 = {
+        [lowCardLabel]: lowCardValues[1],
+        [highCardLabel]: '67890',
+      };
+      const context3 = {
+        [lowCardLabel]: lowCardValues[0],
+        [highCardLabel]: '54321',
+      }; // Reuse low card value
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        lineNumbers: false,
+        useCPED,
+      });
+
+      // Run busy loop with context switching for profile duration
+      const profileStart = Date.now();
+      let iterationCount = 0;
+
+      while (Date.now() - profileStart < PROFILE_OPTIONS.durationMillis) {
+        const start = hrtime.bigint();
+        const durationNanos = PROFILE_OPTIONS.intervalMicros * 1000;
+        while (hrtime.bigint() - start < durationNanos) {
+          // Busy loop
+        }
+
+        // Cycle through different contexts
+        const contexts = [context1, context2, context3];
+        time.setContext(contexts[iterationCount % contexts.length]);
+        iterationCount++;
+
+        // Allow other tasks to run
+        await new Promise(resolve => setImmediate(resolve));
+      }
+
+      let labelsCollected = false;
+      const lowCardinalityArray = [lowCardLabel];
+
+      const generateLabelsFunc = ({context}: GenerateTimeLabelsArgs) => {
+        if (!context) {
+          return {};
+        }
+        labelsCollected = true;
+        // Generate labels from context
+        const labels: LabelSet = {};
+        for (const [key, value] of Object.entries(context.context ?? {})) {
+          if (typeof value === 'string') {
+            labels[key] = value;
+          }
+        }
+        return labels;
+      };
+
+      const profile = time.stop(false, generateLabelsFunc, lowCardinalityArray);
+
+      // Verify that labels were collected and the profile is valid
+      assert(labelsCollected, 'Labels should have been collected');
+      assert.ok(profile, 'Profile should be generated');
+      assert.ok(profile.stringTable, 'Profile should have string table');
+      assert(profile.sample.length > 0, 'Profile should have samples');
+
+      // Check that samples have the expected labels and collect low cardinality labels
+      let foundLowCardLabel = false;
+      let foundHighCardLabel = false;
+      const lowCardinalityLabels: Label[] = [];
+
+      profile.sample.forEach(sample => {
+        if (sample.label && sample.label.length > 0) {
+          sample.label.forEach(label => {
+            const keyStr = profile.stringTable.strings[Number(label.key)];
+            const valueStr = profile.stringTable.strings[Number(label.str)];
+
+            if (keyStr === lowCardLabel && lowCardValues.includes(valueStr)) {
+              foundLowCardLabel = true;
+              lowCardinalityLabels.push(label);
+            }
+            if (keyStr === highCardLabel) {
+              foundHighCardLabel = true;
+            }
+          });
+        }
+      });
+
+      assert(foundLowCardLabel, 'Should find low cardinality label in samples');
+      assert(
+        foundHighCardLabel,
+        'Should find high cardinality label in samples'
+      );
+
+      // Verify that the lowCardinalityLabels parameter is working correctly
+      // This tests that the stop() function accepts and processes the lowCardinalityLabels parameter
+
+      // Group labels by value and count them
+      const labelsByValue = new Map<string, Label[]>();
+      lowCardinalityLabels.forEach(label => {
+        const valueStr = profile.stringTable.strings[Number(label.str)];
+        if (!labelsByValue.has(valueStr)) {
+          labelsByValue.set(valueStr, []);
+        }
+        labelsByValue.get(valueStr)!.push(label);
+      });
+
+      // We should have exactly 2 distinct values (web-service and api-service)
+      assert(
+        labelsByValue.size === 2,
+        `Expected exactly 2 distinct low cardinality label values, found ${
+          labelsByValue.size
+        }. Values: ${Array.from(labelsByValue.keys()).join(', ')}`
+      );
+
+      // Verify we found both expected values
+      assert(
+        labelsByValue.has('web-service'),
+        'Should find web-service labels'
+      );
+      assert(
+        labelsByValue.has('api-service'),
+        'Should find api-service labels'
+      );
+
+      // Verify that the lowCardinalityLabels parameter was properly used
+      // This tests that labels are being processed with the low cardinality configuration
+      labelsByValue.forEach((labels, value) => {
+        assert(
+          labels.length > 0,
+          `Should have at least one label with value '${value}'`
+        );
+
+        // Check that all labels have the same key (service_name)
+        labels.forEach(label => {
+          const keyStr = profile.stringTable.strings[Number(label.key)];
+          assert(
+            keyStr === lowCardLabel,
+            `Expected label key to be '${lowCardLabel}', got '${keyStr}'`
+          );
+        });
+      });
+
+      // Test that the Set of all low cardinality labels contains exactly 2 unique values
+      // This verifies that the lowCardinalityLabels parameter is properly handled
+      const allUniqueValues = new Set(
+        lowCardinalityLabels.map(
+          label => profile.stringTable.strings[Number(label.str)]
+        )
+      );
+      assert(
+        allUniqueValues.size === 2,
+        `Expected exactly 2 unique low cardinality label values across all samples, found ${allUniqueValues.size}`
+      );
+      assert(
+        allUniqueValues.has('web-service') &&
+          allUniqueValues.has('api-service'),
+        'Should find both web-service and api-service values in the low cardinality labels'
+      );
+
+      // Verify that low cardinality labels with the same value are the same object
+      // This tests the deduplication behavior as requested by the user
+      labelsByValue.forEach((labels, value) => {
+        const uniqueObjects = new Set(labels);
+        assert(
+          uniqueObjects.size === 1,
+          `All labels with value '${value}' should be the same object, found ${uniqueObjects.size} different objects. ` +
+            'The lowCardinalityLabels parameter should enable deduplication of Label objects with identical key/value pairs.'
+        );
+      });
+    });
+  });
+
   describe('getNativeThreadId', () => {
     it('should return a number', () => {
       const threadId = time.getNativeThreadId();
