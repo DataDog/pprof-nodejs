@@ -63,9 +63,8 @@ class WallProfiler : public Nan::ObjectWrap {
   // be deleted when the profiler is disposed.
   std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
   // Context pointers belonging to GC'd CPED objects register themselves here.
-  // They will be deleted and removed from liveContextPtrs_ next time SetContext
-  // is invoked.
-  std::vector<PersistentContextPtr*> deadContextPtrs_;
+  // They will be reused.
+  std::deque<PersistentContextPtr*> deadContextPtrs_;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
@@ -123,7 +122,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
 
   void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
-  void UpdateContextCount();
+  std::atomic<uint32_t>* GetContextCountPtr();
 
  public:
   /**
@@ -181,6 +180,8 @@ class WallProfiler : public Nan::ObjectWrap {
   double GetAsyncId(v8::Isolate* isolate);
   void OnGCStart(v8::Isolate* isolate);
   void OnGCEnd();
+
+  void MarkDeadPersistentContextPtr(PersistentContextPtr* ptr);
 
   static NAN_METHOD(New);
   static NAN_METHOD(Start);
