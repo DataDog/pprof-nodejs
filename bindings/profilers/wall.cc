@@ -56,6 +56,12 @@ static int64_t Now() {
 
 #endif
 
+#if NODE_MAJOR_VERSION >= 23
+#define DD_WALL_USE_CPED true
+#else
+#define DD_WALL_USE_CPED false
+#endif
+
 using namespace v8;
 
 namespace dd {
@@ -598,7 +604,7 @@ void GCEpilogueCallback(Isolate* isolate,
   static_cast<WallProfiler*>(data)->OnGCEnd();
 }
 
-#if NODE_MAJOR_VERSION >= 23
+#if DD_WALL_USE_CPED
 // Implementation of method calls on the CPED proxy that invoke the method on
 // the proxied object. "data" is a two-element array where element 0 is the
 // Symbol used to find the proxied object in the proxy and element 1 is either
@@ -667,7 +673,7 @@ void CpedProxyPropertyGetterCallback(Local<Name> property,
   auto value = proxied.As<Object>()->Get(context, property).ToLocalChecked();
   info.GetReturnValue().Set(value);
 }
-#endif  // NODE_MAJOR_VERSION >= 23
+#endif  // DD_WALL_USE_CPED
 
 WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            std::chrono::microseconds duration,
@@ -690,7 +696,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF && detectV8Bug_;
   collectCpuTime_ = collectCpuTime && withContexts;
   collectAsyncId_ = collectAsyncId && withContexts;
-#if NODE_MAJOR_VERSION >= 23
+#if DD_WALL_USE_CPED
   useCPED_ = useCPED && withContexts;
 #else
   useCPED_ = false;
@@ -719,7 +725,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
     isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 
-#if NODE_MAJOR_VERSION >= 23
+#if DD_WALL_USE_CPED
   if (useCPED_) {
     // Used to create CPED proxy objects that will have one internal field to
     // store the sample context pointer.
@@ -790,7 +796,7 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
     // AsyncContextFrame.disable method
     NAMED_PROXY_FUNCTION(disable);
   }
-#endif  // NODE_MAJOR_VERSION >= 23
+#endif  // DD_WALL_USE_CPED
 }
 
 void WallProfiler::UpdateContextCount() {
@@ -882,7 +888,7 @@ NAN_METHOD(WallProfiler::New) {
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(isMainThread);
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(useCPED);
 
-#if NODE_MAJOR_VERSION < 23
+#if !DD_WALL_USE_CPED
     if (useCPED) {
       return Nan::ThrowTypeError(
           "useCPED is not supported on this Node.js version.");
@@ -1262,7 +1268,7 @@ void WallProfiler::SetCurrentContextPtr(Isolate* isolate, Local<Value> value) {
 }
 
 void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
-#if NODE_MAJOR_VERSION >= 23
+#if DD_WALL_USE_CPED
   if (!useCPED_) {
     SetCurrentContextPtr(isolate, value);
     return;
@@ -1336,7 +1342,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
 }
 
 ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
-#if NODE_MAJOR_VERSION >= 23
+#if DD_WALL_USE_CPED
   if (!useCPED_) {
     return curContext_;
   }
