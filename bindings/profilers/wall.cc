@@ -674,50 +674,41 @@ void CpedProxyPropertyGetterCallback(Local<Name> property,
   info.GetReturnValue().Set(value);
 }
 
-// Adds a proxy function to the CPED proxy prototype object.
-void AddProxyProtoFunction(Isolate* isolate,
-                           Local<Context> context,
-                           Local<Object> cpedProxyProto,
-                           Local<Symbol> cpedProxySymbol,
-                           Local<Name> methodName) {
-  auto data = Array::New(isolate, 2);
-  data->Set(context, Number::New(isolate, 0), cpedProxySymbol).Check();
-  data->Set(context, Number::New(isolate, 1), methodName).Check();
-  cpedProxyProto
-      ->Set(context,
-            methodName,
-            Function::New(context, &CpedProxyMethodCallback, data)
-                .ToLocalChecked())
-      .Check();
-}
-
 // Sets up all the proxy methods and properties for the CPED proxy prototype
 void SetupCpedProxyProtoMethods(Isolate* isolate,
                                 Local<Object> cpedProxyProto,
                                 Local<Symbol> cpedProxySymbol) {
   auto context = isolate->GetCurrentContext();
-#define ADD_PROXY_PROTO_FUNCTION(name)                                         \
-  AddProxyProtoFunction(isolate,                                               \
-                        context,                                               \
-                        cpedProxyProto,                                        \
-                        cpedProxySymbol,                                       \
-                        String::NewFromUtf8Literal(isolate, #name));
 
-  // Map methods
-  ADD_PROXY_PROTO_FUNCTION(clear)
-  ADD_PROXY_PROTO_FUNCTION(delete)
-  ADD_PROXY_PROTO_FUNCTION(entries)
-  ADD_PROXY_PROTO_FUNCTION(forEach)
-  ADD_PROXY_PROTO_FUNCTION(get)
-  ADD_PROXY_PROTO_FUNCTION(has)
-  ADD_PROXY_PROTO_FUNCTION(keys)
-  ADD_PROXY_PROTO_FUNCTION(set)
-  ADD_PROXY_PROTO_FUNCTION(values)
-  AddProxyProtoFunction(isolate,
-                        context,
-                        cpedProxyProto,
-                        cpedProxySymbol,
-                        Symbol::GetIterator(isolate));
+  auto addProxyProtoMethod = [&](Local<Name> methodName) {
+    auto data = Array::New(isolate, 2);
+    data->Set(context, Number::New(isolate, 0), cpedProxySymbol).Check();
+    data->Set(context, Number::New(isolate, 1), methodName).Check();
+    cpedProxyProto
+        ->Set(context,
+              methodName,
+              Function::New(context, &CpedProxyMethodCallback, data)
+                  .ToLocalChecked())
+        .Check();
+  };
+
+  // Map methods + AsyncContextFrame.disable method
+  static constexpr const char* methodNames[] = {"clear",
+                                                "delete",
+                                                "entries",
+                                                "forEach",
+                                                "get",
+                                                "has",
+                                                "keys",
+                                                "set",
+                                                "values",
+                                                "disable"};
+
+  for (const char* methodName : methodNames) {
+    addProxyProtoMethod(
+        String::NewFromUtf8(isolate, methodName).ToLocalChecked());
+  }
+  addProxyProtoMethod(Symbol::GetIterator(isolate));
 
   // Map.size property
   cpedProxyProto
@@ -727,10 +718,6 @@ void SetupCpedProxyProtoMethods(Isolate* isolate,
                               nullptr,
                               cpedProxySymbol)
       .Check();
-
-  // AsyncContextFrame.disable method
-  ADD_PROXY_PROTO_FUNCTION(disable)
-#undef ADD_FUNCTION
 }
 #endif  // DD_WALL_USE_CPED
 
