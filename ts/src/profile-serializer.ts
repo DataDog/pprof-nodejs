@@ -355,7 +355,8 @@ export function serializeTimeProfile(
   intervalMicros: number,
   sourceMapper?: SourceMapper,
   recomputeSamplingInterval = false,
-  generateLabels?: GenerateTimeLabelsFunction
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels: string[] = []
 ): Profile {
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -376,6 +377,32 @@ export function serializeTimeProfile(
     }
   }
   const intervalNanos = intervalMicros * 1000;
+  const stringTable = new StringTable();
+  const labelCaches: Map<number | bigint, Label>[] = [];
+  for (const l of lowCardinalityLabels) {
+    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
+  }
+  const dedupLabels = (labels: Label[]) => {
+    for (let i = 0; i < labels.length; i++) {
+      const label = labels[i];
+      const cache = labelCaches[Number(label.key)];
+      if (cache !== undefined) {
+        const key = label.str ?? label.num;
+        const exlabel = cache.get(key);
+        if (exlabel === undefined) {
+          cache.set(key, label);
+        } else if (
+          label.str === exlabel.str &&
+          label.num === exlabel.num &&
+          label.numUnit === exlabel.numUnit
+        ) {
+          labels[i] = exlabel;
+        }
+      }
+    }
+    return labels;
+  };
+
   const appendTimeEntryToSamples: AppendEntryToSamples<TimeProfileNode> = (
     entry: Entry<TimeProfileNode>,
     samples: Sample[]
@@ -387,7 +414,8 @@ export function serializeTimeProfile(
       const labels = generateLabels
         ? generateLabels({node: entry.node, context})
         : context.context ?? {};
-      if (Object.keys(labels).length > 0) {
+      const labelsArr = buildLabels(labels, stringTable);
+      if (labelsArr.length > 0) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
         // have zero hit count (since they do not count as wall time) and should not be assigned any
         // wall time. Also, `(idle)` nodes should be assigned zero wall time.
@@ -399,7 +427,7 @@ export function serializeTimeProfile(
         const sample = new Sample({
           locationId: entry.stack,
           value: values,
-          label: buildLabels(labels, stringTable),
+          label: dedupLabels(labelsArr),
         });
         samples.push(sample);
         unlabelledHits--;
@@ -425,7 +453,6 @@ export function serializeTimeProfile(
     }
   };
 
-  const stringTable = new StringTable();
   const sampleValueType = createSampleCountValueType(stringTable);
   const timeValueType = createTimeValueType(stringTable);
 
