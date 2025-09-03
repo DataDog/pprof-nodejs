@@ -15,6 +15,8 @@ const withContexts =
 const useCPED =
   satisfies(process.versions.node, '>=24.0.0') &&
   !process.execArgv.includes('--no-async-context-frame');
+const collectAsyncId =
+  withContexts && satisfies(process.versions.node, '>=24.0.0');
 
 function createWorker(durationMs: number): Promise<Profile[]> {
   return new Promise((resolve, reject) => {
@@ -64,6 +66,7 @@ async function main(durationMs: number) {
     withContexts,
     collectCpuTime: withContexts,
     useCPED: useCPED,
+    collectAsyncId: collectAsyncId,
   });
   if (withContexts) {
     time.setContext({});
@@ -108,6 +111,7 @@ async function worker(durationMs: number) {
     withContexts,
     collectCpuTime: withContexts,
     useCPED: useCPED,
+    collectAsyncId: collectAsyncId,
   });
   if (withContexts) {
     time.setContext({});

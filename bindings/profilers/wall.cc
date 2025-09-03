@@ -42,6 +42,15 @@ struct TimeTicks {
   static int64_t Now();
 };
 }  // namespace base
+#if NODE_MAJOR_VERSION >= 24
+namespace internal {
+struct HandleScopeData {
+  v8::internal::Address* next;
+  v8::internal::Address* limit;
+};
+constexpr int kHandleBlockSize = v8::internal::KB - 2;
+}  // namespace internal
+#endif
 }  // namespace v8
 
 static int64_t Now() {
@@ -1409,12 +1418,33 @@ NAN_METHOD(WallProfiler::Dispose) {
   delete profiler;
 }
 
+#if NODE_MAJOR_VERSION >= 24 && DD_WALL_USE_SIGPROF
+// Returns the number of free Address slots for Locals that can be returned by
+// the isolate without triggering memory allocation.
+int GetFreeLocalSlotCount(Isolate* isolate) {
+  v8::internal::HandleScopeData* data =
+      reinterpret_cast<v8::internal::HandleScopeData*>(
+          reinterpret_cast<uint64_t>(isolate) +
+          v8::internal::Internals::kIsolateHandleScopeDataOffset);
+  auto diff = data->limit - data->next;
+  // sanity check: diff can be at most kHandleBlockSize. If it is larger,
+  // something is suspicious. See
+  // https://github.com/v8/v8/blob/6fcfeccda2d8bcb7397f89bf5bbacd0c2eb2fb7f/src/handles/handles.cc#L195
+  return diff > v8::internal::kHandleBlockSize ? 0 : diff;
+}
+#endif
+
 double GetAsyncIdNoGC(v8::Isolate* isolate) {
   if (!isolate->IsInUse()) {
     // Must not try to create a handle scope if isolate is not in use.
     return -1;
   }
-#if NODE_MAJOR_VERSION >= 24
+#if NODE_MAJOR_VERSION >= 24 && DD_WALL_USE_SIGPROF
+  if (GetFreeLocalSlotCount(isolate) < 1) {
+    // Must not try to create a handle scope if we can't create one local handle
+    // (return value of GetEnteredOrMicrotaskContext) without allocation.
+    return -1;
+  }
   HandleScope scope(isolate);
   auto context = isolate->GetEnteredOrMicrotaskContext();
   return context.IsEmpty() ? -1 : node::AsyncHooksGetExecutionAsyncId(context);
