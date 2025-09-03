@@ -26,11 +26,13 @@ import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
 import {AsyncLocalStorage} from 'async_hooks';
 import {satisfies} from 'semver';
 
-const assert = require('assert');
+import assert from 'assert';
 
 const useCPED =
   satisfies(process.versions.node, '>=24.0.0') &&
   !process.execArgv.includes('--no-async-context-frame');
+
+const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
 
 const PROFILE_OPTIONS = {
   durationMillis: 500,
@@ -116,6 +118,7 @@ describe('Time Profiler', () => {
         intervalMicros: PROFILE_OPTIONS.intervalMicros,
         durationMillis: PROFILE_OPTIONS.durationMillis,
         withContexts: true,
+        collectAsyncId: collectAsyncId,
         lineNumbers: false,
         useCPED,
       });
@@ -125,6 +128,7 @@ describe('Time Profiler', () => {
       const rootSpanId = '1234';
       const endPointLabel = 'trace endpoint';
       const rootSpanIdLabel = 'local root span id';
+      const asyncIdLabel = 'async id';
       const endPoint = 'foo';
       let enableEndPoint = false;
       const label0 = {label: 'value0'};
@@ -136,7 +140,7 @@ describe('Time Profiler', () => {
         validateProfile(
           time.stop(
             i < repeats - 1,
-            enableEndPoint ? generateLabels : undefined
+            enableEndPoint || collectAsyncId ? generateLabels : undefined
           )
         );
       }
@@ -145,9 +149,11 @@ describe('Time Profiler', () => {
         if (!context) {
           return {};
         }
-        // Does not collect async IDs by default
-        assert(typeof context.asyncId === 'undefined');
         const labels: LabelSet = {};
+        if (typeof context.asyncId !== 'undefined') {
+          assert(collectAsyncId);
+          labels[asyncIdLabel] = context.asyncId;
+        }
         for (const [key, value] of Object.entries(context.context ?? {})) {
           if (typeof value === 'string') {
             labels[key] = value;
@@ -215,13 +221,16 @@ describe('Time Profiler', () => {
       function validateProfile(profile: Profile) {
         // Get string table indices for strings we're interested in
         const stringTable = profile.stringTable;
-        const [loopIdx, fn0Idx, fn1Idx, fn2Idx, hrtimeBigIntIdx] = [
-          'loop',
-          'fn0',
-          'fn1',
-          'fn2',
-          'hrtimeBigInt',
-        ].map(x => stringTable.dedup(x));
+        const [
+          loopIdx,
+          fn0Idx,
+          fn1Idx,
+          fn2Idx,
+          hrtimeBigIntIdx,
+          asyncIdLabelIdx,
+        ] = ['loop', 'fn0', 'fn1', 'fn2', 'hrtimeBigInt', asyncIdLabel].map(x =>
+          stringTable.dedup(x)
+        );
 
         function getString(n: number | bigint): string {
           if (typeof n === 'number') {
@@ -259,6 +268,7 @@ describe('Time Profiler', () => {
         let fn0ObservedWithLabel0 = false;
         let fn1ObservedWithLabel1 = false;
         let fn2ObservedWithoutLabels = false;
+        let observedAsyncId = false;
         profile.sample.forEach(sample => {
           let fnName;
           for (const locationId of sample.locationId) {
@@ -272,7 +282,17 @@ describe('Time Profiler', () => {
             }
           }
           const labels = sample.label;
-
+          if (collectAsyncId) {
+            const idx = labels.findIndex(
+              label => label.key === asyncIdLabelIdx
+            );
+            if (idx !== -1) {
+              // Remove async ID label so it doesn't confuse the assertions on
+              // labels further below.
+              labels.splice(idx, 1);
+              observedAsyncId = true;
+            }
+          }
           switch (fnName) {
             case loopIdx:
               if (enableEndPoint) {
@@ -366,12 +386,13 @@ describe('Time Profiler', () => {
           fn2ObservedWithoutLabels,
           'fn2 was not observed without a label'
         );
+        assert(!collectAsyncId || observedAsyncId, 'Async ID was not observed');
       }
     });
   });
 
   it('should have async IDs when enabled', async function shouldCollectAsyncIDs() {
-    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+    if (!(collectAsyncId && ['darwin', 'linux'].includes(process.platform))) {
       this.skip();
     }
     this.timeout(3000);
