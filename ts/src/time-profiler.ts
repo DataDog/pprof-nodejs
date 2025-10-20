@@ -152,7 +152,7 @@ export function getState() {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
   }
-  return gProfiler.state;
+  return gProfiler.state as Uint32Array;
 }
 
 export function setContext(context?: object) {
@@ -162,7 +162,7 @@ export function setContext(context?: object) {
   gProfiler.context = context;
 }
 
-export function getContext() {
+export function getContext(): object | undefined {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
   }
