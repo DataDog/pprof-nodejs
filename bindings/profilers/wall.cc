@@ -44,10 +44,12 @@ struct TimeTicks {
 }  // namespace base
 #if NODE_MAJOR_VERSION >= 24
 namespace internal {
+#if NODE_MAJOR_VERSION == 24
 struct HandleScopeData {
   v8::internal::Address* next;
   v8::internal::Address* limit;
 };
+#endif
 constexpr int kHandleBlockSize = v8::internal::KB - 2;
 }  // namespace internal
 #endif
