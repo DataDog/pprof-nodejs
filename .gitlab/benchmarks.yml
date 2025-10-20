@@ -36,6 +36,7 @@ benchmarks:
       - MAJOR_NODE_VERSION: 20
       - MAJOR_NODE_VERSION: 22
       - MAJOR_NODE_VERSION: 24
+      - MAJOR_NODE_VERSION: 25
   artifacts:
     name: "reports"
     paths:
