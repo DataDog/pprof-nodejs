@@ -73,7 +73,7 @@
             ["OS == 'linux'",
                 {
                 "cflags+":
-                    ["-Wno-deprecated-declarations", "-Werror"],
+                    ["-Wno-deprecated-declarations"],
                 "cflags_cc!": ["-std=gnu++14", "-std=gnu++1y", "-std=gnu++20" ],
                 "cflags_cc": ["-std=gnu++2a"],
                 }
@@ -85,7 +85,6 @@
                         "-Wno-deprecated-declarations",
                         "-Wno-cast-function-type-mismatch", # clang17 now warns about casts between incompatible function types and v8 has some of those
                         "-Wno-unknown-warning-option", # "-Wcast-function-type-mismatch" is not a valid warning option for clang < 17
-                        "-Werror",
                         '-std=gnu++20',
                         ],
                     },
