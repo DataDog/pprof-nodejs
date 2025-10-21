@@ -81,11 +81,12 @@
             ["OS == 'mac'",
                 {
                 'xcode_settings': {
+                    'MACOSX_DEPLOYMENT_TARGET': '11',
+                    'CLANG_CXX_LANGUAGE_STANDARD': 'c++20',
                     'OTHER_CFLAGS+': [
                         "-Wno-deprecated-declarations",
                         "-Wno-cast-function-type-mismatch", # clang17 now warns about casts between incompatible function types and v8 has some of those
                         "-Wno-unknown-warning-option", # "-Wcast-function-type-mismatch" is not a valid warning option for clang < 17
-                        '-std=gnu++20',
                         ],
                     },
                 }
