@@ -2,7 +2,10 @@
   "name": "@datadog/pprof",
   "version": "5.11.1",
   "description": "pprof support for Node.js",
-  "repository": "datadog/pprof-nodejs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DataDog/pprof-nodejs.git"
+  },
   "main": "out/src/index.js",
   "types": "out/src/index.d.ts",
   "scripts": {
