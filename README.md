@@ -7,7 +7,7 @@
 [pprof][pprof-url] support for Node.js.
 
 ## Prerequisites
-1. Your application will need to be using Node.js 18 or greater.
+1. Your application will need to be using Node.js 18 or greater. .
 
 2. The `pprof` module has a native component that is used to collect profiles
 with v8's CPU and Heap profilers. You may need to install additional
