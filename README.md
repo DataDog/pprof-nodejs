@@ -13,7 +13,7 @@
 with v8's CPU and Heap profilers. You may need to install additional
 dependencies to build this module.
     * `pprof` has prebuilt binaries available for Linux arm64/x64,
-    Alpine Linux x64, macOS arm64/x64, and Windows x64 for Node 18/20/22/24.
+    Alpine Linux x64, macOS arm64/x64, and Windows x64 for Node 18/20/22/24/25.
     No additional dependencies are required.
     * For other environments: on environments that `pprof` does not have
     prebuilt binaries for, the module
