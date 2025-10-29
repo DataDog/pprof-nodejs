@@ -10,7 +10,7 @@ jobs:
   asan:
     strategy:
       matrix:
-        version: [18, 20, 22, 24]
+        version: [18, 20, 22, 24, 25]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -23,7 +23,7 @@ jobs:
   valgrind:
     strategy:
       matrix:
-        version: [18, 20, 22, 24]
+        version: [18, 20, 22, 24, 25]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -60,7 +60,7 @@ jobs:
       - id: pkg
         run: |
           content=`cat ./package.json | tr '\n' ' '`
-          echo "::set-output name=json::$content"
+          echo "json=$content" >> $GITHUB_OUTPUT
       - run: npm version --no-git-tag-version ${{ fromJson(steps.pkg.outputs.json).version }}-$(git rev-parse --short HEAD)+${{ github.run_id }}.${{ github.run_attempt }}
       - run: npm publish --tag dev
 
