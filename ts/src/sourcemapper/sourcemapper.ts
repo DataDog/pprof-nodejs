@@ -204,8 +204,9 @@ export class SourceMapper {
    *  could possibly be associated with the given input path.
    */
   private getMappingInfo(inputPath: string): MapInfoCompiled | null {
-    if (this.infoMap.has(path.normalize(inputPath))) {
-      return this.infoMap.get(inputPath) as MapInfoCompiled;
+    const normalizedPath = path.normalize(inputPath);
+    if (this.infoMap.has(normalizedPath)) {
+      return this.infoMap.get(normalizedPath) as MapInfoCompiled;
     }
     return null;
   }
