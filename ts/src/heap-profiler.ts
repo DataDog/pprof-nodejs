@@ -57,13 +57,13 @@ export function v8Profile(): AllocationProfileNode {
 export function profile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   return convertProfile(
     v8Profile(),
     ignoreSamplePath,
     sourceMapper,
-    generateLabels
+    generateLabels,
   );
 }
 
@@ -71,7 +71,7 @@ export function convertProfile(
   rootNode: AllocationProfileNode,
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   const startTimeNanos = Date.now() * 1000 * 1000;
   // Add node for external memory usage.
@@ -94,7 +94,7 @@ export function convertProfile(
     heapIntervalBytes,
     ignoreSamplePath,
     sourceMapper,
-    generateLabels
+    generateLabels,
   );
 }
 
@@ -109,7 +109,7 @@ export function convertProfile(
 export function start(intervalBytes: number, stackDepth: number) {
   if (enabled) {
     throw new Error(
-      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`
+      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`,
     );
   }
   heapIntervalBytes = intervalBytes;
@@ -167,11 +167,11 @@ export function monitorOutOfMemory(
   dumpHeapProfileOnSdterr: boolean,
   exportCommand?: Array<String>,
   callback?: NearHeapLimitCallback,
-  callbackMode?: number
+  callbackMode?: number,
 ) {
   if (!enabled) {
     throw new Error(
-      'Heap profiler must already be started to call monitorOutOfMemory'
+      'Heap profiler must already be started to call monitorOutOfMemory',
     );
   }
   let newCallback;
@@ -187,6 +187,6 @@ export function monitorOutOfMemory(
     exportCommand || [],
     newCallback,
     typeof callbackMode !== 'undefined' ? callbackMode : CallbackMode.Async,
-    isMainThread
+    isMainThread,
   );
 }

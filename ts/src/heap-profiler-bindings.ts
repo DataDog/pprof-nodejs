@@ -25,11 +25,11 @@ const profiler = findBinding(path.join(__dirname, '..', '..'));
 
 export function startSamplingHeapProfiler(
   heapIntervalBytes: number,
-  heapStackDepth: number
+  heapStackDepth: number,
 ) {
   profiler.heapProfiler.startSamplingHeapProfiler(
     heapIntervalBytes,
-    heapStackDepth
+    heapStackDepth,
   );
 }
 
@@ -50,7 +50,7 @@ export function monitorOutOfMemory(
   exportCommand: Array<String> | undefined,
   callback: NearHeapLimitCallback | undefined,
   callbackMode: number,
-  isMainThread: boolean
+  isMainThread: boolean,
 ) {
   profiler.heapProfiler.monitorOutOfMemory(
     heapLimitExtensionSize,
@@ -59,6 +59,6 @@ export function monitorOutOfMemory(
     exportCommand,
     callback,
     callbackMode,
-    isMainThread
+    isMainThread,
   );
 }

@@ -36,7 +36,7 @@ describe('Worker Threads', () => {
                 reject(new Error('Worker exited with code 0'));
               }
             });
-          })
+          }),
         );
       }
       await Promise.all(workers);

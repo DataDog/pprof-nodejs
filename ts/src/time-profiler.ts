@@ -111,7 +111,7 @@ export function start(options: TimeProfilerOptions = {}) {
 export function stop(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels?: string[]
+  lowCardinalityLabels?: string[],
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -138,7 +138,7 @@ export function stop(
     gSourceMapper,
     true,
     generateLabels,
-    lowCardinalityLabels
+    lowCardinalityLabels,
   );
   if (!restart) {
     gProfiler.dispose();

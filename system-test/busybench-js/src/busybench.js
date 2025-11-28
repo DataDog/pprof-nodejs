@@ -49,7 +49,7 @@ function benchmark(durationSeconds) {
 async function collectAndSaveTimeProfile(
   durationSeconds,
   sourceMapper,
-  lineNumbers
+  lineNumbers,
 ) {
   const profile = await pprof.time.profile({
     durationMillis: 1000 * durationSeconds,
@@ -72,13 +72,13 @@ async function collectAndSaveProfiles(collectLineNumberTimeProfile) {
   collectAndSaveTimeProfile(
     durationSeconds / 2,
     sourceMapper,
-    collectLineNumberTimeProfile
+    collectLineNumberTimeProfile,
   );
 }
 
 const durationSeconds = Number(process.argv.length > 2 ? process.argv[2] : 30);
 const collectLineNumberTimeProfile = Boolean(
-  process.argv.length > 3 ? process.argv[3] : false
+  process.argv.length > 3 ? process.argv[3] : false,
 );
 
 pprof.heap.start(512 * 1024, 64);
