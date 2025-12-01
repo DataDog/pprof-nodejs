@@ -56,113 +56,115 @@ to its store in the current async context. (This implementation is very similar
 to how e.g. Java implements `ThreadLocal`, which is a close analogue to ALS in
 Node.js.) ACF instances are then stored in CPED.
 
-## Storing the Sample Context in CPED, take one
+## Storing the Sample Context in CPED
 Node.js – as the embedder of V8 – commandeers the CPED to store instances of
 ACF in it. This means that our profiler can't directly store our sample context
 in the CPED, because then we'd overwrite the ACF reference already in there and
-break Node.js. Our first attempt at solving this was to –- since ACF is "just"
-an ordinary JavaScript object -- to define a new property on it, and store our
-sample context in it! JavaScript properties can have strings, numbers, or
-symbols as their keys, with symbols being the recommended practice to define
-properties that are hidden from unrelated code as symbols are private to their
-creator and only compare equal to themselves. Thus we created a private symbol in
-the profiler instance for our property key, and our logic for storing the sample
-context thus becomes:
+break Node.js. Fortunately, since ACF is "just" an ordinary JavaScript object,
+we can define a new property on it, and store our sample context in it!
+JavaScript properties can have strings, numbers, or symbols as their keys, with
+symbols being the recommended practice to define properties that are hidden from
+unrelated code as symbols are private to their creator and only compare equal to
+themselves. Thus we create a private symbol in the profiler instance for our
+property key, and our logic for storing the sample context thus becomes:
 * get the CPED from the V8 isolate
 * if it is not an object, do nothing (we can't set the sample context)
 * otherwise set the sample context as a value in the object with our property
   key.
 
-Unfortunately, this approach is not signal safe. When we want to read the value
-in the signal handler, it now needs to retrieve the CPED, which creates a V8
-`Local<Value>`, and then it needs to read a property on it, which creates
-another `Local`. It also needs to retrieve the current context, and a `Local`
-for the symbol used as a key – four `Local`s in total. V8 tracks the object
-addresses pointed to by locals so that GC doesn't touch them. It tracks them in
-a series of arrays, and if the current array fills up, it needs to allocate a
-new one. As we know, allocation is unsafe in a signal handler, hence our
-problem. We were thinking of a solution where we check if there is at least 4
-slots free in the current array, but then our profiler's operation would be at
-mercy of V8 internal state.
+The reality is a bit thornier, though. Imagine what happens if while we're
+setting the property, we get interrupted by a PROF signal and the signal handler
+tries to read the property value? It could easily observe an inconsistent state
+and crash. But even if it reads a property value, which one did it read? Still
+the old one, already the new one, or maybe a torn value between the two?
 
-## Storing the Sample Context in CPED, take two
+Fortunately, we had the exact same problem with our previous approach where we
+only stored one sample context in the profiler instances, and the solution is
+the same. We encapsulate the pair of shared pointers to a V8 `Global` and an
+atomic pointer-to-pointer in a class named `AtomicContextPtr`, which looks like
+this:
+```
+using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
 
-Next we thought of replacing the `AsyncContextFrame` object in CPED with one we
-created with an internal field – we can store and retrieve an arbitrary `void *`
-in it with `{Get|Set}AlignedPointerInInternalField` methods. The initial idea
-was to leverage JavaScript's property of being a prototype-based language and
-set the original CPED object as the prototype of our replacement, so that all
-its methods would keep being invoked. This unfortunately didn't work because
-the `AsyncContextFrame` is a `Map` and our replacement object doesn't have the
-internal structure of V8's implementation of a map. The final solution turned
-out to be the one where we store the original ACF as a property in our
-replacement object (now effectively, a proxy to the ACF), and define all the
-`Map` methods and properties on the proxy so that they are invoked on the ACF.
-Even though the proxy does not pass an `instanceof Map` check, it is duck-typed
-as a map. We even encapsulated this behavior in a special prototype object, so
-the operations to set the context are:
-* retrieve the ACF from CPED
-* create a new object (the proxy) with one internal field
-* set the ACF as a special property in the proxy
-* set the prototype of the proxy to our prototype that defines all the proxied
-methods and properties to forward through the proxy-referenced ACF.
-* store our sample context in the internal field of the proxy
-* set the proxy object as the CPED.
+class AtomicContextPtr {
+  ContextPtr ptr1;
+  ContextPtr ptr2;
+  std::atomic<ContextPtr*> currentPtr = &ptr1;
+  ...
+```
+A `Set` method on this class will first store the newly passed sample context in
+either `ptr1` or `ptr2` – whichever `currentPtr` is _not_ pointing to at the
+moment. Subsequently it atomically updates `currentPtr` to now point to it.
 
-Now, a keen eyed reader will notice that in the signal handler we still need to
-call `Isolate::GetContinuationPreservedEmbedderData` which still creates a
-`Local`. That would be true, except that we can import the `v8-internals.h`
-header and directly read the address of the object by reading into the isolate
-at the offset `kContinuationPreservedEmbedderDataOffset` declared in it.
-
+Instead of storing the current sample context in the ACF property directly,
+we want to store an `AtomicContextPtr` (ACP.) The only problem? This is a C++
+class, and properties of JavaScript objects can only be JavaScript values.
+Fortunately, V8 gives us a solution for this as well: the `v8::External` type is
+a V8 value type that wraps a `void *`.
+So now the algorithm for setting a sample context is:
+* get the CPED from the V8 isolate
+* if it is not an object, do nothing (we can't set the sample context)
+* Retrieve the property value. If there is one, it's the `External` wrapping the
+  pointer to the ACP we use.
+* If there is none, allocate a new ACP on C++ heap, create a `v8::External` to
+  hold its pointer, and store it as a property in the ACF.
+* Set the sample context as a value on the either retrieved or created ACP.
 
 The chain of data now looks something like this:
 ```
 v8::Isolate (from Isolate::GetCurrent())
  +-> current continuation (internally managed by V8)
-   +-- our proxy object
-     +-- node::AsyncContextFrame (in proxy's private property, for forwarding method calls)
-     +-- prototype: declares functions and properties that forward to the AsyncContextFrame
-     +-- dd:PersistentContextPtr* (in proxy's internal field)
-       +-> std::shared_ptr<v8::Global<v8::Value>> (in PersistentContextPtr's context field)
-         +-> v8::Global (in shared_ptr)
-          +-> v8::Value (the actual sample context object)
-
+   +-> node::AsyncContextFrame (in continuation's CPED field)
+    +-> v8::External (in AsyncContextFrame's private property)
+     +-> dd::AsyncContextPtr (in External's data field)
+      +-> std::shared_ptr<v8::Global<v8::Value>> (in either AsyncContextPtr::ptr1 or ptr2)
+       +-> v8::Global (in shared_ptr)
+        +-> v8::Value (the actual sample context object)
 ```
-The last 3 steps are the same as when CPED is not being used, except `context`
-is directly represented in the `WallProfiler`, so then it looks like this:
+The last 3-4 steps were the same in the previous code version as well, except
+`ptr1` and `ptr2` were directly represented in the `WallProfiler`, so then it
+looked like this:
 ```
 dd::WallProfiler
  +-> std::shared_ptr<v8::Global<v8::Value>> (in either WallProfiler::ptr1 or ptr2)
   +-> v8::Global (in shared_ptr)
    +-> v8::Value (the actual sample context object)
 ```
-
-### Memory allocations and garbage collection
-We need to allocate a `PersistentContextPtr` (PCP) instance for every proxy we
-create. The PCP has two concerns: it both has a shared pointer to the V8 global
-that carries the sample context, and it also has a V8 weak reference to the
-proxy object it is encapsulated within. This allows us to detect (since weak
-references allow for GC callbacks) when the proxy object gets garbage collected,
-and at that time the PCP itself can be either deleted or reused. We have an
-optimization where we don't delete PCPs -- the assumption is that the number of
-live ACFs (and thus proxies, and thus PCPs) will be constant for a server
-application under load, so instead of doing a high amount of small new/delete
-operations that can fragment the native heap, we keep the ones we'd delete in a
-dequeue instead and reuse them.
+The difference between the two diagrams shows how we encapsulated the
+`(ptr1, ptr2, currentPtr)` tuple into a separate class and moved it out from
+being an instance state of `WallProfiler` to being a property of every ACF we
+encounter.
 
 ## Odds and ends
 And that's mostly it! There are few more small odds and ends to make it work
-safely. We still need to guard reading the value in the signal handler while
-it's being written. We guard by introducing an atomic boolean and proper signal
-fencing.
+safely. We still need to guard writing the property value to the ACF against
+concurrent access by the signal handler, but now it happens only once for every
+ACF, when we create its ACP. We guard by introducing an atomic boolean and
+proper signal fencing.
 
 The signal handler code also needs to be prevented from trying to access the
-data while GC is in progress. For this reason, we register GC prologue and
-epilogue callbacks with the V8 isolate so we can know when GCs are ongoing and
-the signal handler will refrain from reading the CPED field during them. We'll
-however grab the current sample context from the CPED and store it in a profiler
-instance field in the GC prologue and use it for any samples taken during GC.
+data while a GC is in progress. With this new model, the signal handler
+unfortunately needs to do a small number of V8 API invocations. It needs to
+retrieve the current V8 `Context`, it needs to obtain a `Local` for the property
+key, and finally it needs to use both in an `Object::Get` call on the CPED.
+Calling a property getter on an object is reentrancy into V8, which is advised
+against, but this being an ordinary property it ends up being a single dependent
+load, which turns out to work safely… unless there's GC happening. For this
+reason, we register GC prologue and epilogue callbacks with the V8 isolate so we
+can know when GCs are ongoing and the signal handler will refrain from touching
+CPED during them. We'll however grab the current sample context from the CPED
+and store it in a profiler instance field in the GC prologue and use it for any
+samples taken during GC.
+
+Speaking of GC, we can now have an unbounded number of ACPs – one for each live
+ACF. Each ACP is allocated on the C++ heap, and needs to be deleted eventually.
+The profiler tracks every ACP it creates in an internal set of live ACPs and
+deletes them all when it itself gets disposed. This would still allow for
+unbounded growth so we additionally register a V8 GC finalization callback for
+every ACF. When V8 collects an ACF instance its finalization callback will put
+that ACF's ACP into the profiler's internal vector of ready-to-delete ACPs and
+the profiler processes that vector (both deletes the ACP and removes it from the
+live set) on each call to `SetContext`.
 
 ## Changes in dd-trace-js
 For completeness, we'll describe the changes in dd-trace-js here as well. The
@@ -173,16 +175,16 @@ now.
 
 There are some small performance optimizations that no longer apply with the new
 approach, though. For one, with the old approach we did some data conversions
-(span IDs to bigint, a tag array to endpoint string) in a sample when a sample
+(span IDs to string, a tag array to endpoint string) in a sample when a sample
 was captured. With the new approach, we do these conversions for all sample
 contexts during profile serialization. Doing them after each sample capture
-amortized their cost, possibly reducing the latency induced at serialization
-time. With the old approach we also called `SetContext` only once per sampling –
-we'd install a sample context to be used for the next sample, and then kept
-updating a `ref` field in it with a reference to the actual data from pure
-JavaScript code. Since we no longer have a single sample context (but one per
-continuation) we can not do this anymore, and we need to call `SetContext` on
-every ACF change. The cost of this (basically, going into a native call from
-JavaScript) are still well offset by not having to use async hooks and do work
-on every async context change. We could arguably simplify the code by removing
-those small optimizations.
+amortized their cost possibly minimally reducing the latency induced at
+serialization time. With the old approach we also called `SetContext` only once
+per sampling – we'd install a sample context to be used for the next sample, and
+then kept updating a `ref` field in it with a reference to the actual data.
+Since we no longer have a single sample context (but one per continuation) we
+can not do this anymore, and we need to call `SetContext` on every ACF change.
+The cost of this (basically, going into a native call from JavaScript) are still
+well offset by not having to use async hooks and do work on every async context
+change. We could arguably simplify the code by removing those small
+optimizations.
