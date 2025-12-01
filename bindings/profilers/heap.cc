@@ -558,11 +558,9 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
   // Remove cleanup hook since profiler is explicitly stopped
   {
     const std::lock_guard<std::mutex> lock(g_heap_profiler_mutex);
-    if (g_heap_profiler_isolates.find(isolate) !=
-        g_heap_profiler_isolates.end()) {
+    if (g_heap_profiler_isolates.erase(isolate) == 1) {
       node::RemoveEnvironmentCleanupHook(
           isolate, HeapProfilerCleanupHook, isolate);
-      g_heap_profiler_isolates.erase(isolate);
     }
   }
 }
