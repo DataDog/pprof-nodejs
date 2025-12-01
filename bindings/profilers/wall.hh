@@ -43,7 +43,7 @@ class PersistentContextPtr;
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
-  enum Fields { kSampleCount, kCPEDContextCount, kFieldCount };
+  enum Fields { kSampleCount, kFieldCount };
 
  private:
   std::chrono::microseconds samplingPeriod_{0};
@@ -118,7 +118,6 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr GetContextPtrSignalSafe(v8::Isolate* isolate);
 
   void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
-  void UpdateContextCount();
 
  public:
   /**
@@ -148,6 +147,8 @@ class WallProfiler : public Nan::ObjectWrap {
                    int64_t time_to,
                    int64_t cpu_time,
                    v8::Isolate* isolate);
+  v8::Local<v8::Object> GetMetrics(v8::Isolate*);
+
   Result StartImpl();
   v8::ProfilerId StartInternal();
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
@@ -186,6 +187,7 @@ class WallProfiler : public Nan::ObjectWrap {
   static NAN_GETTER(GetContext);
   static NAN_SETTER(SetContext);
   static NAN_GETTER(SharedArrayGetter);
+  static NAN_GETTER(GetMetrics);
 };
 
 }  // namespace dd

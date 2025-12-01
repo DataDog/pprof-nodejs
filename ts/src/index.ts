@@ -40,6 +40,7 @@ export const time = {
   v8ProfilerStuckEventLoopDetected:
     timeProfiler.v8ProfilerStuckEventLoopDetected,
   getState: timeProfiler.getState,
+  getMetrics: timeProfiler.getMetrics,
   constants: timeProfiler.constants,
 };
 

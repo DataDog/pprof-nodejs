@@ -137,6 +137,10 @@ describe('Time Profiler', () => {
       for (let i = 0; i < repeats; ++i) {
         loop();
         enableEndPoint = i % 2 === 0;
+        const metrics = time.getMetrics();
+        const expectedAsyncContextCount = useCPED ? 1 : 0;
+        assert(metrics.totalAsyncContextCount === expectedAsyncContextCount);
+        assert(metrics.usedAsyncContextCount === expectedAsyncContextCount);
         validateProfile(
           time.stop(
             i < repeats - 1,
