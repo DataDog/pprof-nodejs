@@ -26,7 +26,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "defer.hh"
 #include "map-get.hh"
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
@@ -678,14 +677,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 #endif  // DD_WALL_USE_CPED
 }
 
-void WallProfiler::UpdateContextCount() {
-  std::atomic_store_explicit(
-      reinterpret_cast<std::atomic<uint32_t>*>(
-          &fields_[WallProfiler::Fields::kCPEDContextCount]),
-      liveContextPtrs_.size(),
-      std::memory_order_relaxed);
-}
-
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -709,7 +700,6 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
       delete ptr;
     }
     liveContextPtrs_.clear();
-    UpdateContextCount();
   }
 }
 
@@ -889,7 +879,6 @@ v8::ProfilerId WallProfiler::StartInternal() {
   if (withContexts_ || workaroundV8Bug_) {
     SignalHandler::IncreaseUseCount();
     fields_[kSampleCount] = 0;
-    fields_[kCPEDContextCount] = 0;
   }
 
   if (collectCpuTime_) {
@@ -1094,6 +1083,10 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    Nan::New("state").ToLocalChecked(),
                    SharedArrayGetter);
 
+  Nan::SetAccessor(tpl->InstanceTemplate(),
+                   Nan::New("metrics").ToLocalChecked(),
+                   GetMetrics);
+
   PerIsolateData::For(Isolate::GetCurrent())
       ->WallProfilerConstructor()
       .Reset(Nan::GetFunction(tpl).ToLocalChecked());
@@ -1107,11 +1100,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::DefineOwnProperty(constants,
                          Nan::New("kSampleCount").ToLocalChecked(),
                          Nan::New<Integer>(kSampleCount),
-                         ReadOnlyDontDelete)
-      .FromJust();
-  Nan::DefineOwnProperty(constants,
-                         Nan::New("kCPEDContextCount").ToLocalChecked(),
-                         Nan::New<Integer>(kCPEDContextCount),
                          ReadOnlyDontDelete)
       .FromJust();
   Nan::DefineOwnProperty(target,
@@ -1157,10 +1145,6 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     SetCurrentContextPtr(isolate, value);
     return;
   }
-
-  defer {
-    UpdateContextCount();
-  };
 
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   // No Node AsyncContextFrame in this continuation yet
@@ -1254,6 +1238,24 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 #endif
 }
 
+Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
+  auto usedAsyncContextCount = liveContextPtrs_.size();
+  auto context = isolate->GetCurrentContext();
+  auto metrics = Object::New(isolate);
+  metrics
+      ->Set(context,
+            String::NewFromUtf8Literal(isolate, "usedAsyncContextCount"),
+            Number::New(isolate, usedAsyncContextCount))
+      .ToChecked();
+  // totalAsyncContextCount == usedAsyncContextCount
+  metrics
+      ->Set(context,
+            String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
+            Number::New(isolate, usedAsyncContextCount))
+      .ToChecked();
+  return metrics;
+}
+
 NAN_GETTER(WallProfiler::GetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->GetContext(info.GetIsolate()));
@@ -1267,6 +1269,11 @@ NAN_SETTER(WallProfiler::SetContext) {
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->jsArray_.Get(v8::Isolate::GetCurrent()));
+}
+
+NAN_GETTER(WallProfiler::GetMetrics) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+  info.GetReturnValue().Set(profiler->GetMetrics(info.GetIsolate()));
 }
 
 NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
