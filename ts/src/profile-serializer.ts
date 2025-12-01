@@ -407,6 +407,10 @@ export function serializeTimeProfile(
     entry: Entry<TimeProfileNode>,
     samples: Sample[]
   ) => {
+    console.log(`processing entry ${JSON.stringify(entry, (key, value) =>
+    typeof value === 'bigint'
+      ? value.toString()
+      : value)}`)
     let unlabelledHits = entry.node.hitCount;
     let unlabelledCpuTime = 0;
     const isIdle = entry.node.name === '(idle)';
