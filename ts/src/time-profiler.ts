@@ -27,10 +27,10 @@ import {
   getNativeThreadId,
   constants as profilerConstants,
 } from './time-profiler-bindings';
-import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
+import {GenerateTimeLabelsFunction} from './v8-types';
 import {isMainThread} from 'worker_threads';
 
-const {kSampleCount} = profilerConstants;
+const {kSampleCount, kCPEDContextCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
 const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
@@ -169,13 +169,6 @@ export function getContext() {
   return gProfiler.context;
 }
 
-export function getMetrics(): TimeProfilerMetrics {
-  if (!gProfiler) {
-    throw new Error('Wall profiler is not started');
-  }
-  return gProfiler.metrics as TimeProfilerMetrics;
-}
-
 export function isStarted() {
   return !!gProfiler;
 }
@@ -187,6 +180,7 @@ export function v8ProfilerStuckEventLoopDetected() {
 
 export const constants = {
   kSampleCount,
+  kCPEDContextCount,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
 };
