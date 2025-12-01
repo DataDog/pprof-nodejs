@@ -107,11 +107,11 @@ void SetContextPtr(ContextPtr& contextPtr,
 
 class PersistentContextPtr {
   ContextPtr context;
-  WallProfiler* owner;
+  std::vector<PersistentContextPtr*>* dead;
   Persistent<Object> per;
 
  public:
-  PersistentContextPtr(WallProfiler* owner) : owner(owner) {}
+  PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
 
   void UnregisterFromGC() {
     if (!per.IsEmpty()) {
@@ -120,10 +120,7 @@ class PersistentContextPtr {
     }
   }
 
-  void MarkDead() {
-    context.reset();
-    owner->MarkDeadPersistentContextPtr(this);
-  }
+  void MarkDead() { dead->push_back(this); }
 
   void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
     // Register a callback to delete this object when the object is GCed
@@ -132,8 +129,8 @@ class PersistentContextPtr {
         this,
         [](const WeakCallbackInfo<PersistentContextPtr>& data) {
           auto ptr = data.GetParameter();
-          ptr->UnregisterFromGC();
           ptr->MarkDead();
+          ptr->UnregisterFromGC();
         },
         WeakCallbackType::kParameter);
   }
@@ -144,11 +141,6 @@ class PersistentContextPtr {
 
   ContextPtr Get() const { return context; }
 };
-
-void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
-  deadContextPtrs_.push_back(ptr);
-  liveContextPtrs_.erase(ptr);
-}
 
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
@@ -820,9 +812,12 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 #endif  // DD_WALL_USE_CPED
 }
 
-std::atomic<uint32_t>* WallProfiler::GetContextCountPtr() {
-  return reinterpret_cast<std::atomic<uint32_t>*>(
-      &fields_[WallProfiler::Fields::kCPEDContextCount]);
+void WallProfiler::UpdateContextCount() {
+  std::atomic_store_explicit(
+      reinterpret_cast<std::atomic<uint32_t>*>(
+          &fields_[WallProfiler::Fields::kCPEDContextCount]),
+      liveContextPtrs_.size(),
+      std::memory_order_relaxed);
 }
 
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
@@ -842,21 +837,13 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
 
-    // Delete all live contexts
     for (auto ptr : liveContextPtrs_) {
       ptr->UnregisterFromGC();
       delete ptr;
     }
     liveContextPtrs_.clear();
-
-    // Delete all unused contexts, too
-    for (auto ptr : deadContextPtrs_) {
-      delete ptr;
-    }
     deadContextPtrs_.clear();
-
-    std::atomic_store_explicit(
-        GetContextCountPtr(), 0, std::memory_order_relaxed);
+    UpdateContextCount();
   }
 }
 
@@ -1305,12 +1292,23 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     return;
   }
 
+  defer {
+    UpdateContextCount();
+  };
+
+  // Clean up dead context pointers
+  for (auto ptr : deadContextPtrs_) {
+    liveContextPtrs_.erase(ptr);
+    delete ptr;
+  }
+  deadContextPtrs_.clear();
+
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   // No Node AsyncContextFrame in this continuation yet
   if (!cped->IsObject()) return;
 
   auto cpedObj = cped.As<Object>();
-  PersistentContextPtr* contextPtr;
+  PersistentContextPtr* contextPtr = nullptr;
   SignalGuard m(setInProgress_);
   auto proxyProto = cpedProxyProto_.Get(isolate);
   if (!proxyProto->StrictEquals(cpedObj->GetPrototype())) {
@@ -1325,14 +1323,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     proxyObj->SetPrototype(v8Ctx, proxyProto).Check();
     proxyObj->Set(v8Ctx, cpedProxySymbol_.Get(isolate), cpedObj).Check();
     // Set up the context pointer in the internal field
-    if (!deadContextPtrs_.empty()) {
-      contextPtr = deadContextPtrs_.back();
-      deadContextPtrs_.pop_back();
-    } else {
-      contextPtr = new PersistentContextPtr(this);
-      std::atomic_fetch_add_explicit(
-          GetContextCountPtr(), 1, std::memory_order_relaxed);
-    }
+    contextPtr = new PersistentContextPtr(&deadContextPtrs_);
     liveContextPtrs_.insert(contextPtr);
     contextPtr->RegisterForGC(isolate, cpedObj);
     proxyObj->SetAlignedPointerInInternalField(0, contextPtr);
