@@ -73,8 +73,3 @@ export interface GenerateTimeLabelsArgs {
 export interface GenerateTimeLabelsFunction {
   (args: GenerateTimeLabelsArgs): LabelSet;
 }
-
-export interface TimeProfilerMetrics {
-  usedAsyncContextCount: number;
-  totalAsyncContextCount: number;
-}

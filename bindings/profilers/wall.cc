@@ -820,6 +820,11 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 #endif  // DD_WALL_USE_CPED
 }
 
+std::atomic<uint32_t>* WallProfiler::GetContextCountPtr() {
+  return reinterpret_cast<std::atomic<uint32_t>*>(
+      &fields_[WallProfiler::Fields::kCPEDContextCount]);
+}
+
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -849,6 +854,9 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
       delete ptr;
     }
     deadContextPtrs_.clear();
+
+    std::atomic_store_explicit(
+        GetContextCountPtr(), 0, std::memory_order_relaxed);
   }
 }
 
@@ -1028,6 +1036,7 @@ v8::ProfilerId WallProfiler::StartInternal() {
   if (withContexts_ || workaroundV8Bug_) {
     SignalHandler::IncreaseUseCount();
     fields_[kSampleCount] = 0;
+    fields_[kCPEDContextCount] = 0;
   }
 
   if (collectCpuTime_) {
@@ -1232,10 +1241,6 @@ NAN_MODULE_INIT(WallProfiler::Init) {
                    Nan::New("state").ToLocalChecked(),
                    SharedArrayGetter);
 
-  Nan::SetAccessor(tpl->InstanceTemplate(),
-                   Nan::New("metrics").ToLocalChecked(),
-                   GetMetrics);
-
   PerIsolateData::For(Isolate::GetCurrent())
       ->WallProfilerConstructor()
       .Reset(Nan::GetFunction(tpl).ToLocalChecked());
@@ -1249,6 +1254,11 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::DefineOwnProperty(constants,
                          Nan::New("kSampleCount").ToLocalChecked(),
                          Nan::New<Integer>(kSampleCount),
+                         ReadOnlyDontDelete)
+      .FromJust();
+  Nan::DefineOwnProperty(constants,
+                         Nan::New("kCPEDContextCount").ToLocalChecked(),
+                         Nan::New<Integer>(kCPEDContextCount),
                          ReadOnlyDontDelete)
       .FromJust();
   Nan::DefineOwnProperty(target,
@@ -1320,6 +1330,8 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
       deadContextPtrs_.pop_back();
     } else {
       contextPtr = new PersistentContextPtr(this);
+      std::atomic_fetch_add_explicit(
+          GetContextCountPtr(), 1, std::memory_order_relaxed);
     }
     liveContextPtrs_.insert(contextPtr);
     contextPtr->RegisterForGC(isolate, cpedObj);
@@ -1388,24 +1400,6 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 #endif
 }
 
-Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
-  auto usedAsyncContextCount = liveContextPtrs_.size();
-  auto totalAsyncContextCount = usedAsyncContextCount + deadContextPtrs_.size();
-  auto context = isolate->GetCurrentContext();
-  auto metrics = Object::New(isolate);
-  metrics
-      ->Set(context,
-            String::NewFromUtf8Literal(isolate, "usedAsyncContextCount"),
-            Number::New(isolate, usedAsyncContextCount))
-      .ToChecked();
-  metrics
-      ->Set(context,
-            String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
-            Number::New(isolate, totalAsyncContextCount))
-      .ToChecked();
-  return metrics;
-}
-
 NAN_GETTER(WallProfiler::GetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->GetContext(info.GetIsolate()));
@@ -1419,11 +1413,6 @@ NAN_SETTER(WallProfiler::SetContext) {
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   info.GetReturnValue().Set(profiler->jsArray_.Get(v8::Isolate::GetCurrent()));
-}
-
-NAN_GETTER(WallProfiler::GetMetrics) {
-  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
-  info.GetReturnValue().Set(profiler->GetMetrics(info.GetIsolate()));
 }
 
 NAN_METHOD(WallProfiler::V8ProfilerStuckEventLoopDetected) {
