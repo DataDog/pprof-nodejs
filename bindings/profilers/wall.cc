@@ -965,8 +965,17 @@ NAN_METHOD(WallProfiler::Start) {
   WallProfiler* wallProfiler =
       Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
 
-  if (info.Length() != 0) {
-    return Nan::ThrowTypeError("Start must not have any arguments.");
+  if (info.Length() > 1) {
+    return Nan::ThrowTypeError("Start must have at most one argument.");
+  }
+  if (info.Length() == 1) {
+    auto collectIdleSamples = info[0];
+    if (!collectIdleSamples->IsBoolean()) {
+      return Nan::ThrowTypeError("Argument to start must be a boolean");
+    }
+    uv_loop_configure(uv_default_loop(),
+                      UV_LOOP_BLOCK_SIGNAL,
+                      collectIdleSamples.As<v8::Boolean>()->Value() ? 0 : SIGPROF);
   }
 
   auto res = wallProfiler->StartImpl();

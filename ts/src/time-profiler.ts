@@ -68,6 +68,7 @@ export interface TimeProfilerOptions {
   collectCpuTime?: boolean;
   collectAsyncId?: boolean;
   useCPED?: boolean;
+  collectIdleSamples?: boolean;
 }
 
 const DEFAULT_OPTIONS: TimeProfilerOptions = {
@@ -79,6 +80,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   collectCpuTime: false,
   collectAsyncId: false,
   useCPED: false,
+  collectIdleSamples: false,
 };
 
 export async function profile(options: TimeProfilerOptions = {}) {
@@ -100,7 +102,11 @@ export function start(options: TimeProfilerOptions = {}) {
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
 
-  gProfiler.start();
+  if (isMainThread) {
+    gProfiler.start(options.collectIdleSamples);
+  } else {
+    gProfiler.start();
+  }
 
   // If contexts are enabled without using CPED, set an initial empty context
   if (options.withContexts && !options.useCPED) {

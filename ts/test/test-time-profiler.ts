@@ -440,6 +440,43 @@ describe('Time Profiler', () => {
     assert(asyncIdObserved, 'Async ID was not observed');
   });
 
+  async function findIdleSample(collectIdleSamples: boolean): Promise<number> {
+    time.start({
+      intervalMicros: PROFILE_OPTIONS.intervalMicros,
+      durationMillis: PROFILE_OPTIONS.durationMillis,
+      withContexts: true,
+      lineNumbers: false,
+      collectCpuTime: true,
+      collectIdleSamples,
+    });
+
+    // Do nothing for a bit
+    await new Promise<void>(resolve => {
+      setTimeout(resolve, PROFILE_OPTIONS.durationMillis / 2);
+    });
+
+    const profile = time.stop(false);
+
+    const idleStr = profile.stringTable.dedup('(idle)');
+    const idleFn = profile.function.findIndex(f => f.name === idleStr) + 1;
+    if (idleFn !== 0) {
+      const idleLoc =
+        profile.location.findIndex(l => l.line[0].functionId === idleFn) + 1;
+      if (idleLoc !== 0) {
+        return profile.sample.findIndex(s => s.locationId.includes(idleLoc));
+      }
+    }
+    return -1;
+  }
+
+  it('should capture no idle samples when idle sampling is disabled', async () => {
+    assert((await findIdleSample(false)) === -1);
+  });
+
+  it('should capture some idle samples when idle sampling is enabled', async () => {
+    assert((await findIdleSample(true)) !== -1);
+  });
+
   describe('profile (w/ stubs)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
