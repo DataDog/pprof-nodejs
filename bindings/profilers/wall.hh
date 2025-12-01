@@ -54,13 +54,10 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextPtr curContext_;
   // Otherwise we'll use a private symbol to store the context in CPED objects.
   v8::Global<v8::Private> cpedSymbol_;
+  v8::Global<v8::ObjectTemplate> wrapObjectTemplate_;
   // We track live context pointers in a set to avoid memory leaks. They will
   // be deleted when the profiler is disposed.
   std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
-  // Context pointers belonging to GC'd CPED objects register themselves here.
-  // They will be deleted and removed from liveContextPtrs_ next time SetContext
-  // is invoked.
-  std::vector<PersistentContextPtr*> deadContextPtrs_;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
