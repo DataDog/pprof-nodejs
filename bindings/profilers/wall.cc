@@ -16,6 +16,7 @@
 
 #include <nan.h>
 #include <node.h>
+#include <v8-internal.h>
 #include <v8-profiler.h>
 #include <cinttypes>
 #include <cstdint>
@@ -25,6 +26,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "map-get.hh"
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
 #include "wall.hh"
@@ -656,14 +658,15 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   std::fill(fields_, fields_ + kFieldCount, 0);
 
   if (useCPED_) {
-    cpedSymbol_.Reset(
-        isolate,
-        Private::ForApi(isolate,
-                        String::NewFromUtf8Literal(
-                            isolate, "dd::WallProfiler::cpedSymbol_")));
+    // Used to create Map value objects that will have one internal field to
+    // store the sample context pointer.
     auto wrapObjectTemplate = ObjectTemplate::New(isolate);
     wrapObjectTemplate->SetInternalFieldCount(1);
     wrapObjectTemplate_.Reset(isolate, wrapObjectTemplate);
+    // Object used as the Map key object.
+    auto cpedKeyObj = Object::New(isolate);
+    cpedKey_.Reset(isolate, cpedKeyObj);
+    cpedKeyHash_ = cpedKeyObj->GetIdentityHash();
   }
 }
 
@@ -1147,42 +1150,32 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   // No Node AsyncContextFrame in this continuation yet
-  if (!cped->IsObject()) return;
+  if (!cped->IsMap()) return;
 
   auto v8Ctx = isolate->GetCurrentContext();
   // This should always be called from a V8 context, but check just in case.
   if (v8Ctx.IsEmpty()) return;
 
-  auto cpedObj = cped.As<Object>();
-  auto localSymbol = cpedSymbol_.Get(isolate);
-  auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
-  if (maybeProfData.IsEmpty()) return;
+  auto cpedMap = cped.As<Map>();
+  auto localKey = cpedKey_.Get(isolate);
 
-  PersistentContextPtr* contextPtr = nullptr;
-  auto profData = maybeProfData.ToLocalChecked();
-  SignalGuard m(setInProgress_);
-  if (profData->IsUndefined()) {
-    if (value->IsNullOrUndefined()) {
-      // Don't go to the trouble of mutating the CPED for null or undefined as
-      // the absence of a sample context will be interpreted as undefined in
-      // GetContextPtr anyway.
-      return;
-    }
-
+  // Always replace the PersistentContextPtr in the map even if it is present,
+  // we want the PersistentContextPtr in a parent map to not be mutated.
+  if (value->IsNullOrUndefined()) {
+    // The absence of a sample context will be interpreted as undefined in
+    // GetContextPtr so if value is null or undefined, just delete the key.
+    SignalGuard m(setInProgress_);
+    cpedMap->Delete(v8Ctx, localKey).Check();
+  } else {
     auto wrap =
         wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
-    auto maybeSetResult = cpedObj->Set(v8Ctx, localSymbol, wrap);
-    if (maybeSetResult.IsNothing()) {
-      return;
-    }
-    contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
+    auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
     liveContextPtrs_.insert(contextPtr);
-  } else {
-    contextPtr =
-        static_cast<PersistentContextPtr*>(profData.As<External>()->Value());
-  }
+    contextPtr->Set(isolate, value);
 
-  contextPtr->Set(isolate, value);
+    SignalGuard m(setInProgress_);
+    cpedMap->Set(v8Ctx, localKey, wrap).ToLocalChecked();
+  }
 #else
   SetCurrentContextPtr(isolate, value);
 #endif
@@ -1215,23 +1208,28 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
   }
 
   if (!isolate->IsInUse()) {
-    // Must not try to create a handle scope if isolate is not in use.
     return ContextPtr();
   }
-  HandleScope scope(isolate);
 
-  auto cped = isolate->GetContinuationPreservedEmbedderData();
-  if (cped->IsObject()) {
-    auto v8Ctx = isolate->GetEnteredOrMicrotaskContext();
-    if (!v8Ctx.IsEmpty()) {
-      auto cpedObj = cped.As<Object>();
-      auto localSymbol = cpedSymbol_.Get(isolate);
-      auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
-      if (!maybeProfData.IsEmpty()) {
-        auto profData = maybeProfData.ToLocalChecked();
-        if (profData->IsObject()) {
-          auto profObj = profData.As<Object>();
-          return PersistentContextPtr::Unwrap(profObj)->Get();
+  auto cpedAddrPtr = reinterpret_cast<internal::Address*>(
+      reinterpret_cast<uint64_t>(isolate) +
+      internal::Internals::kContinuationPreservedEmbedderDataOffset);
+  auto cpedAddr = *cpedAddrPtr;
+  if (internal::Internals::HasHeapObjectTag(cpedAddr)) {
+    auto cpedValuePtr = reinterpret_cast<Value*>(cpedAddrPtr);
+    if (cpedValuePtr->IsMap()) {
+      Address keyAddr = **(reinterpret_cast<Address**>(&cpedKey_));
+
+      Address wrapAddr = GetValueFromMap(cpedAddr, cpedKeyHash_, keyAddr);
+      if (internal::Internals::HasHeapObjectTag(wrapAddr)) {
+        auto wrapValue = reinterpret_cast<Value*>(&wrapAddr);
+        if (wrapValue->IsObject()) {
+          auto wrapObj = reinterpret_cast<Object*>(wrapValue);
+          if (wrapObj->InternalFieldCount() > 0) {
+            return static_cast<PersistentContextPtr*>(
+                       wrapObj->GetAlignedPointerFromInternalField(0))
+                ->Get();
+          }
         }
       }
     }
