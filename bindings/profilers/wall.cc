@@ -104,34 +104,23 @@ void SetContextPtr(ContextPtr& contextPtr,
   }
 }
 
-class PersistentContextPtr {
+class PersistentContextPtr : public node::ObjectWrap {
   ContextPtr context;
-  std::vector<PersistentContextPtr*>* dead;
-  Persistent<Object> per;
+  std::unordered_set<PersistentContextPtr*>* live;
 
  public:
-  PersistentContextPtr(std::vector<PersistentContextPtr*>* dead) : dead(dead) {}
-
-  void UnregisterFromGC() {
-    if (!per.IsEmpty()) {
-      per.ClearWeak();
-      per.Reset();
-    }
+  PersistentContextPtr(std::unordered_set<PersistentContextPtr*>* live, Local<Object> wrap) : live(live) {
+    Wrap(wrap);
   }
 
-  void MarkDead() { dead->push_back(this); }
+  void Detach() {
+    live = nullptr;
+  }
 
-  void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
-    // Register a callback to delete this object when the object is GCed
-    per.Reset(isolate, obj);
-    per.SetWeak(
-        this,
-        [](const WeakCallbackInfo<PersistentContextPtr>& data) {
-          auto ptr = data.GetParameter();
-          ptr->MarkDead();
-          ptr->UnregisterFromGC();
-        },
-        WeakCallbackType::kParameter);
+  ~PersistentContextPtr() {
+    if (live) {
+      live->erase(this);
+    }
   }
 
   void Set(Isolate* isolate, const Local<Value>& value) {
@@ -139,6 +128,10 @@ class PersistentContextPtr {
   }
 
   ContextPtr Get() const { return context; }
+
+  static PersistentContextPtr* Unwrap(Local<Object> wrap) {
+    return node::ObjectWrap::Unwrap<PersistentContextPtr>(wrap);
+  }
 };
 
 // Maximum number of rounds in the GetV8ToEpochOffset
@@ -674,6 +667,9 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
         Private::ForApi(isolate,
                         String::NewFromUtf8Literal(
                             isolate, "dd::WallProfiler::cpedSymbol_")));
+    auto wrapObjectTemplate = ObjectTemplate::New(isolate);
+    wrapObjectTemplate->SetInternalFieldCount(1);
+    wrapObjectTemplate_.Reset(isolate, wrapObjectTemplate);
   }
 }
 
@@ -703,11 +699,10 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
         isolate, &WallProfiler::CleanupHook, isolate);
 
     for (auto ptr : liveContextPtrs_) {
-      ptr->UnregisterFromGC();
+      ptr->Detach(); // so it doesn't invalidate our iterator
       delete ptr;
     }
     liveContextPtrs_.clear();
-    deadContextPtrs_.clear();
     UpdateContextCount();
   }
 }
@@ -1161,13 +1156,6 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     UpdateContextCount();
   };
 
-  // Clean up dead context pointers
-  for (auto ptr : deadContextPtrs_) {
-    liveContextPtrs_.erase(ptr);
-    delete ptr;
-  }
-  deadContextPtrs_.clear();
-
   auto cped = isolate->GetContinuationPreservedEmbedderData();
   // No Node AsyncContextFrame in this continuation yet
   if (!cped->IsObject()) return;
@@ -1191,16 +1179,14 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
       // GetContextPtr anyway.
       return;
     }
-    contextPtr = new PersistentContextPtr(&deadContextPtrs_);
 
-    auto external = External::New(isolate, contextPtr);
-    auto maybeSetResult = cpedObj->SetPrivate(v8Ctx, localSymbol, external);
-    if (maybeSetResult.IsNothing()) {
-      delete contextPtr;
+    auto wrap = wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+    auto maybeSetResult = cpedMap->Set(v8Ctx, localSymbol, wrap);
+    if (maybeSetResult.IsEmpty()) {
       return;
     }
+    contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
     liveContextPtrs_.insert(contextPtr);
-    contextPtr->RegisterForGC(isolate, cpedObj);
   } else {
     contextPtr =
         static_cast<PersistentContextPtr*>(profData.As<External>()->Value());
@@ -1253,10 +1239,9 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
       auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
       if (!maybeProfData.IsEmpty()) {
         auto profData = maybeProfData.ToLocalChecked();
-        if (!profData->IsUndefined()) {
-          return static_cast<PersistentContextPtr*>(
-                     profData.As<External>()->Value())
-              ->Get();
+        if (profData->IsObject()) {
+          auto profObj = profData.As<Object>();
+          return PersistentContextPtr::Unwrap(profObj)->Get();
         }
       }
     }
