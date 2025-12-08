@@ -22,12 +22,32 @@
 
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include <node.h>
 #include <v8-profiler.h>
 
 namespace dd {
+
+// Track which isolates have cleanup hooks registered for heap profiler
+static std::unordered_set<v8::Isolate*> g_heap_profiler_isolates;
+static std::mutex g_heap_profiler_mutex;
+
+// Cleanup hook to stop heap profiler before isolate is destroyed
+static void HeapProfilerCleanupHook(void* data) {
+  auto isolate = static_cast<v8::Isolate*>(data);
+  {
+    const std::lock_guard<std::mutex> lock(g_heap_profiler_mutex);
+    g_heap_profiler_isolates.erase(isolate);
+  }
+  // Stop the sampling heap profiler to prevent crash during V8 teardown
+  auto heap_profiler = isolate->GetHeapProfiler();
+  if (heap_profiler) {
+    heap_profiler->StopSamplingHeapProfiler();
+  }
+}
 
 static size_t NearHeapLimit(void* data,
                             size_t current_heap_limit,
@@ -497,6 +517,19 @@ size_t NearHeapLimit(void* data,
 }
 
 NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
+  auto isolate = info.GetIsolate();
+
+  // Register cleanup hook if not already registered for this isolate
+  {
+    const std::lock_guard<std::mutex> lock(g_heap_profiler_mutex);
+    if (g_heap_profiler_isolates.find(isolate) ==
+        g_heap_profiler_isolates.end()) {
+      node::AddEnvironmentCleanupHook(
+          isolate, HeapProfilerCleanupHook, isolate);
+      g_heap_profiler_isolates.insert(isolate);
+    }
+  }
+
   if (info.Length() == 2) {
     if (!info[0]->IsUint32()) {
       return Nan::ThrowTypeError("First argument type must be uint32.");
@@ -508,10 +541,10 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
     uint64_t sample_interval = info[0].As<v8::Integer>()->Value();
     int stack_depth = info[1].As<v8::Integer>()->Value();
 
-    info.GetIsolate()->GetHeapProfiler()->StartSamplingHeapProfiler(
-        sample_interval, stack_depth);
+    isolate->GetHeapProfiler()->StartSamplingHeapProfiler(sample_interval,
+                                                          stack_depth);
   } else {
-    info.GetIsolate()->GetHeapProfiler()->StartSamplingHeapProfiler();
+    isolate->GetHeapProfiler()->StartSamplingHeapProfiler();
   }
 }
 
@@ -521,6 +554,15 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
   auto isolate = info.GetIsolate();
   isolate->GetHeapProfiler()->StopSamplingHeapProfiler();
   PerIsolateData::For(isolate)->GetHeapProfilerState().reset();
+
+  // Remove cleanup hook since profiler is explicitly stopped
+  {
+    const std::lock_guard<std::mutex> lock(g_heap_profiler_mutex);
+    if (g_heap_profiler_isolates.erase(isolate) == 1) {
+      node::RemoveEnvironmentCleanupHook(
+          isolate, HeapProfilerCleanupHook, isolate);
+    }
+  }
 }
 
 // Signature:
