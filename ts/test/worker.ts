@@ -13,10 +13,11 @@ const intervalMicros = 10000;
 const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
 const useCPED =
-  (satisfies(process.versions.node, '>=24.0.0') &&
+  withContexts &&
+  ((satisfies(process.versions.node, '>=24.0.0') &&
     !process.execArgv.includes('--no-async-context-frame')) ||
-  (satisfies(process.versions.node, '>=22.7.0') &&
-    process.execArgv.includes('--experimental-async-context-frame'));
+    (satisfies(process.versions.node, '>=22.7.0') &&
+      process.execArgv.includes('--experimental-async-context-frame')));
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
 

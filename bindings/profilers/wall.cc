@@ -909,7 +909,12 @@ NAN_METHOD(WallProfiler::New) {
 #if !DD_WALL_USE_CPED
     if (useCPED) {
       return Nan::ThrowTypeError(
-          "useCPED is not supported on this Node.js version.");
+#ifndef _WIN32
+          "useCPED is not supported on this Node.js version."
+#else
+          "useCPED is not supported on Windows."
+#endif
+      );
     }
 #endif
 
