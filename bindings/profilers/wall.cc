@@ -42,17 +42,25 @@ struct TimeTicks {
   static int64_t Now();
 };
 }  // namespace base
-#if NODE_MAJOR_VERSION >= 24
+#if NODE_MAJOR_VERSION >= 22
+
+// Available from 22.7.0
+#define DD_WALL_USE_CPED true
+
 namespace internal {
-#if NODE_MAJOR_VERSION == 24
+#if NODE_MAJOR_VERSION < 25
 struct HandleScopeData {
   v8::internal::Address* next;
   v8::internal::Address* limit;
 };
-#endif
+#endif  // NODE_MAJOR_VERSION < 25
+#if NODE_MAJOR_VERSION >= 24
 constexpr int kHandleBlockSize = v8::internal::KB - 2;
+#endif  // NODE_MAJOR_VERSION >= 24
 }  // namespace internal
-#endif
+#else  // NODE_MAJOR_VERSION >= 22
+#define DD_WALL_USE_CPED false
+#endif  //
 }  // namespace v8
 
 static int64_t Now() {
@@ -61,16 +69,12 @@ static int64_t Now() {
 
 #else
 #define DD_WALL_USE_SIGPROF false
+#define DD_WALL_USE_CPED false
+
 static int64_t Now() {
   return 0;
 };
 
-#endif
-
-#if NODE_MAJOR_VERSION >= 23
-#define DD_WALL_USE_CPED true
-#else
-#define DD_WALL_USE_CPED false
 #endif
 
 using namespace v8;
@@ -905,7 +909,12 @@ NAN_METHOD(WallProfiler::New) {
 #if !DD_WALL_USE_CPED
     if (useCPED) {
       return Nan::ThrowTypeError(
-          "useCPED is not supported on this Node.js version.");
+#ifndef _WIN32
+          "useCPED is not supported on this Node.js version."
+#else
+          "useCPED is not supported on Windows."
+#endif
+      );
     }
 #endif
 

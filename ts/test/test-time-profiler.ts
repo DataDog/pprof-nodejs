@@ -29,8 +29,10 @@ import {satisfies} from 'semver';
 import assert from 'assert';
 
 const useCPED =
-  satisfies(process.versions.node, '>=24.0.0') &&
-  !process.execArgv.includes('--no-async-context-frame');
+  (satisfies(process.versions.node, '>=24.0.0') &&
+    !process.execArgv.includes('--no-async-context-frame')) ||
+  (satisfies(process.versions.node, '>=22.7.0') &&
+    process.execArgv.includes('--experimental-async-context-frame'));
 
 const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
 
