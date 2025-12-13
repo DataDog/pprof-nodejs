@@ -268,7 +268,15 @@ export class SourceMapper {
     const consumer: sourceMap.SourceMapConsumer =
       entry.mapConsumer as {} as sourceMap.SourceMapConsumer;
 
-    const pos = consumer.originalPositionFor(generatedPos);
+    // When column is 0, we don't have real column info (e.g., from V8's LineTick
+    // which only provides line numbers). Use LEAST_UPPER_BOUND to find the first
+    // mapping on this line instead of failing because there's nothing at column 0.
+    const bias =
+      generatedPos.column === 0
+        ? sourceMap.SourceMapConsumer.LEAST_UPPER_BOUND
+        : sourceMap.SourceMapConsumer.GREATEST_LOWER_BOUND;
+
+    const pos = consumer.originalPositionFor({...generatedPos, bias});
     if (pos.source === null) {
       if (this.debug) {
         logger.debug(

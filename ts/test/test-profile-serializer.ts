@@ -23,10 +23,11 @@ import {
 } from '../src/profile-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
-import {TimeProfile} from '../src/v8-types';
+import {TimeProfile, TimeProfileNode} from '../src/v8-types';
 import {
   anonymousFunctionHeapProfile,
   getAndVerifyPresence,
+  getAndVerifyString,
   heapProfile,
   heapSourceProfile,
   labelEncodingProfile,
@@ -235,6 +236,190 @@ describe('profile-serializer', () => {
 
     after(() => {
       tmp.setGracefulCleanup();
+    });
+  });
+
+  describe('source map with column 0 (LineTick simulation)', () => {
+    // This tests the LEAST_UPPER_BOUND fallback for when V8's LineTick
+    // doesn't provide column information (column=0)
+    let sourceMapper: SourceMapper;
+    let testMapDir: string;
+
+    // Line in source.ts that the first call maps to (column 10)
+    const FIRST_CALL_SOURCE_LINE = 100;
+    // Line in source.ts that the second call maps to (column 25)
+    const SECOND_CALL_SOURCE_LINE = 200;
+
+    before(async () => {
+      // Create a source map simulating: return fib(n-1) + fib(n-2)
+      // Same function called twice on the same line at different columns
+      testMapDir = tmp.dirSync().name;
+      const {SourceMapGenerator} = await import('source-map');
+      const fs = await import('fs');
+      const path = await import('path');
+
+      const mapGen = new SourceMapGenerator({file: 'generated.js'});
+
+      // First fib() call at column 10 -> maps to source line 100
+      mapGen.addMapping({
+        source: path.join(testMapDir, 'source.ts'),
+        name: 'fib',
+        generated: {line: 5, column: 10},
+        original: {line: FIRST_CALL_SOURCE_LINE, column: 0},
+      });
+
+      // Second fib() call at column 25 -> maps to source line 200
+      mapGen.addMapping({
+        source: path.join(testMapDir, 'source.ts'),
+        name: 'fib',
+        generated: {line: 5, column: 25},
+        original: {line: SECOND_CALL_SOURCE_LINE, column: 0},
+      });
+
+      fs.writeFileSync(
+        path.join(testMapDir, 'generated.js.map'),
+        mapGen.toString()
+      );
+      fs.writeFileSync(path.join(testMapDir, 'generated.js'), '');
+
+      sourceMapper = await SourceMapper.create([testMapDir]);
+    });
+
+    it('should map column 0 to first mapping on line (LEAST_UPPER_BOUND fallback)', () => {
+      const path = require('path');
+      // Simulate LineTick entry with column=0 (no column info from V8 < 14)
+      // This is the fallback behavior when LineTick.column is not available
+      const childNode: TimeProfileNode = {
+        name: 'fib',
+        scriptName: path.join(testMapDir, 'generated.js'),
+        scriptId: 1,
+        lineNumber: 5,
+        columnNumber: 0, // LineTick has no column in V8 < 14
+        hitCount: 1,
+        children: [],
+      };
+      const v8Profile: TimeProfile = {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [childNode],
+        },
+      };
+
+      const profile = serializeTimeProfile(v8Profile, 1000, sourceMapper);
+
+      assert.strictEqual(profile.location!.length, 1);
+      const loc = profile.location![0];
+      const line = loc.line![0];
+      const func = getAndVerifyPresence(
+        profile.function!,
+        line.functionId as number
+      );
+      const filename = getAndVerifyString(
+        profile.stringTable,
+        func,
+        'filename'
+      );
+
+      // Should be mapped to source.ts
+      assert.ok(
+        filename.includes('source.ts'),
+        `Expected source.ts but got ${filename}`
+      );
+      // With column 0 and LEAST_UPPER_BOUND, should map to FIRST mapping (line 100)
+      assert.strictEqual(
+        line.line,
+        FIRST_CALL_SOURCE_LINE,
+        'Column 0 should use LEAST_UPPER_BOUND to find first mapping on line'
+      );
+    });
+
+    it('should map to second call when column points to it (V8 14+ with LineTick.column)', () => {
+      const path = require('path');
+      // Simulate V8 14+ behavior where LineTick has actual column data
+      // Column 26 is after the second mapping at column 25
+      const childNode: TimeProfileNode = {
+        name: 'fib',
+        scriptName: path.join(testMapDir, 'generated.js'),
+        scriptId: 1,
+        lineNumber: 5,
+        columnNumber: 26, // V8 14+ provides actual column from LineTick
+        hitCount: 1,
+        children: [],
+      };
+      const v8Profile: TimeProfile = {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [childNode],
+        },
+      };
+
+      const profile = serializeTimeProfile(v8Profile, 1000, sourceMapper);
+
+      assert.strictEqual(profile.location!.length, 1);
+      const loc = profile.location![0];
+      const line = loc.line![0];
+
+      // Column 26 with GREATEST_LOWER_BOUND should map to second call (line 200)
+      assert.strictEqual(
+        line.line,
+        SECOND_CALL_SOURCE_LINE,
+        'Column 26 should use GREATEST_LOWER_BOUND to find mapping at column 25'
+      );
+    });
+
+    it('should map to first call when column points to it (V8 14+ with LineTick.column)', () => {
+      const path = require('path');
+      // Simulate V8 14+ behavior where LineTick has actual column data
+      // Column 11 is after the first mapping at column 10 but before second at 25
+      const childNode: TimeProfileNode = {
+        name: 'fib',
+        scriptName: path.join(testMapDir, 'generated.js'),
+        scriptId: 1,
+        lineNumber: 5,
+        columnNumber: 11, // V8 14+ provides actual column from LineTick
+        hitCount: 1,
+        children: [],
+      };
+      const v8Profile: TimeProfile = {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [childNode],
+        },
+      };
+
+      const profile = serializeTimeProfile(v8Profile, 1000, sourceMapper);
+
+      assert.strictEqual(profile.location!.length, 1);
+      const loc = profile.location![0];
+      const line = loc.line![0];
+
+      // Column 11 with GREATEST_LOWER_BOUND should map to first call (line 100)
+      assert.strictEqual(
+        line.line,
+        FIRST_CALL_SOURCE_LINE,
+        'Column 11 should use GREATEST_LOWER_BOUND to find mapping at column 10'
+      );
     });
   });
 });
