@@ -1,6 +1,5 @@
 'use strict';
 
-/* eslint-disable no-console */
 import {Worker, isMainThread, threadId} from 'worker_threads';
 import {heap} from '../src/index';
 import path from 'path';
