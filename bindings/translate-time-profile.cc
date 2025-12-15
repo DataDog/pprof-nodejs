@@ -15,6 +15,7 @@
  */
 
 #include "translate-time-profile.hh"
+#include <v8-version.h>
 #include "profile-translator.hh"
 
 namespace dd {
@@ -99,7 +100,12 @@ class TimeProfileTranslator : ProfileTranslator {
                            node->GetScriptResourceName(),
                            scriptId,
                            NewInteger(entry.line),
+// V8 14+ (Node.js 25+) added column field to LineTick struct
+#if V8_MAJOR_VERSION >= 14
+                           NewInteger(entry.column),
+#else
                            zero,
+#endif
                            NewInteger(entry.hit_count),
                            emptyArray,
                            emptyArray));
