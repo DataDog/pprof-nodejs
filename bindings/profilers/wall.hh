@@ -49,7 +49,6 @@ class WallProfiler : public Nan::ObjectWrap {
   std::chrono::microseconds samplingPeriod_{0};
   v8::CpuProfiler* cpuProfiler_ = nullptr;
 
-  bool useCPED_ = false;
   // If we aren't using the CPED, we use a single context ptr stored here.
   ContextPtr curContext_;
   // Otherwise we'll use an object as a key to store the context in
@@ -119,6 +118,8 @@ class WallProfiler : public Nan::ObjectWrap {
 
   void SetCurrentContextPtr(v8::Isolate* isolate, v8::Local<v8::Value> context);
 
+  inline bool useCPED() { return !cpedKey_.IsEmpty(); }
+
  public:
   /**
    * @param samplingPeriodMicros sampling interval, in microseconds
@@ -126,10 +127,9 @@ class WallProfiler : public Nan::ObjectWrap {
    * parameter is informative; it is up to the caller to call the Stop method
    * every period. The parameter is used to preallocate data structures that
    * should not be reallocated in async signal safe code.
-   * @param useCPED whether to use the V8 ContinuationPreservedEmbedderData to
-   * store the current sampling context. It can be used if AsyncLocalStorage
-   * uses the AsyncContextFrame implementation (experimental in Node 23, default
-   * in Node 24.)
+   * @param cpedKey if an object, then the profiler should use the
+   * AsyncLocalFrame stored in the V8 ContinuationPreservedEmbedderData to store
+   * the current sampling context.
    */
   explicit WallProfiler(std::chrono::microseconds samplingPeriod,
                         std::chrono::microseconds duration,
@@ -139,7 +139,7 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool collectCpuTime,
                         bool collectAsyncId,
                         bool isMainThread,
-                        bool useCPED);
+                        v8::Local<v8::Value> cpedKey);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);
