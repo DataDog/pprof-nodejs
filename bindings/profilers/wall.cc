@@ -620,9 +620,8 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            bool collectCpuTime,
                            bool collectAsyncId,
                            bool isMainThread,
-                           bool useCPED)
+                           Local<Value> cpedKey)
     : samplingPeriod_(samplingPeriod),
-      useCPED_(useCPED),
       includeLines_(includeLines),
       withContexts_(withContexts),
       isMainThread_(isMainThread) {
@@ -633,10 +632,11 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   workaroundV8Bug_ = workaroundV8Bug && DD_WALL_USE_SIGPROF && detectV8Bug_;
   collectCpuTime_ = collectCpuTime && withContexts;
   collectAsyncId_ = collectAsyncId && withContexts;
+
 #if DD_WALL_USE_CPED
-  useCPED_ = useCPED && withContexts;
+  bool useCPED = withContexts && cpedKey->IsObject();
 #else
-  useCPED_ = false;
+  constexpr bool useCPED = false;
 #endif
 
   if (withContexts_) {
@@ -657,20 +657,19 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
-  if (collectAsyncId_ || useCPED_) {
+  if (collectAsyncId_ || useCPED) {
     isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
     isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 
 #if DD_WALL_USE_CPED
-  if (useCPED_) {
+  if (useCPED) {
     // Used to create Map value objects that will have one internal field to
     // store the sample context pointer.
     auto wrapObjectTemplate = ObjectTemplate::New(isolate);
     wrapObjectTemplate->SetInternalFieldCount(1);
     wrapObjectTemplate_.Reset(isolate, wrapObjectTemplate);
-    // Object used as the Map key object.
-    auto cpedKeyObj = Object::New(isolate);
+    auto cpedKeyObj = cpedKey.As<Object>();
     cpedKey_.Reset(isolate, cpedKeyObj);
     cpedKeyHash_ = cpedKeyObj->GetIdentityHash();
   }
@@ -686,7 +685,7 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
       g_profilers.RemoveProfiler(isolate, this);
     }
 
-    if (collectAsyncId_ || useCPED_) {
+    if (collectAsyncId_ || useCPED()) {
       isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
@@ -704,8 +703,7 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
 }
 
 #define DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(name)                              \
-  auto name##Value =                                                           \
-      Nan::Get(arg, Nan::New<v8::String>(#name).ToLocalChecked());             \
+  auto name##Value = getArg(#name);                                            \
   if (name##Value.IsEmpty() || !name##Value.ToLocalChecked()->IsBoolean()) {   \
     return Nan::ThrowTypeError(#name " must be a boolean.");                   \
   }                                                                            \
@@ -718,8 +716,14 @@ NAN_METHOD(WallProfiler::New) {
 
   if (info.IsConstructCall()) {
     auto arg = info[0].As<v8::Object>();
-    auto intervalMicrosValue =
-        Nan::Get(arg, Nan::New<v8::String>("intervalMicros").ToLocalChecked());
+    auto isolate = info.GetIsolate();
+    auto context = isolate->GetCurrentContext();
+    auto getArg = [&](const char* name) {
+      return arg->Get(context,
+                      String::NewFromUtf8(isolate, name).ToLocalChecked());
+    };
+
+    auto intervalMicrosValue = getArg("intervalMicros");
     if (intervalMicrosValue.IsEmpty() ||
         !intervalMicrosValue.ToLocalChecked()->IsNumber()) {
       return Nan::ThrowTypeError("intervalMicros must be a number.");
@@ -732,8 +736,7 @@ NAN_METHOD(WallProfiler::New) {
       return Nan::ThrowTypeError("Sample rate must be positive.");
     }
 
-    auto durationMillisValue =
-        Nan::Get(arg, Nan::New<v8::String>("durationMillis").ToLocalChecked());
+    auto durationMillisValue = getArg("durationMillis");
     if (durationMillisValue.IsEmpty() ||
         !durationMillisValue.ToLocalChecked()->IsNumber()) {
       return Nan::ThrowTypeError("durationMillis must be a number.");
@@ -757,6 +760,13 @@ NAN_METHOD(WallProfiler::New) {
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(isMainThread);
     DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(useCPED);
 
+    auto cpedKey = getArg("CPEDKey").ToLocalChecked();
+    if (cpedKey->IsObject() && !useCPED) {
+      return Nan::ThrowTypeError("useCPED is false but CPEDKey is specified");
+    }
+    if (useCPED && cpedKey->IsUndefined()) {
+      cpedKey = Object::New(isolate);
+    }
 #if !DD_WALL_USE_CPED
     if (useCPED) {
       return Nan::ThrowTypeError(
@@ -808,7 +818,7 @@ NAN_METHOD(WallProfiler::New) {
                                          collectCpuTime,
                                          collectAsyncId,
                                          isMainThread,
-                                         useCPED);
+                                         cpedKey);
     obj->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   } else {
@@ -1141,7 +1151,7 @@ void WallProfiler::SetCurrentContextPtr(Isolate* isolate, Local<Value> value) {
 
 void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 #if DD_WALL_USE_CPED
-  if (!useCPED_) {
+  if (!useCPED()) {
     SetCurrentContextPtr(isolate, value);
     return;
   }
@@ -1159,14 +1169,16 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
 
   // Always replace the PersistentContextPtr in the map even if it is present,
   // we want the PersistentContextPtr in a parent map to not be mutated.
-  if (value->IsNullOrUndefined()) {
+  if (value->IsUndefined()) {
     // The absence of a sample context will be interpreted as undefined in
-    // GetContextPtr so if value is null or undefined, just delete the key.
+    // GetContextPtr so if value is undefined, just delete the key.
     SignalGuard m(setInProgress_);
     cpedMap->Delete(v8Ctx, localKey).Check();
   } else {
     auto wrap =
         wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+    // for easy access from JS when cpedKey is an ALS, it can do als.getStore()?.[0];
+    wrap->Set(v8Ctx, 0, value).Check();
     auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
     liveContextPtrs_.insert(contextPtr);
     contextPtr->Set(isolate, value);
@@ -1188,7 +1200,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
     return ContextPtr();
   }
 
-  if (useCPED_) {
+  if (useCPED()) {
     auto curGcCount = gcCount.load(std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_acquire);
     if (curGcCount > 0) {
@@ -1201,7 +1213,7 @@ ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
 
 ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 #if DD_WALL_USE_CPED
-  if (!useCPED_) {
+  if (!useCPED()) {
     return curContext_;
   }
 
@@ -1344,7 +1356,7 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
     if (collectAsyncId_) {
       gcAsyncId = GetAsyncIdNoGC(isolate);
     }
-    if (useCPED_) {
+    if (useCPED()) {
       gcContext_ = GetContextPtrSignalSafe(isolate);
     }
   }
@@ -1354,7 +1366,7 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 
 void WallProfiler::OnGCEnd() {
   auto oldCount = gcCount.fetch_sub(1, std::memory_order_relaxed);
-  if (oldCount == 1 && useCPED_) {
+  if (oldCount == 1 && useCPED()) {
     // Not strictly necessary, as we'll reset it to something else on next GC,
     // but why retain it longer than needed?
     gcContext_.reset();
