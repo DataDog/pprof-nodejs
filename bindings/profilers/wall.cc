@@ -1180,20 +1180,24 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     SignalGuard m(setInProgress_);
     cpedMap->Delete(v8Ctx, localKey).Check();
   } else {
-    auto wrap =
-        wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
-    // for easy access from JS when cpedKey is an ALS, it can do als.getStore()?.[0];
-    wrap->Set(v8Ctx, 0, value);
-    auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
-    liveContextPtrs_.insert(contextPtr);
-    contextPtr->Set(isolate, value);
-
+    auto contextHolder = CreateContextHolder(isolate, v8Ctx, value);
     SignalGuard m(setInProgress_);
-    cpedMap->Set(v8Ctx, localKey, wrap).ToLocalChecked();
+    cpedMap->Set(v8Ctx, localKey, contextHolder).ToLocalChecked();
   }
 #else
   SetCurrentContextPtr(isolate, value);
 #endif
+}
+
+Local<Object> WallProfiler::CreateContextHolder(Isolate* isolate, Local<Context> v8Ctx, Local<Value> value) {
+  auto wrap =
+      wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+  // for easy access from JS when cpedKey is an ALS, it can do als.getStore()?.[0];
+  wrap->Set(v8Ctx, 0, value);
+  auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
+  liveContextPtrs_.insert(contextPtr);
+  contextPtr->Set(isolate, value);
+  return wrap;
 }
 
 ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
@@ -1281,6 +1285,12 @@ NAN_GETTER(WallProfiler::GetContext) {
 NAN_SETTER(WallProfiler::SetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   profiler->SetContext(info.GetIsolate(), value);
+}
+
+NAN_METHOD(WallProfiler::CreateContextHolder) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+  auto isolate = info.GetIsolate();
+  profiler->CreateContextHolder(isolate, isolate->GetCurrentContext(), info[0]);
 }
 
 NAN_GETTER(WallProfiler::SharedArrayGetter) {
