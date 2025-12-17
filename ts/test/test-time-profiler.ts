@@ -16,7 +16,7 @@
 
 import delay from 'delay';
 import * as sinon from 'sinon';
-import * as time from '../src/time-profiler';
+import {time, getNativeThreadId} from '../src';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
@@ -739,7 +739,7 @@ describe('Time Profiler', () => {
 
   describe('getNativeThreadId', () => {
     it('should return a number', () => {
-      const threadId = time.getNativeThreadId();
+      const threadId = getNativeThreadId();
       assert.ok(typeof threadId === 'number');
       assert.ok(threadId > 0);
     });
