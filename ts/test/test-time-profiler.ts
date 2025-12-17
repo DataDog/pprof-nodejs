@@ -22,7 +22,6 @@ import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
 import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
-import {AsyncLocalStorage} from 'async_hooks';
 import {satisfies} from 'semver';
 import {setTimeout as setTimeoutPromise} from 'timers/promises';
 
@@ -54,10 +53,6 @@ describe('Time Profiler', () => {
         this.skip();
       }
       const startTime = BigInt(Date.now()) * 1000n;
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
       time.start({
         intervalMicros: 20 * 1_000,
         durationMillis: PROFILE_OPTIONS.durationMillis,
@@ -112,10 +107,6 @@ describe('Time Profiler', () => {
       this.timeout(3000);
 
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
       time.start({
         intervalMicros: PROFILE_OPTIONS.intervalMicros,
         durationMillis: PROFILE_OPTIONS.durationMillis,
@@ -549,11 +540,6 @@ describe('Time Profiler', () => {
         this.skip();
       }
       this.timeout(3000);
-
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
 
       // Set up some contexts with labels that we'll mark as low cardinality
       const lowCardLabel = 'service_name';

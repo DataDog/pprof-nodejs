@@ -6,7 +6,6 @@ import {getAndVerifyPresence, getAndVerifyString} from './profiles-for-tests';
 import {satisfies} from 'semver';
 
 import assert from 'assert';
-import {AsyncLocalStorage} from 'async_hooks';
 
 const DURATION_MILLIS = 1000;
 const intervalMicros = 10000;
@@ -62,7 +61,6 @@ function getCpuUsage() {
 }
 
 async function main(durationMs: number) {
-  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs * 3,
     intervalMicros,
@@ -107,7 +105,6 @@ async function main(durationMs: number) {
 }
 
 async function worker(durationMs: number) {
-  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs,
     intervalMicros,
