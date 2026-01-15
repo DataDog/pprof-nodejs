@@ -571,6 +571,9 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   auto isolate = info.GetIsolate();
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
+  if (!profile) {
+    return Nan::ThrowError("Heap profiler is not enabled.");
+  }
   v8::AllocationProfile::Node* root = profile->GetRootNode();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state) {
