@@ -29,7 +29,7 @@ import {
 } from './time-profiler-bindings';
 import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
 import {isMainThread} from 'worker_threads';
-
+import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
@@ -39,6 +39,7 @@ type Microseconds = number;
 type Milliseconds = number;
 
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+let gStore: AsyncLocalStorage<any> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -95,7 +96,10 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler({...options, isMainThread});
+  if (options.useCPED === true) {
+    gStore = new AsyncLocalStorage();
+  }
+  gProfiler = new TimeProfiler({...options, CPEDKey: gStore, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
@@ -144,6 +148,10 @@ export function stop(
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
   }
   return serializedProfile;
 }
@@ -162,11 +170,24 @@ export function setContext(context?: object) {
   gProfiler.context = context;
 }
 
+export function runWithContext<R, TArgs extends any[]>(
+  context: object,
+  f: (...args: TArgs) => R,
+  ...args: TArgs
+): R {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  } else if (!gStore) {
+    throw new Error('Can only use runWithContext with AsyncContextFrame');
+  }
+  return gStore.run(gProfiler.createContextHolder(context), f, ...args);
+}
+
 export function getContext() {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
   }
-  return gProfiler.context;
+  return gStore !== undefined ? gStore.getStore()?.[0] : gProfiler.context;
 }
 
 export function getMetrics(): TimeProfilerMetrics {
