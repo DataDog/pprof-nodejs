@@ -140,7 +140,7 @@ class WallProfiler : public Nan::ObjectWrap {
                         bool collectCpuTime,
                         bool collectAsyncId,
                         bool isMainThread,
-                        Local<Value> cpedKey);
+                        v8::Local<v8::Value> cpedKey);
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);

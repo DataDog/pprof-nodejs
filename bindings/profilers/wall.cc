@@ -691,7 +691,7 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
       g_profilers.RemoveProfiler(isolate, this);
     }
 
-    if (collectAsyncId_ || useCPED) {
+    if (collectAsyncId_ || useCPED()) {
       isolate->RemoveGCPrologueCallback(&GCPrologueCallback, this);
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
@@ -1193,7 +1193,7 @@ Local<Object> WallProfiler::CreateContextHolder(Isolate* isolate, Local<Context>
   auto wrap =
       wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
   // for easy access from JS when cpedKey is an ALS, it can do als.getStore()?.[0];
-  wrap->Set(v8Ctx, 0, value);
+  wrap->Set(v8Ctx, 0, value).Check();
   auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
   liveContextPtrs_.insert(contextPtr);
   contextPtr->Set(isolate, value);

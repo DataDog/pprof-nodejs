@@ -134,10 +134,6 @@ export function stop(
     }
   } else {
     gV8ProfilerStuckEventLoopDetected = 0;
-    if (gStore !== undefined) {
-      gStore.disable();
-      gStore = undefined;
-    }
   }
 
   const serializedProfile = serializeTimeProfile(
@@ -152,6 +148,10 @@ export function stop(
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
   }
   return serializedProfile;
 }
