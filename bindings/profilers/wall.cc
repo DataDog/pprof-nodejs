@@ -396,7 +396,7 @@ void SignalHandler::HandleProfilerSignal(int sig,
     return;
   }
   auto isolate = Isolate::GetCurrent();
-  if (!isolate || isolate->IsDead()) {
+  if (!isolate) {
     return;
   }
   WallProfiler* prof = g_profilers.GetProfiler(isolate);
