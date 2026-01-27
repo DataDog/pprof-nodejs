@@ -98,7 +98,7 @@ class WallProfiler : public Nan::ObjectWrap {
   using ContextBuffer = std::vector<SampleContext>;
   ContextBuffer contexts_;
 
-  ~WallProfiler() = default;
+  ~WallProfiler();
   void Dispose(v8::Isolate* isolate, bool removeFromMap);
 
   // A new CPU profiler object will be created each time profiling is started
