@@ -774,11 +774,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
-  if (collectAsyncId_ || useCPED_) {
-    isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
-    isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
-  }
-
 #if DD_WALL_USE_CPED
   if (useCPED_) {
     // Used to create CPED proxy objects that will have one internal field to
@@ -976,6 +971,14 @@ Result WallProfiler::StartImpl() {
     return Result{"Cannot start profiler: another profiler is already active."};
   }
 
+  // Register GC callbacks for async ID and CPED context tracking before
+  // starting profiling
+  auto isolate = Isolate::GetCurrent();
+  if (collectAsyncId_ || useCPED_) {
+    isolate->AddGCPrologueCallback(&GCPrologueCallback, this);
+    isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
+  }
+
   profileId_ = StartInternal();
 
   auto collectionMode = withContexts_
@@ -984,7 +987,6 @@ Result WallProfiler::StartImpl() {
                                                 : CollectionMode::kNoCollect);
   collectionMode_.store(collectionMode, std::memory_order_relaxed);
   started_ = true;
-  auto isolate = Isolate::GetCurrent();
   node::AddEnvironmentCleanupHook(isolate, &WallProfiler::CleanupHook, isolate);
   return {};
 }
