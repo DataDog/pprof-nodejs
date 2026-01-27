@@ -687,14 +687,16 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
 
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
-
-    // Delete all live contexts
-    for (auto ptr : liveContextPtrs_) {
-      ptr->Detach();  // so it doesn't invalidate our iterator
-      delete ptr;
-    }
-    liveContextPtrs_.clear();
   }
+}
+
+WallProfiler::~WallProfiler() {
+  // Delete all live contexts
+  for (auto ptr : liveContextPtrs_) {
+    ptr->Detach();  // so it doesn't invalidate our iterator
+    delete ptr;
+  }
+  liveContextPtrs_.clear();
 }
 
 #define DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(name)                              \
