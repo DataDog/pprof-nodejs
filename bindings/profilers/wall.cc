@@ -148,6 +148,39 @@ class PersistentContextPtr {
 void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
   deadContextPtrs_.push_back(ptr);
   liveContextPtrs_.erase(ptr);
+  // Cap freelist growth by a dynamic byte budget based on live async contexts.
+  constexpr size_t kMinDeadContextPtrBudgetBytes = 512 * 1024;       // 512 KiB
+  constexpr size_t kMaxDeadContextPtrBudgetBytes = 16 * 1024 * 1024; // 16 MiB
+  constexpr size_t kDeadContextPtrMultiplier = 2;
+  const size_t perPtrBytes = sizeof(PersistentContextPtr);
+  size_t maxDeadContextPtrs = kMaxDeadContextPtrBudgetBytes / perPtrBytes;
+  size_t minDeadContextPtrs = kMinDeadContextPtrBudgetBytes / perPtrBytes;
+  if (minDeadContextPtrs > maxDeadContextPtrs) {
+    minDeadContextPtrs = maxDeadContextPtrs;
+  }
+
+  const size_t liveCount = liveContextPtrs_.size();
+  size_t targetDeadContextPtrs;
+  if (liveCount >= maxDeadContextPtrs / kDeadContextPtrMultiplier) {
+    targetDeadContextPtrs = maxDeadContextPtrs;
+  } else {
+    targetDeadContextPtrs = liveCount * kDeadContextPtrMultiplier;
+    if (targetDeadContextPtrs < minDeadContextPtrs) {
+      targetDeadContextPtrs = minDeadContextPtrs;
+    }
+  }
+
+  const size_t shrinkThreshold =
+      targetDeadContextPtrs + targetDeadContextPtrs / 2;  // 1.5x hysteresis
+  if (deadContextPtrs_.size() <= shrinkThreshold) {
+    return;
+  }
+
+  while (deadContextPtrs_.size() > targetDeadContextPtrs) {
+    auto* toDelete = deadContextPtrs_.front();
+    deadContextPtrs_.pop_front();
+    delete toDelete;
+  }
 }
 
 // Maximum number of rounds in the GetV8ToEpochOffset
