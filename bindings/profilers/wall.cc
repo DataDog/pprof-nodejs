@@ -176,10 +176,15 @@ void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
     return;
   }
 
-  while (deadContextPtrs_.size() > targetDeadContextPtrs) {
+  size_t toTrim = deadContextPtrs_.size() - targetDeadContextPtrs;
+  if (toTrim > trimBatch_) {
+    toTrim = trimBatch_;
+  }
+  while (toTrim > 0) {
     auto* toDelete = deadContextPtrs_.front();
     deadContextPtrs_.pop_front();
     delete toDelete;
+    --toTrim;
   }
 }
 
@@ -1537,11 +1542,17 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 
 void WallProfiler::OnGCEnd() {
   auto oldCount = gcCount.fetch_sub(1, std::memory_order_relaxed);
-  if (oldCount == 1 && useCPED_) {
-    // Not strictly necessary, as we'll reset it to something else on next GC,
-    // but why retain it longer than needed?
-    gcContext_.reset();
+  if (oldCount != 1 || !useCPED_) {
+    return;
   }
+
+  // Not strictly necessary, as we'll reset it to something else on next GC,
+  // but why retain it longer than needed?
+  gcContext_.reset();
+
+  const size_t deadCount = deadContextPtrs_.size();
+  deadCountAtPrevGc_ = deadCountAtLastGc_;
+  deadCountAtLastGc_ = deadCount;
 }
 
 void WallProfiler::PushContext(int64_t time_from,

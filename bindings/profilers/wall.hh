@@ -65,6 +65,11 @@ class WallProfiler : public Nan::ObjectWrap {
   // Context pointers belonging to GC'd CPED objects register themselves here.
   // They will be reused.
   std::deque<PersistentContextPtr*> deadContextPtrs_;
+  static constexpr size_t kTrimBatchMin = 32;
+  static constexpr size_t kTrimBatchMax = 1024;
+  size_t trimBatch_ = kTrimBatchMin;
+  size_t deadCountAtLastGc_ = 0;
+  size_t deadCountAtPrevGc_ = 0;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
