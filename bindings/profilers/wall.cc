@@ -176,8 +176,9 @@ void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
     return;
   }
 
+  const size_t emergencyThreshold = maxDeadContextPtrs * 2;  // 2x max
   size_t toTrim = deadContextPtrs_.size() - targetDeadContextPtrs;
-  if (toTrim > trimBatch_) {
+  if (deadContextPtrs_.size() <= emergencyThreshold && toTrim > trimBatch_) {
     toTrim = trimBatch_;
   }
   while (toTrim > 0) {
@@ -1553,6 +1554,31 @@ void WallProfiler::OnGCEnd() {
   const size_t deadCount = deadContextPtrs_.size();
   deadCountAtPrevGc_ = deadCountAtLastGc_;
   deadCountAtLastGc_ = deadCount;
+  if (deadCountAtLastGc_ > deadCountAtPrevGc_) {
+    deadStableCycles_ = 0;
+    if (trimBatch_ < kTrimBatchMax) {
+      if (++deadGrowthCycles_ >= 2) {
+        const size_t doubled = trimBatch_ * 2;
+        trimBatch_ = doubled > kTrimBatchMax ? kTrimBatchMax : doubled;
+        deadGrowthCycles_ = 0;
+      }
+    } else {
+      deadGrowthCycles_ = 0;
+    }
+  } else {
+    deadGrowthCycles_ = 0;
+    if (trimBatch_ > kTrimBatchMin) {
+      if (++deadStableCycles_ >= 3) {
+        trimBatch_ = trimBatch_ / 2;
+        if (trimBatch_ < kTrimBatchMin) {
+          trimBatch_ = kTrimBatchMin;
+        }
+        deadStableCycles_ = 0;
+      }
+    } else {
+      deadStableCycles_ = 0;
+    }
+  }
 }
 
 void WallProfiler::PushContext(int64_t time_from,

@@ -70,6 +70,8 @@ class WallProfiler : public Nan::ObjectWrap {
   size_t trimBatch_ = kTrimBatchMin;
   size_t deadCountAtLastGc_ = 0;
   size_t deadCountAtPrevGc_ = 0;
+  unsigned int deadGrowthCycles_ = 0;
+  unsigned int deadStableCycles_ = 0;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
