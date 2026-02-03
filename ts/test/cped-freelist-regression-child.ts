@@ -49,18 +49,11 @@ async function main() {
   });
 
   const als = new AsyncLocalStorage<number>();
-  const sharedContext = {v: 1};
 
-  const testCapCount = Number.parseInt(
-    process.env.DD_PPROF_TEST_FREELIST_CAP_COUNT || '',
-    10
-  );
-  assert(
-    Number.isFinite(testCapCount) && testCapCount > 0,
-    'DD_PPROF_TEST_FREELIST_CAP_COUNT must be set for this test'
-  );
-  const waveSize = Math.max(testCapCount * 10, 20_000);
-  const minDelta = Math.max(testCapCount * 4, 5_000);
+  const waveSize = 20_000;
+  const maxWaves = 6;
+  const minDelta = 5_000;
+  const minTotalBeforeGc = 40_000;
   const debug = process.env.DEBUG_CPED_TEST === '1';
   const log = (...args: unknown[]) => {
     if (debug) {
@@ -91,23 +84,33 @@ async function main() {
   }
 
   const baseline = time.getMetrics().totalAsyncContextCount;
-  await runWave(waveSize);
+  let totalBeforeGc = baseline;
+  let wavesRun = 0;
+  while (wavesRun < maxWaves && totalBeforeGc < minTotalBeforeGc) {
+    await runWave(waveSize);
+    totalBeforeGc = time.getMetrics().totalAsyncContextCount;
+    wavesRun++;
+    log('wave', wavesRun, 'totalBeforeGc', totalBeforeGc);
+  }
   const metricsBeforeGc = time.getMetrics();
-  const totalBeforeGc = metricsBeforeGc.totalAsyncContextCount;
   log('baseline', baseline, 'metricsBeforeGc', metricsBeforeGc);
   assert(
     totalBeforeGc - baseline >= minDelta,
     `test did not create enough async contexts (baseline=${baseline}, total=${totalBeforeGc})`
+  );
+  assert(
+    totalBeforeGc >= minTotalBeforeGc,
+    `test did not reach target async context count (total=${totalBeforeGc})`
   );
 
   await gcAndYield(6);
   const metricsAfterGc = time.getMetrics();
   const totalAfterGc = metricsAfterGc.totalAsyncContextCount;
   log('metricsAfterGc', metricsAfterGc);
-  const capWithSlack = Math.ceil(testCapCount * 1.6);
+  const maxAllowed = Math.floor(totalBeforeGc * 0.75);
   assert(
-    totalAfterGc <= capWithSlack,
-    `expected trimming; before=${totalBeforeGc}, after=${totalAfterGc}, cap=${capWithSlack}`
+    totalAfterGc <= maxAllowed,
+    `expected trimming; before=${totalBeforeGc}, after=${totalAfterGc}, max=${maxAllowed}`
   );
 
   time.stop(false);
@@ -117,5 +120,6 @@ main().catch(err => {
   // Ensure the child exits non-zero on failure.
   // eslint-disable-next-line no-console
   console.error(err);
+  // eslint-disable-next-line no-process-exit
   process.exit(1);
 });

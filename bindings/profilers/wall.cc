@@ -149,8 +149,8 @@ void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
   deadContextPtrs_.push_back(ptr);
   liveContextPtrs_.erase(ptr);
   // Cap freelist growth by a dynamic byte budget based on live async contexts.
-  constexpr size_t kMinDeadContextPtrBudgetBytes = 512 * 1024;       // 512 KiB
-  constexpr size_t kMaxDeadContextPtrBudgetBytes = 16 * 1024 * 1024; // 16 MiB
+  constexpr size_t kMinDeadContextPtrBudgetBytes = 512 * 1024;        // 512 KiB
+  constexpr size_t kMaxDeadContextPtrBudgetBytes = 16 * 1024 * 1024;  // 16 MiB
   constexpr size_t kDeadContextPtrMultiplier = 2;
   const size_t perPtrBytes = sizeof(PersistentContextPtr);
   size_t maxDeadContextPtrs = kMaxDeadContextPtrBudgetBytes / perPtrBytes;

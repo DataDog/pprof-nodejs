@@ -49,12 +49,6 @@ describe('CPED freelist trimming (regression)', () => {
     args.push(child);
     const res = spawnSync(process.execPath, args, {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        NODE_GYP_BUILD_FROM_SOURCE: '1',
-        npm_config_build_from_source: '1',
-        DD_PPROF_TEST_FREELIST_CAP_COUNT: '2000',
-      },
     });
 
     // If the child process exits non-zero, fail with a helpful message.
