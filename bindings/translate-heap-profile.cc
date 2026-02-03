@@ -52,7 +52,7 @@ class HeapProfileTranslator : ProfileTranslator {
       auto alloc = node->allocations[i];
       Set(allocations,
           i,
-          CreateAllocation(NewNumber(alloc.size), NewNumber(alloc.count)));
+          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
     }
 
     return CreateNode(node->name,
