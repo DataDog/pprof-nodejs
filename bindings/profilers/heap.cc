@@ -661,6 +661,8 @@ void InterruptCallback(v8::Isolate* isolate, void* data) {
       dd::TranslateAllocationProfile(state->profile.get())};
   Nan::AsyncResource resource("NearHeapLimit");
   state->callback.Call(1, argv, &resource);
+  // Release the retained native profile once the callback has been invoked.
+  state->profile.reset();
 }
 
 void AsyncCallback(uv_async_t* handle) {
