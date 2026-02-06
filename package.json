@@ -24,6 +24,7 @@
     "pretest:js-valgrind": "npm run pretest",
     "pretest": "npm run compile",
     "rebuild": "node-gyp rebuild --jobs=max",
+    "rebuild-debug": "node-gyp rebuild --jobs=max --debug",
     "test:cpp": "node scripts/cctest.js",
     "test:js-asan": "LSAN_OPTIONS='suppressions=./suppressions/lsan_suppr.txt' LD_PRELOAD=`gcc -print-file-name=libasan.so` mocha out/test/test-*.js",
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
