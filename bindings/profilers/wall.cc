@@ -148,45 +148,6 @@ class PersistentContextPtr {
 void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
   deadContextPtrs_.push_back(ptr);
   liveContextPtrs_.erase(ptr);
-  // Cap freelist growth by a dynamic byte budget based on live async contexts.
-  constexpr size_t kMinDeadContextPtrBudgetBytes = 512 * 1024;        // 512 KiB
-  constexpr size_t kMaxDeadContextPtrBudgetBytes = 16 * 1024 * 1024;  // 16 MiB
-  constexpr size_t kDeadContextPtrMultiplier = 2;
-  const size_t perPtrBytes = sizeof(PersistentContextPtr);
-  size_t maxDeadContextPtrs = kMaxDeadContextPtrBudgetBytes / perPtrBytes;
-  size_t minDeadContextPtrs = kMinDeadContextPtrBudgetBytes / perPtrBytes;
-  if (minDeadContextPtrs > maxDeadContextPtrs) {
-    minDeadContextPtrs = maxDeadContextPtrs;
-  }
-
-  const size_t liveCount = liveContextPtrs_.size();
-  size_t targetDeadContextPtrs;
-  if (liveCount >= maxDeadContextPtrs / kDeadContextPtrMultiplier) {
-    targetDeadContextPtrs = maxDeadContextPtrs;
-  } else {
-    targetDeadContextPtrs = liveCount * kDeadContextPtrMultiplier;
-    if (targetDeadContextPtrs < minDeadContextPtrs) {
-      targetDeadContextPtrs = minDeadContextPtrs;
-    }
-  }
-
-  const size_t shrinkThreshold =
-      targetDeadContextPtrs + targetDeadContextPtrs / 2;  // 1.5x hysteresis
-  if (deadContextPtrs_.size() <= shrinkThreshold) {
-    return;
-  }
-
-  const size_t emergencyThreshold = maxDeadContextPtrs * 2;  // 2x max
-  size_t toTrim = deadContextPtrs_.size() - targetDeadContextPtrs;
-  if (deadContextPtrs_.size() <= emergencyThreshold && toTrim > trimBatch_) {
-    toTrim = trimBatch_;
-  }
-  while (toTrim > 0) {
-    auto* toDelete = deadContextPtrs_.front();
-    deadContextPtrs_.pop_front();
-    delete toDelete;
-    --toTrim;
-  }
 }
 
 // Maximum number of rounds in the GetV8ToEpochOffset
@@ -1543,41 +1504,10 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 
 void WallProfiler::OnGCEnd() {
   auto oldCount = gcCount.fetch_sub(1, std::memory_order_relaxed);
-  if (oldCount != 1 || !useCPED_) {
-    return;
-  }
-
-  // Not strictly necessary, as we'll reset it to something else on next GC,
-  // but why retain it longer than needed?
-  gcContext_.reset();
-
-  const size_t deadCount = deadContextPtrs_.size();
-  deadCountAtPrevGc_ = deadCountAtLastGc_;
-  deadCountAtLastGc_ = deadCount;
-  if (deadCountAtLastGc_ > deadCountAtPrevGc_) {
-    deadStableCycles_ = 0;
-    if (trimBatch_ < kTrimBatchMax) {
-      if (++deadGrowthCycles_ >= 2) {
-        const size_t doubled = trimBatch_ * 2;
-        trimBatch_ = doubled > kTrimBatchMax ? kTrimBatchMax : doubled;
-        deadGrowthCycles_ = 0;
-      }
-    } else {
-      deadGrowthCycles_ = 0;
-    }
-  } else {
-    deadGrowthCycles_ = 0;
-    if (trimBatch_ > kTrimBatchMin) {
-      if (++deadStableCycles_ >= 3) {
-        trimBatch_ = trimBatch_ / 2;
-        if (trimBatch_ < kTrimBatchMin) {
-          trimBatch_ = kTrimBatchMin;
-        }
-        deadStableCycles_ = 0;
-      }
-    } else {
-      deadStableCycles_ = 0;
-    }
+  if (oldCount == 1 && useCPED_) {
+    // Not strictly necessary, as we'll reset it to something else on next GC,
+    // but why retain it longer than needed?
+    gcContext_.reset();
   }
 }
 
