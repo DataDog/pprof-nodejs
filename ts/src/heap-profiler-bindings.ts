@@ -16,7 +16,7 @@
 
 import * as path from 'path';
 
-import {AllocationProfileNode} from './v8-types';
+import {AllocationProfileNode, AllocationProfileNodeWrapper} from './v8-types';
 
 const findBinding = require('node-gyp-build');
 const profiler = findBinding(path.join(__dirname, '..', '..'));
@@ -39,6 +39,10 @@ export function stopSamplingHeapProfiler() {
 
 export function getAllocationProfile(): AllocationProfileNode {
   return profiler.heapProfiler.getAllocationProfile();
+}
+
+export function getAllocationProfileV2(): AllocationProfileNodeWrapper {
+  return profiler.heapProfiler.getAllocationProfileV2();
 }
 
 export type NearHeapLimitCallback = (profile: AllocationProfileNode) => void;

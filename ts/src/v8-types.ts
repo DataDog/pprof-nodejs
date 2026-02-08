@@ -53,6 +53,12 @@ export interface AllocationProfileNode extends ProfileNode {
   allocations: Allocation[];
 }
 
+export interface AllocationProfileNodeWrapper
+  extends Omit<AllocationProfileNode, 'children'> {
+  getChildrenCount(): number;
+  getChild(index: number): AllocationProfileNodeWrapper;
+  dispose(): void;
+}
 export interface Allocation {
   sizeBytes: number;
   count: number;
@@ -62,7 +68,11 @@ export interface LabelSet {
 }
 
 export interface GenerateAllocationLabelsFunction {
-  ({node}: {node: AllocationProfileNode}): LabelSet;
+  ({
+    node,
+  }: {
+    node: AllocationProfileNode | AllocationProfileNodeWrapper;
+  }): LabelSet;
 }
 
 export interface GenerateTimeLabelsArgs {

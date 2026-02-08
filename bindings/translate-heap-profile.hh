@@ -16,10 +16,28 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
+#include <vector>
 #include <v8-profiler.h>
 
 namespace dd {
 
+struct Node {
+  using Allocation = v8::AllocationProfile::Allocation;
+  std::string name;
+  std::string script_name;
+  int line_number;
+  int column_number;
+  int script_id;
+  std::vector<std::shared_ptr<Node>> children;
+  std::vector<Allocation> allocations;
+};
+
+std::shared_ptr<Node> TranslateAllocationProfileToCpp(
+    v8::AllocationProfile::Node* node);
+
+v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node);
 

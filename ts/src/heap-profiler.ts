@@ -18,14 +18,19 @@ import {Profile} from 'pprof-format';
 
 import {
   getAllocationProfile,
+  getAllocationProfileV2,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
 } from './heap-profiler-bindings';
-import {serializeHeapProfile} from './profile-serializer';
+import {
+  serializeHeapProfile,
+  serializeHeapProfileV2,
+} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
+  AllocationProfileNodeWrapper,
   GenerateAllocationLabelsFunction,
 } from './v8-types';
 import {isMainThread} from 'worker_threads';
@@ -45,6 +50,13 @@ export function v8Profile(): AllocationProfileNode {
     throw new Error('Heap profiler is not enabled.');
   }
   return getAllocationProfile();
+}
+
+export function v8ProfileV2(): AllocationProfileNodeWrapper {
+  if (!enabled) {
+    throw new Error('Heap profiler is not enabled.');
+  }
+  return getAllocationProfileV2();
 }
 
 /**
@@ -96,6 +108,36 @@ export function convertProfile(
     sourceMapper,
     generateLabels
   );
+}
+
+/**
+ * Collects a profile and returns it serialized in pprof format using lazy V2 API.
+ * Throws if heap profiler is not enabled.
+ * The underlying C++ profile is automatically disposed after serialization.
+ *
+ * @param ignoreSamplePath
+ * @param sourceMapper
+ * @param generateLabels
+ */
+export function profileV2(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction
+): Profile {
+  const root = v8ProfileV2();
+  const startTimeNanos = Date.now() * 1000 * 1000;
+  try {
+    return serializeHeapProfileV2(
+      root,
+      startTimeNanos,
+      heapIntervalBytes,
+      ignoreSamplePath,
+      sourceMapper,
+      generateLabels
+    );
+  } finally {
+    root.dispose();
+  }
 }
 
 /**
