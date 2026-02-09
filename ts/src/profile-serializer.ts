@@ -684,13 +684,12 @@ export function serializeHeapProfileV2(
     const entry = entries.pop()!;
     const node = entry.node;
 
-    // Handle file:// prefix
-    let scriptName = node.scriptName;
-    if (scriptName.startsWith('file://')) {
-      scriptName = scriptName.slice(7);
+    // mjs files have a `file://` prefix in the scriptName -> remove it
+    if (node.scriptName.startsWith('file://')) {
+      node.scriptName = node.scriptName.slice(7);
     }
 
-    if (ignoreSamplesPath && scriptName.indexOf(ignoreSamplesPath) > -1) {
+    if (ignoreSamplesPath && node.scriptName.indexOf(ignoreSamplesPath) > -1) {
       continue;
     }
 
