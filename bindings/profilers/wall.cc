@@ -1292,6 +1292,10 @@ NAN_SETTER(WallProfiler::SetContext) {
 
 NAN_METHOD(WallProfiler::CreateContextHolder) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+  if (!profiler->useCPED()) {
+    return Nan::ThrowTypeError(
+        "CreateContextHolder can only be used with CPED");
+  }
   auto isolate = info.GetIsolate();
   auto contextHolder = profiler->CreateContextHolder(
       isolate, isolate->GetCurrentContext(), info[0]);
