@@ -29,6 +29,12 @@ struct AllocationProfileHolder {
   void Dispose() { profile.reset(); }
 };
 
+struct V8AllocationProfileHolder {
+  std::unique_ptr<v8::AllocationProfile> profile;
+
+  void Dispose() { profile.reset(); }
+};
+
 class AllocationNodeWrapper : public Nan::ObjectWrap {
  public:
   static NAN_MODULE_INIT(Init);
@@ -49,6 +55,27 @@ class AllocationNodeWrapper : public Nan::ObjectWrap {
 
   std::shared_ptr<AllocationProfileHolder> holder_;
   Node* node_;
+};
+
+class V8AllocationNodeWrapper : public Nan::ObjectWrap {
+ public:
+  static v8::Local<v8::Object> New(
+      std::shared_ptr<V8AllocationProfileHolder> holder,
+      v8::AllocationProfile::Node* node);
+
+ private:
+  V8AllocationNodeWrapper(std::shared_ptr<V8AllocationProfileHolder> holder,
+                          v8::AllocationProfile::Node* node)
+      : holder_(holder), node_(node) {}
+
+  void PopulateFields(v8::Local<v8::Object> obj);
+
+  static NAN_METHOD(GetChildrenCount);
+  static NAN_METHOD(GetChild);
+  static NAN_METHOD(Dispose);
+
+  std::shared_ptr<V8AllocationProfileHolder> holder_;
+  v8::AllocationProfile::Node* node_;
 };
 
 }  // namespace dd

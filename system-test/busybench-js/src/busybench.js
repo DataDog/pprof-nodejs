@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 // eslint-disable-next-line node/no-missing-require
-const pprof = require('pprof');
+const pprof = require('../../../out/src');
 
 const writeFilePromise = fs.promises.writeFile;
 
@@ -61,7 +61,10 @@ async function collectAndSaveTimeProfile(
 }
 
 async function collectAndSaveHeapProfile(sourceMapper) {
-  const profile = pprof.heap.profile(undefined, sourceMapper);
+  const profile = pprof.heap.v8ProfileV3(undefined, sourceMapper);
+  console.log(profile);
+  const child = profile.getChild(0);
+  console.log(child);
   const buf = await pprof.encode(profile);
   await writeFilePromise('heap.pb.gz', buf);
 }

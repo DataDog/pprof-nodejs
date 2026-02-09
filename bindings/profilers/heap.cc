@@ -529,6 +529,26 @@ NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
   info.GetReturnValue().Set(root);
 }
 
+// getAllocationProfileV3(): V8AllocationNodeWrapper (raw V8 node, no C++ copy)
+NAN_METHOD(HeapProfiler::GetAllocationProfileV3) {
+  auto isolate = info.GetIsolate();
+  auto holder = std::make_shared<V8AllocationProfileHolder>();
+
+  holder->profile.reset(isolate->GetHeapProfiler()->GetAllocationProfile());
+  if (!holder->profile) {
+    return Nan::ThrowError("Heap profiler is not enabled.");
+  }
+
+  auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state) {
+    state->OnNewProfile();
+  }
+
+  auto root =
+      V8AllocationNodeWrapper::New(holder, holder->profile->GetRootNode());
+  info.GetReturnValue().Set(root);
+}
+
 NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   if (info.Length() != 7) {
     return Nan::ThrowTypeError("MonitorOOMCondition must have 7 arguments.");
@@ -594,6 +614,8 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
   Nan::SetMethod(heapProfiler, "getAllocationProfile", GetAllocationProfile);
   Nan::SetMethod(
       heapProfiler, "getAllocationProfileV2", GetAllocationProfileV2);
+  Nan::SetMethod(
+      heapProfiler, "getAllocationProfileV3", GetAllocationProfileV3);
   Nan::SetMethod(heapProfiler, "monitorOutOfMemory", MonitorOutOfMemory);
   Nan::Set(target,
            Nan::New<v8::String>("heapProfiler").ToLocalChecked(),

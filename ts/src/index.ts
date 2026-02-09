@@ -49,6 +49,7 @@ export const heap = {
   stop: heapProfiler.stop,
   profile: heapProfiler.profile,
   profileV2: heapProfiler.profileV2,
+  v8ProfileV3: heapProfiler.profileV3,
   convertProfile: heapProfiler.convertProfile,
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,
