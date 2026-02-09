@@ -16,10 +16,10 @@
 
 #pragma once
 
+#include <v8-profiler.h>
 #include <memory>
 #include <string>
 #include <vector>
-#include <v8-profiler.h>
 
 namespace dd {
 

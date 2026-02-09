@@ -26,9 +26,7 @@ namespace dd {
 struct AllocationProfileHolder {
   std::shared_ptr<Node> profile;
 
-  void Dispose() {
-    profile.reset();
-  }
+  void Dispose() { profile.reset(); }
 };
 
 class AllocationNodeWrapper : public Nan::ObjectWrap {
@@ -36,8 +34,7 @@ class AllocationNodeWrapper : public Nan::ObjectWrap {
   static NAN_MODULE_INIT(Init);
 
   static v8::Local<v8::Object> New(
-      std::shared_ptr<AllocationProfileHolder> holder,
-      Node* node);
+      std::shared_ptr<AllocationProfileHolder> holder, Node* node);
 
  private:
   AllocationNodeWrapper(std::shared_ptr<AllocationProfileHolder> holder,

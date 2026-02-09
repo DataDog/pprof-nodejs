@@ -34,8 +34,7 @@ NAN_MODULE_INIT(AllocationNodeWrapper::Init) {
 }
 
 v8::Local<v8::Object> AllocationNodeWrapper::New(
-    std::shared_ptr<AllocationProfileHolder> holder,
-    Node* node) {
+    std::shared_ptr<AllocationProfileHolder> holder, Node* node) {
   auto* isolate = v8::Isolate::GetCurrent();
 
   v8::Local<v8::Function> constructor =
@@ -54,15 +53,19 @@ void AllocationNodeWrapper::PopulateFields(v8::Local<v8::Object> obj) {
   auto* isolate = v8::Isolate::GetCurrent();
   auto context = isolate->GetCurrentContext();
 
-  Nan::Set(obj, Nan::New("name").ToLocalChecked(),
+  Nan::Set(obj,
+           Nan::New("name").ToLocalChecked(),
            Nan::New(node_->name).ToLocalChecked());
-  Nan::Set(obj, Nan::New("scriptName").ToLocalChecked(),
+  Nan::Set(obj,
+           Nan::New("scriptName").ToLocalChecked(),
            Nan::New(node_->script_name).ToLocalChecked());
-  Nan::Set(obj, Nan::New("scriptId").ToLocalChecked(),
-           Nan::New(node_->script_id));
-  Nan::Set(obj, Nan::New("lineNumber").ToLocalChecked(),
+  Nan::Set(
+      obj, Nan::New("scriptId").ToLocalChecked(), Nan::New(node_->script_id));
+  Nan::Set(obj,
+           Nan::New("lineNumber").ToLocalChecked(),
            Nan::New(node_->line_number));
-  Nan::Set(obj, Nan::New("columnNumber").ToLocalChecked(),
+  Nan::Set(obj,
+           Nan::New("columnNumber").ToLocalChecked(),
            Nan::New(node_->column_number));
 
   v8::Local<v8::Array> allocations =
@@ -70,9 +73,11 @@ void AllocationNodeWrapper::PopulateFields(v8::Local<v8::Object> obj) {
   for (size_t i = 0; i < node_->allocations.size(); i++) {
     const auto& alloc = node_->allocations[i];
     v8::Local<v8::Object> alloc_obj = v8::Object::New(isolate);
-    Nan::Set(alloc_obj, Nan::New("sizeBytes").ToLocalChecked(),
+    Nan::Set(alloc_obj,
+             Nan::New("sizeBytes").ToLocalChecked(),
              Nan::New<v8::Number>(static_cast<double>(alloc.size)));
-    Nan::Set(alloc_obj, Nan::New("count").ToLocalChecked(),
+    Nan::Set(alloc_obj,
+             Nan::New("count").ToLocalChecked(),
              Nan::New<v8::Number>(static_cast<double>(alloc.count)));
     allocations->Set(context, i, alloc_obj).Check();
   }
@@ -99,7 +104,8 @@ NAN_METHOD(AllocationNodeWrapper::GetChild) {
     return Nan::ThrowRangeError("Child index out of bounds");
   }
 
-  auto child = AllocationNodeWrapper::New(wrapper->holder_, children[index].get());
+  auto child =
+      AllocationNodeWrapper::New(wrapper->holder_, children[index].get());
   info.GetReturnValue().Set(child);
 }
 
