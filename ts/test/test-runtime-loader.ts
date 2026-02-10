@@ -9,6 +9,9 @@
  */
 
 import assert from 'assert';
+import {mkdtempSync, mkdirSync, writeFileSync} from 'fs';
+import {tmpdir} from 'os';
+import path from 'path';
 
 const RUNTIME_ENV_KEY = 'DATADOG_PPROF_RUNTIME';
 
@@ -65,5 +68,58 @@ describe('Runtime Loader', () => {
     assert.ok(heapProfile.sample.length > 0);
     const encodedHeap = await pprof.encode(heapProfile);
     assert.ok(encodedHeap.length > 0);
+  });
+
+  it('falls back to build/Release when node-gyp-build cannot resolve', () => {
+    process.env[RUNTIME_ENV_KEY] = 'node';
+    clearAllProfileModules();
+
+    const {__testing} = require('../src/native-backend-loader');
+
+    const root = mkdtempSync(path.join(tmpdir(), 'pprof-loader-fallback-'));
+    const release = path.join(root, 'build', 'Release');
+    mkdirSync(release, {recursive: true});
+    const fallbackModulePath = path.join(release, 'dd_pprof.node');
+    writeFileSync(fallbackModulePath, '');
+
+    let requiredPath: string | undefined;
+    const requiredValue = {fromFallback: true};
+    const loaded = __testing.loadNodeNativeModule(
+      root,
+      () => {
+        throw new Error(
+          'No native build was found for runtime=node abi=141 platform=darwinglibc arch=arm64'
+        );
+      },
+      ((modulePath: string) => {
+        requiredPath = modulePath;
+        return requiredValue;
+      }) as (modulePath: string) => unknown
+    );
+
+    assert.equal(loaded, requiredValue);
+    assert.equal(requiredPath, fallbackModulePath);
+  });
+
+  it('rethrows original node-gyp-build error when no local build artifacts exist', () => {
+    process.env[RUNTIME_ENV_KEY] = 'node';
+    clearAllProfileModules();
+
+    const {__testing} = require('../src/native-backend-loader');
+    const root = mkdtempSync(path.join(tmpdir(), 'pprof-loader-no-fallback-'));
+
+    assert.throws(
+      () =>
+        __testing.loadNodeNativeModule(
+          root,
+          () => {
+            throw new Error(
+              'No native build was found for runtime=node abi=141 platform=darwinglibc arch=arm64'
+            );
+          },
+          require
+        ),
+      /No native build was found for runtime=node/
+    );
   });
 });
