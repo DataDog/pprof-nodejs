@@ -37,6 +37,10 @@ type TimeProfilerCtorArgs = {
   collectCpuTime?: boolean;
 };
 
+type ContextTimelineEntry = TimeProfileNodeContext & {
+  signature: string;
+};
+
 function cloneContext(context: object | undefined): object | undefined {
   if (!context) {
     return context;
@@ -139,7 +143,7 @@ export class BunTimeProfiler {
   private readonly collectCpuTime: boolean;
   private started = false;
   private startTime = 0;
-  private contextTimeline: TimeProfileNodeContext[] = [];
+  private contextTimeline: ContextTimelineEntry[] = [];
   private currentContext: object | undefined;
   private currentContextSignature = contextSignature(undefined);
   private lastRecordedContextSignature = contextSignature(undefined);
@@ -166,14 +170,15 @@ export class BunTimeProfiler {
       if (this.lastRecordedContextSignature === this.currentContextSignature) {
         return;
       }
-      this.recordContext(nextContext);
+      this.recordContext(nextContext, this.currentContextSignature);
     }
   }
 
-  private recordContext(context: object | undefined) {
-    const nextContext: TimeProfileNodeContext = {
+  private recordContext(context: object | undefined, signature: string) {
+    const nextContext: ContextTimelineEntry = {
       context,
       timestamp: nowMicrosBigInt(),
+      signature,
     };
     if (this.collectCpuTime) {
       const currentCpuUsage = process.cpuUsage();
@@ -188,7 +193,7 @@ export class BunTimeProfiler {
       this.lastContextCpuUsage = currentCpuUsage;
     }
     this.contextTimeline.push(nextContext);
-    this.lastRecordedContextSignature = contextSignature(context);
+    this.lastRecordedContextSignature = signature;
   }
 
   private normalizedContextTimeline(
@@ -200,6 +205,7 @@ export class BunTimeProfiler {
 
     const minSampleWindow = BigInt(this.intervalMicros);
     const normalized: TimeProfileNodeContext[] = [];
+    let lastNormalizedSignature: string | undefined;
 
     for (let i = 0; i < this.contextTimeline.length; i++) {
       const current = this.contextTimeline[i];
@@ -218,10 +224,7 @@ export class BunTimeProfiler {
       }
 
       const last = normalized[normalized.length - 1];
-      if (
-        last &&
-        contextSignature(last.context) === contextSignature(current.context)
-      ) {
+      if (last && lastNormalizedSignature === current.signature) {
         if (typeof current.cpuTime === 'number') {
           last.cpuTime = (last.cpuTime ?? 0) + current.cpuTime;
         }
@@ -233,6 +236,7 @@ export class BunTimeProfiler {
         timestamp: current.timestamp,
         cpuTime: current.cpuTime,
       });
+      lastNormalizedSignature = current.signature;
     }
 
     if (normalized.length > 0) {
@@ -259,7 +263,7 @@ export class BunTimeProfiler {
       ? process.cpuUsage()
       : undefined;
     if (this.withContexts && this.currentContext) {
-      this.recordContext(this.currentContext);
+      this.recordContext(this.currentContext, this.currentContextSignature);
     }
   }
 
@@ -328,7 +332,7 @@ export class BunTimeProfiler {
         ? process.cpuUsage()
         : undefined;
       if (this.withContexts && this.currentContext) {
-        this.recordContext(this.currentContext);
+        this.recordContext(this.currentContext, this.currentContextSignature);
       }
     }
 
