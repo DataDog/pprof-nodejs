@@ -29,10 +29,32 @@ import {
   GenerateAllocationLabelsFunction,
 } from './v8-types';
 import {isMainThread} from 'worker_threads';
+import {runtime} from './runtime';
 
 let enabled = false;
 let heapIntervalBytes = 0;
 let heapStackDepth = 0;
+
+function hasEquivalentHeapSamplingConfig(
+  intervalBytes: number,
+  stackDepth: number
+): boolean {
+  if (
+    intervalBytes === heapIntervalBytes &&
+    stackDepth === heapStackDepth
+  ) {
+    return true;
+  }
+
+  if (runtime !== 'bun') {
+    return false;
+  }
+
+  return (
+    Number(intervalBytes) === Number(heapIntervalBytes) &&
+    Number(stackDepth) === Number(heapStackDepth)
+  );
+}
 
 /*
  * Collects a heap profile when heapProfiler is enabled. Otherwise throws
@@ -108,10 +130,7 @@ export function convertProfile(
  */
 export function start(intervalBytes: number, stackDepth: number) {
   if (enabled) {
-    if (
-      intervalBytes === heapIntervalBytes &&
-      stackDepth === heapStackDepth
-    ) {
+    if (hasEquivalentHeapSamplingConfig(intervalBytes, stackDepth)) {
       return;
     }
     throw new Error(

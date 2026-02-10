@@ -23,6 +23,7 @@ export async function runSmoke(pprof) {
   assert.ok(encodedWallProfile.length > 0);
 
   pprof.heap.start(128 * 1024, 64);
+  pprof.heap.start(128 * 1024, 64);
   const heapProfile = pprof.heap.profile();
   pprof.heap.stop();
   assert.ok(heapProfile.sample.length > 0);
