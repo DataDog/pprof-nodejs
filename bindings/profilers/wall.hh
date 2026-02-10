@@ -62,6 +62,16 @@ class WallProfiler : public Nan::ObjectWrap {
   // We track live context pointers in a set to avoid memory leaks. They will
   // be deleted when the profiler is disposed.
   std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
+  // Context pointers belonging to GC'd CPED objects register themselves here.
+  // They will be reused.
+  std::deque<PersistentContextPtr*> deadContextPtrs_;
+  static constexpr size_t kTrimBatchMin = 32;
+  static constexpr size_t kTrimBatchMax = 1024;
+  size_t trimBatch_ = kTrimBatchMin;
+  size_t deadCountAtLastGc_ = 0;
+  size_t deadCountAtPrevGc_ = 0;
+  unsigned int deadGrowthCycles_ = 0;
+  unsigned int deadStableCycles_ = 0;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
@@ -100,7 +110,7 @@ class WallProfiler : public Nan::ObjectWrap {
   using ContextBuffer = std::vector<SampleContext>;
   ContextBuffer contexts_;
 
-  ~WallProfiler();
+  ~WallProfiler() = default;
   void Dispose(v8::Isolate* isolate, bool removeFromMap);
 
   // A new CPU profiler object will be created each time profiling is started
@@ -178,6 +188,8 @@ class WallProfiler : public Nan::ObjectWrap {
   double GetAsyncId(v8::Isolate* isolate);
   void OnGCStart(v8::Isolate* isolate);
   void OnGCEnd();
+
+  void MarkDeadPersistentContextPtr(PersistentContextPtr* ptr);
 
   static NAN_METHOD(New);
   static NAN_METHOD(Start);

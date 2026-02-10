@@ -105,23 +105,37 @@ void SetContextPtr(ContextPtr& contextPtr,
   }
 }
 
-class PersistentContextPtr : public node::ObjectWrap {
+class PersistentContextPtr {
   ContextPtr context;
-  std::unordered_set<PersistentContextPtr*>* live;
+  WallProfiler* owner;
+  Persistent<Object> per;
 
  public:
-  PersistentContextPtr(std::unordered_set<PersistentContextPtr*>* live,
-                       Local<Object> wrap)
-      : live(live) {
-    Wrap(wrap);
+  PersistentContextPtr(WallProfiler* owner) : owner(owner) {}
+
+  void UnregisterFromGC() {
+    if (!per.IsEmpty()) {
+      per.ClearWeak();
+      per.Reset();
+    }
   }
 
-  void Detach() { live = nullptr; }
+  void MarkDead() {
+    context.reset();
+    owner->MarkDeadPersistentContextPtr(this);
+  }
 
-  ~PersistentContextPtr() {
-    if (live) {
-      live->erase(this);
-    }
+  void RegisterForGC(Isolate* isolate, const Local<Object>& obj) {
+    // Register a callback to delete this object when the object is GCed
+    per.Reset(isolate, obj);
+    per.SetWeak(
+        this,
+        [](const WeakCallbackInfo<PersistentContextPtr>& data) {
+          auto ptr = data.GetParameter();
+          ptr->UnregisterFromGC();
+          ptr->MarkDead();
+        },
+        WeakCallbackType::kParameter);
   }
 
   void Set(Isolate* isolate, const Local<Value>& value) {
@@ -129,11 +143,51 @@ class PersistentContextPtr : public node::ObjectWrap {
   }
 
   ContextPtr Get() const { return context; }
-
-  static PersistentContextPtr* Unwrap(Local<Object> wrap) {
-    return node::ObjectWrap::Unwrap<PersistentContextPtr>(wrap);
-  }
 };
+
+void WallProfiler::MarkDeadPersistentContextPtr(PersistentContextPtr* ptr) {
+  deadContextPtrs_.push_back(ptr);
+  liveContextPtrs_.erase(ptr);
+  // Cap freelist growth by a dynamic byte budget based on live async contexts.
+  constexpr size_t kMinDeadContextPtrBudgetBytes = 512 * 1024;        // 512 KiB
+  constexpr size_t kMaxDeadContextPtrBudgetBytes = 16 * 1024 * 1024;  // 16 MiB
+  constexpr size_t kDeadContextPtrMultiplier = 2;
+  const size_t perPtrBytes = sizeof(PersistentContextPtr);
+  size_t maxDeadContextPtrs = kMaxDeadContextPtrBudgetBytes / perPtrBytes;
+  size_t minDeadContextPtrs = kMinDeadContextPtrBudgetBytes / perPtrBytes;
+  if (minDeadContextPtrs > maxDeadContextPtrs) {
+    minDeadContextPtrs = maxDeadContextPtrs;
+  }
+
+  const size_t liveCount = liveContextPtrs_.size();
+  size_t targetDeadContextPtrs;
+  if (liveCount >= maxDeadContextPtrs / kDeadContextPtrMultiplier) {
+    targetDeadContextPtrs = maxDeadContextPtrs;
+  } else {
+    targetDeadContextPtrs = liveCount * kDeadContextPtrMultiplier;
+    if (targetDeadContextPtrs < minDeadContextPtrs) {
+      targetDeadContextPtrs = minDeadContextPtrs;
+    }
+  }
+
+  const size_t shrinkThreshold =
+      targetDeadContextPtrs + targetDeadContextPtrs / 2;  // 1.5x hysteresis
+  if (deadContextPtrs_.size() <= shrinkThreshold) {
+    return;
+  }
+
+  const size_t emergencyThreshold = maxDeadContextPtrs * 2;  // 2x max
+  size_t toTrim = deadContextPtrs_.size() - targetDeadContextPtrs;
+  if (deadContextPtrs_.size() <= emergencyThreshold && toTrim > trimBatch_) {
+    toTrim = trimBatch_;
+  }
+  while (toTrim > 0) {
+    auto* toDelete = deadContextPtrs_.front();
+    deadContextPtrs_.pop_front();
+    delete toDelete;
+    --toTrim;
+  }
+}
 
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
@@ -805,15 +859,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 #endif  // DD_WALL_USE_CPED
 }
 
-WallProfiler::~WallProfiler() {
-  // Delete all live contexts
-  for (auto ptr : liveContextPtrs_) {
-    ptr->Detach();  // so it doesn't invalidate our iterator
-    delete ptr;
-  }
-  liveContextPtrs_.clear();
-}
-
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -830,6 +875,19 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
 
     node::RemoveEnvironmentCleanupHook(
         isolate, &WallProfiler::CleanupHook, isolate);
+
+    // Delete all live contexts
+    for (auto ptr : liveContextPtrs_) {
+      ptr->UnregisterFromGC();
+      delete ptr;
+    }
+    liveContextPtrs_.clear();
+
+    // Delete all unused contexts, too
+    for (auto ptr : deadContextPtrs_) {
+      delete ptr;
+    }
+    deadContextPtrs_.clear();
   }
 }
 
@@ -1296,12 +1354,20 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     proxyObj->SetPrototype(v8Ctx, proxyProto).Check();
     proxyObj->Set(v8Ctx, cpedProxySymbol_.Get(isolate), cpedObj).Check();
     // Set up the context pointer in the internal field
-    contextPtr = new PersistentContextPtr(&liveContextPtrs_, proxyObj);
+    if (!deadContextPtrs_.empty()) {
+      contextPtr = deadContextPtrs_.back();
+      deadContextPtrs_.pop_back();
+    } else {
+      contextPtr = new PersistentContextPtr(this);
+    }
     liveContextPtrs_.insert(contextPtr);
+    contextPtr->RegisterForGC(isolate, cpedObj);
+    proxyObj->SetAlignedPointerInInternalField(0, contextPtr);
     // Set the proxy object as the continuation preserved embedder data
     isolate->SetContinuationPreservedEmbedderData(proxyObj);
   } else {
-    contextPtr = PersistentContextPtr::Unwrap(cpedObj);
+    contextPtr = static_cast<PersistentContextPtr*>(
+        cpedObj->GetAlignedPointerFromInternalField(0));
   }
   contextPtr->Set(isolate, value);
 #else
@@ -1363,6 +1429,7 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 
 Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
   auto usedAsyncContextCount = liveContextPtrs_.size();
+  auto totalAsyncContextCount = usedAsyncContextCount + deadContextPtrs_.size();
   auto context = isolate->GetCurrentContext();
   auto metrics = Object::New(isolate);
   metrics
@@ -1373,7 +1440,7 @@ Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
   metrics
       ->Set(context,
             String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
-            Number::New(isolate, usedAsyncContextCount))
+            Number::New(isolate, totalAsyncContextCount))
       .ToChecked();
   return metrics;
 }
@@ -1483,6 +1550,35 @@ void WallProfiler::OnGCEnd() {
   // Not strictly necessary, as we'll reset it to something else on next GC,
   // but why retain it longer than needed?
   gcContext_.reset();
+
+  const size_t deadCount = deadContextPtrs_.size();
+  deadCountAtPrevGc_ = deadCountAtLastGc_;
+  deadCountAtLastGc_ = deadCount;
+  if (deadCountAtLastGc_ > deadCountAtPrevGc_) {
+    deadStableCycles_ = 0;
+    if (trimBatch_ < kTrimBatchMax) {
+      if (++deadGrowthCycles_ >= 2) {
+        const size_t doubled = trimBatch_ * 2;
+        trimBatch_ = doubled > kTrimBatchMax ? kTrimBatchMax : doubled;
+        deadGrowthCycles_ = 0;
+      }
+    } else {
+      deadGrowthCycles_ = 0;
+    }
+  } else {
+    deadGrowthCycles_ = 0;
+    if (trimBatch_ > kTrimBatchMin) {
+      if (++deadStableCycles_ >= 3) {
+        trimBatch_ = trimBatch_ / 2;
+        if (trimBatch_ < kTrimBatchMin) {
+          trimBatch_ = kTrimBatchMin;
+        }
+        deadStableCycles_ = 0;
+      }
+    } else {
+      deadStableCycles_ = 0;
+    }
+  }
 }
 
 void WallProfiler::PushContext(int64_t time_from,
