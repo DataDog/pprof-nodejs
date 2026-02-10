@@ -13,13 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import * as path from 'path';
-
 import {AllocationProfileNode} from './v8-types';
+import {loadNativeModule} from './native-backend-loader';
 
-const findBinding = require('node-gyp-build');
-const profiler = findBinding(path.join(__dirname, '..', '..'));
+const profiler = loadNativeModule();
 
 // Wrappers around native heap profiler functions.
 
@@ -38,7 +35,7 @@ export function stopSamplingHeapProfiler() {
 }
 
 export function getAllocationProfile(): AllocationProfileNode {
-  return profiler.heapProfiler.getAllocationProfile();
+  return profiler.heapProfiler.getAllocationProfile() as AllocationProfileNode;
 }
 
 export type NearHeapLimitCallback = (profile: AllocationProfileNode) => void;

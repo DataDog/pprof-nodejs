@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {join} from 'path';
+import {loadNativeModule} from './native-backend-loader';
 
-const findBinding = require('node-gyp-build');
-const profiler = findBinding(join(__dirname, '..', '..'));
+const profiler = loadNativeModule();
 
 export const TimeProfiler = profiler.TimeProfiler;
 export const constants = profiler.constants;
