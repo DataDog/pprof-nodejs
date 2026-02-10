@@ -16,6 +16,12 @@ function env(): NodeJS.ProcessEnv {
   return process.env;
 }
 
+type RuntimeDetectionInputs = {
+  envOverride: string | undefined;
+  bunVersion: string | undefined;
+  bunGlobal: unknown;
+};
+
 function detectRuntimeFromEnv(): Runtime | undefined {
   const override = env()[RUNTIME_ENV_KEY];
   if (override === 'node' || override === 'bun') {
@@ -25,16 +31,40 @@ function detectRuntimeFromEnv(): Runtime | undefined {
 }
 
 function detectRuntime(): Runtime {
-  const overriddenRuntime = detectRuntimeFromEnv();
-  if (overriddenRuntime) {
-    return overriddenRuntime;
+  const envRuntime = detectRuntimeFromEnv();
+  if (envRuntime) {
+    return envRuntime;
   }
 
-  if (typeof process.versions.bun === 'string') {
+  return detectRuntimeFromInputs({
+    envOverride: undefined,
+    bunVersion: process.versions.bun,
+    bunGlobal: (globalThis as {Bun?: unknown}).Bun,
+  });
+}
+
+function detectRuntimeFromInputs({
+  envOverride,
+  bunVersion,
+  bunGlobal,
+}: RuntimeDetectionInputs): Runtime {
+  if (envOverride === 'node' || envOverride === 'bun') {
+    return envOverride;
+  }
+
+  if (typeof bunVersion === 'string') {
+    return 'bun';
+  }
+
+  if (typeof bunGlobal !== 'undefined') {
     return 'bun';
   }
 
   return 'node';
 }
+
+export const __testing = {
+  detectRuntimeFromInputs,
+};
 
 export const runtime = detectRuntime();
