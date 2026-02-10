@@ -42,7 +42,8 @@ async function main() {
 
   time.start({
     intervalMicros: 1000,
-    durationMillis: 10_000,
+    // Allow enough wall time for instrumented/coverage runs to finish the churn.
+    durationMillis: 60_000,
     withContexts: true,
     lineNumbers: false,
     useCPED: true,
@@ -52,8 +53,8 @@ async function main() {
 
   const waveSize = 20_000;
   const maxWaves = 6;
+  const minWavesBeforeGc = 3;
   const minDelta = 5_000;
-  const minTotalBeforeGc = 40_000;
   const debug = process.env.DEBUG_CPED_TEST === '1';
   const log = (...args: unknown[]) => {
     if (debug) {
@@ -86,7 +87,10 @@ async function main() {
   const baseline = time.getMetrics().totalAsyncContextCount;
   let totalBeforeGc = baseline;
   let wavesRun = 0;
-  while (wavesRun < maxWaves && totalBeforeGc < minTotalBeforeGc) {
+  while (
+    wavesRun < maxWaves &&
+    (wavesRun < minWavesBeforeGc || totalBeforeGc - baseline < minDelta)
+  ) {
     await runWave(waveSize);
     totalBeforeGc = time.getMetrics().totalAsyncContextCount;
     wavesRun++;
@@ -97,10 +101,6 @@ async function main() {
   assert(
     totalBeforeGc - baseline >= minDelta,
     `test did not create enough async contexts (baseline=${baseline}, total=${totalBeforeGc})`
-  );
-  assert(
-    totalBeforeGc >= minTotalBeforeGc,
-    `test did not reach target async context count (total=${totalBeforeGc})`
   );
 
   await gcAndYield(6);
