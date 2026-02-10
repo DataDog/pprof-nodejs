@@ -90,6 +90,59 @@ describe('BunTimeProfiler', () => {
     assert.ok((firstContext?.cpuTime ?? 0) >= 0);
   });
 
+  it('preserves CPU-time totals when sub-interval context transitions are filtered', () => {
+    const hrtimeStub = sinon
+      .stub(process.hrtime, 'bigint')
+      .onCall(0)
+      .returns(1_000_000_000n)
+      .onCall(1)
+      .returns(1_000_100_000n)
+      .onCall(2)
+      .returns(1_000_200_000n)
+      .onCall(3)
+      .returns(1_000_300_000n)
+      .onCall(4)
+      .returns(1_002_000_000n)
+      .onCall(5)
+      .returns(1_002_000_000n);
+    const cpuUsageStub = sinon
+      .stub(process, 'cpuUsage')
+      .onCall(0)
+      .returns({user: 0, system: 0})
+      .onCall(1)
+      .returns({user: 100, system: 50})
+      .onCall(2)
+      .returns({user: 250, system: 100})
+      .onCall(3)
+      .returns({user: 400, system: 150})
+      .onCall(4)
+      .returns({user: 700, system: 200});
+
+    try {
+      const profiler = new BunTimeProfiler({
+        intervalMicros: 1000,
+        withContexts: true,
+        collectCpuTime: true,
+      });
+
+      profiler.start();
+      profiler.context = {route: '/a'};
+      profiler.context = {route: '/b'};
+      profiler.context = {route: '/c'};
+
+      const profile = profiler.stop(false);
+      const node = profile.topDownRoot.children[0] as TimeProfileNode;
+      const timeline = node.contexts ?? [];
+
+      assert.equal(timeline.length, 1);
+      assert.deepEqual(timeline[0].context, {route: '/c'});
+      assert.equal(timeline[0].cpuTime, 900_000);
+    } finally {
+      cpuUsageStub.restore();
+      hrtimeStub.restore();
+    }
+  });
+
   it('handles bigint context labels and deduplicates equivalent context objects', async () => {
     const profiler = new BunTimeProfiler({
       intervalMicros: 1000,

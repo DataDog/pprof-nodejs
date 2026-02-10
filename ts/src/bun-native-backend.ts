@@ -206,6 +206,7 @@ export class BunTimeProfiler {
     const minSampleWindow = BigInt(this.intervalMicros);
     const normalized: TimeProfileNodeContext[] = [];
     let lastNormalizedSignature: string | undefined;
+    let pendingCpuTime = 0;
 
     for (let i = 0; i < this.contextTimeline.length; i++) {
       const current = this.contextTimeline[i];
@@ -220,13 +221,20 @@ export class BunTimeProfiler {
 
       // Ignore ultra-short context flips that are below one sampling period.
       if (durationMicros < minSampleWindow) {
+        if (typeof current.cpuTime === 'number') {
+          pendingCpuTime += current.cpuTime;
+        }
         continue;
       }
 
+      const normalizedCpuTime =
+        pendingCpuTime + (typeof current.cpuTime === 'number' ? current.cpuTime : 0);
+      pendingCpuTime = 0;
+
       const last = normalized[normalized.length - 1];
       if (last && lastNormalizedSignature === current.signature) {
-        if (typeof current.cpuTime === 'number') {
-          last.cpuTime = (last.cpuTime ?? 0) + current.cpuTime;
+        if (normalizedCpuTime > 0) {
+          last.cpuTime = (last.cpuTime ?? 0) + normalizedCpuTime;
         }
         continue;
       }
@@ -234,7 +242,12 @@ export class BunTimeProfiler {
       normalized.push({
         context: current.context,
         timestamp: current.timestamp,
-        cpuTime: current.cpuTime,
+        cpuTime:
+          normalizedCpuTime > 0
+            ? normalizedCpuTime
+            : typeof current.cpuTime === 'number'
+              ? current.cpuTime
+              : undefined,
       });
       lastNormalizedSignature = current.signature;
     }
@@ -244,11 +257,17 @@ export class BunTimeProfiler {
     }
 
     const lastRawContext = this.contextTimeline[this.contextTimeline.length - 1];
+    const fallbackCpuTime =
+      pendingCpuTime > 0
+        ? pendingCpuTime
+        : typeof lastRawContext.cpuTime === 'number'
+          ? lastRawContext.cpuTime
+          : undefined;
     return [
       {
         context: lastRawContext.context,
         timestamp: lastRawContext.timestamp,
-        cpuTime: lastRawContext.cpuTime,
+        cpuTime: fallbackCpuTime,
       },
     ];
   }
