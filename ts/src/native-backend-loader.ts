@@ -11,6 +11,14 @@
 import {join} from 'path';
 
 import {runtime} from './runtime';
+import {
+  BunTimeProfiler,
+  bunGetAllocationProfile,
+  bunGetNativeThreadId,
+  bunMonitorOutOfMemory,
+  bunStartSamplingHeapProfiler,
+  bunStopSamplingHeapProfiler,
+} from './bun-native-backend';
 import {TimeProfile, TimeProfilerMetrics} from './v8-types';
 
 type NativeModule = {
@@ -46,36 +54,15 @@ type TimeProfilerInstance = {
   state: {[key: string]: number};
 };
 
-function unsupportedRuntimeError() {
-  return new Error(
-    `@datadog/pprof does not currently support runtime "${runtime}". ` +
-      'Use Node.js for profiling until a runtime-specific backend is available.'
-  );
-}
-
-function unsupportedFunction<T extends (...args: never[]) => unknown>(): T {
-  return (() => {
-    throw unsupportedRuntimeError();
-  }) as unknown as T;
-}
-
-function unsupportedClass<T extends new (...args: any[]) => unknown>(): T {
-  return class UnsupportedRuntime {
-    constructor() {
-      throw unsupportedRuntimeError();
-    }
-  } as T;
-}
-
-const unsupportedModule: NativeModule = {
-  TimeProfiler: unsupportedClass(),
+const bunModule: NativeModule = {
+  TimeProfiler: BunTimeProfiler,
   constants: {kSampleCount: 'sampleCount'},
-  getNativeThreadId: unsupportedFunction(),
+  getNativeThreadId: bunGetNativeThreadId,
   heapProfiler: {
-    startSamplingHeapProfiler: unsupportedFunction(),
-    stopSamplingHeapProfiler: unsupportedFunction(),
-    getAllocationProfile: unsupportedFunction(),
-    monitorOutOfMemory: unsupportedFunction(),
+    startSamplingHeapProfiler: bunStartSamplingHeapProfiler,
+    stopSamplingHeapProfiler: bunStopSamplingHeapProfiler,
+    getAllocationProfile: bunGetAllocationProfile,
+    monitorOutOfMemory: bunMonitorOutOfMemory,
   },
 };
 
@@ -87,7 +74,7 @@ export function loadNativeModule(): NativeModule {
   }
 
   if (runtime === 'bun') {
-    cachedModule = unsupportedModule;
+    cachedModule = bunModule;
     return cachedModule;
   }
 

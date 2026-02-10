@@ -44,16 +44,26 @@ describe('Runtime Loader', () => {
     clearAllProfileModules();
   });
 
-  it('loads a non-crashing backend when runtime is forced to bun', () => {
+  it('loads a bun-compatible backend when runtime is forced to bun', async () => {
     process.env[RUNTIME_ENV_KEY] = 'bun';
     clearAllProfileModules();
     const pprof = require('../src');
 
     assert.equal(typeof pprof.time.start, 'function');
     assert.equal(typeof pprof.heap.start, 'function');
-    assert.throws(
-      () => pprof.time.start({}),
-      /does not currently support runtime "bun"/
-    );
+
+    pprof.time.start({withContexts: true, intervalMicros: 1_000});
+    pprof.time.setContext({service: 'bun-smoke'});
+    const timeProfile = pprof.time.stop();
+    assert.ok(timeProfile.sample.length > 0);
+    const encodedTime = await pprof.encode(timeProfile);
+    assert.ok(encodedTime.length > 0);
+
+    pprof.heap.start(128 * 1024, 64);
+    const heapProfile = pprof.heap.profile();
+    pprof.heap.stop();
+    assert.ok(heapProfile.sample.length > 0);
+    const encodedHeap = await pprof.encode(heapProfile);
+    assert.ok(encodedHeap.length > 0);
   });
 });
