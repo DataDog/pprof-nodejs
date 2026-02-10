@@ -34,6 +34,18 @@ jobs:
       - run: npm install
       - run: npm run test:js-valgrind
 
+  bun-smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: npm install
+      - run: npm run bun:smoke
+
   build:
     uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
     with:

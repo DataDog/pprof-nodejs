@@ -12,6 +12,7 @@
     "build:asan": "node-gyp configure build --jobs=max --address_sanitizer",
     "build:tsan": "node-gyp configure build --jobs=max --thread_sanitizer",
     "build": "node-gyp configure build --jobs=max",
+    "bun:smoke": "npm run compile && bun ./scripts/bun-smoke.mjs",
     "codecov": "nyc report --reporter=json && codecov -f coverage/*.json",
     "compile": "tsc -p .",
     "fix": "gts fix",
