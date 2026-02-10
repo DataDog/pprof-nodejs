@@ -83,6 +83,28 @@ describe('BunTimeProfiler', () => {
     assert.ok(typeof firstContext?.cpuTime === 'number');
     assert.ok((firstContext?.cpuTime ?? 0) >= 0);
   });
+
+  it('handles bigint context labels and deduplicates equivalent context objects', async () => {
+    const profiler = new BunTimeProfiler({
+      intervalMicros: 1000,
+      withContexts: true,
+    });
+    profiler.start();
+    profiler.context = {requestId: 123n, route: '/health'};
+    await delay(5);
+    profiler.context = {route: '/health', requestId: 123n};
+    await delay(5);
+
+    const profile = profiler.stop(false);
+    const node = profile.topDownRoot.children[0] as TimeProfileNode;
+    const timeline = node.contexts ?? [];
+
+    assert.equal(timeline.length, 1);
+    assert.deepEqual(timeline[0].context, {
+      requestId: 123n,
+      route: '/health',
+    });
+  });
 });
 
 describe('bunMonitorOutOfMemory', () => {

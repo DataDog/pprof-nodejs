@@ -48,8 +48,51 @@ function cpuUsageDeltaNanos(
   return (userMicros + systemMicros) * NANOS_PER_MICRO;
 }
 
+function stableContextValue(value: unknown): string {
+  switch (typeof value) {
+    case 'string':
+      return `s:${value}`;
+    case 'number':
+      return `n:${value}`;
+    case 'bigint':
+      return `bi:${value.toString(10)}`;
+    case 'boolean':
+      return `b:${value ? 1 : 0}`;
+    case 'undefined':
+      return 'u:';
+    case 'symbol':
+      return `sy:${String(value)}`;
+    case 'function':
+      return 'fn:';
+    case 'object':
+      if (value === null) {
+        return 'null:';
+      }
+      try {
+        return `o:${JSON.stringify(value)}`;
+      } catch {
+        return 'o:[unserializable]';
+      }
+    default:
+      return `${typeof value}:`;
+  }
+}
+
 function contextSignature(context: object | undefined): string {
-  return JSON.stringify(context ?? {});
+  if (typeof context === 'undefined') {
+    return '__undefined__';
+  }
+  if (context === null) {
+    return '__null__';
+  }
+  const contextEntries = Object.entries(context as Record<string, unknown>);
+  contextEntries.sort(([keyA], [keyB]) => keyA.localeCompare(keyB));
+
+  let signature = '';
+  for (const [key, value] of contextEntries) {
+    signature += `${key}\u0000${stableContextValue(value)}\u0000`;
+  }
+  return signature;
 }
 
 export class BunTimeProfiler {
@@ -66,6 +109,8 @@ export class BunTimeProfiler {
   private startTime = 0;
   private contextTimeline: TimeProfileNodeContext[] = [];
   private currentContext: object | undefined;
+  private currentContextSignature = contextSignature(undefined);
+  private lastRecordedContextSignature = contextSignature(undefined);
   private lastContextCpuUsage: NodeJS.CpuUsage | undefined;
 
   constructor(...args: unknown[]) {
@@ -82,9 +127,14 @@ export class BunTimeProfiler {
   }
 
   set context(context: object | undefined) {
-    this.currentContext = cloneContext(context);
+    const nextContext = cloneContext(context);
+    this.currentContext = nextContext;
+    this.currentContextSignature = contextSignature(nextContext);
     if (this.started && this.withContexts) {
-      this.recordContext(this.currentContext);
+      if (this.lastRecordedContextSignature === this.currentContextSignature) {
+        return;
+      }
+      this.recordContext(nextContext);
     }
   }
 
@@ -106,6 +156,7 @@ export class BunTimeProfiler {
       this.lastContextCpuUsage = currentCpuUsage;
     }
     this.contextTimeline.push(nextContext);
+    this.lastRecordedContextSignature = contextSignature(context);
   }
 
   private normalizedContextTimeline(
@@ -171,6 +222,7 @@ export class BunTimeProfiler {
     this.startTime = nowMicros();
     this.state.sampleCount = 0;
     this.contextTimeline = [];
+    this.lastRecordedContextSignature = contextSignature(undefined);
     this.lastContextCpuUsage = this.collectCpuTime
       ? process.cpuUsage()
       : undefined;
@@ -239,6 +291,7 @@ export class BunTimeProfiler {
       this.startTime = endTime;
       this.state.sampleCount = 0;
       this.contextTimeline = [];
+      this.lastRecordedContextSignature = contextSignature(undefined);
       this.lastContextCpuUsage = this.collectCpuTime
         ? process.cpuUsage()
         : undefined;
