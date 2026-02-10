@@ -173,17 +173,10 @@ export function bunMonitorOutOfMemory(
   _maxHeapLimitExtensionCount: number,
   _dumpHeapProfileOnSdterr: boolean,
   _exportCommand: Array<String> | undefined,
-  callback: unknown,
+  _callback: unknown,
   _callbackMode: number,
   _isMainThread: boolean
 ) {
-  if (typeof callback !== 'function') {
-    return;
-  }
-
-  try {
-    callback(bunGetAllocationProfile());
-  } catch {
-    // Keep monitoring behavior best-effort on Bun where native OOM hooks are unavailable.
-  }
+  // Bun does not expose a near-heap-limit callback hook equivalent to V8's native API.
+  // Keep this as a no-op to avoid emitting synthetic OOM events or spurious profiles.
 }

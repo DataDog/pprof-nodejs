@@ -11,7 +11,7 @@
 import assert from 'assert';
 import delay from 'delay';
 
-import {BunTimeProfiler} from '../src/bun-native-backend';
+import {BunTimeProfiler, bunMonitorOutOfMemory} from '../src/bun-native-backend';
 
 describe('BunTimeProfiler', () => {
   it('uses microseconds for profile start/end timestamps', async () => {
@@ -38,5 +38,25 @@ describe('BunTimeProfiler', () => {
     assert.ok(first.startTime < first.endTime);
     assert.ok(second.startTime >= first.endTime);
     assert.ok(second.startTime < second.endTime);
+  });
+});
+
+describe('bunMonitorOutOfMemory', () => {
+  it('is a no-op on Bun and does not invoke callback', () => {
+    let callbackInvocations = 0;
+
+    bunMonitorOutOfMemory(
+      1024,
+      1,
+      false,
+      [],
+      () => {
+        callbackInvocations++;
+      },
+      1,
+      true
+    );
+
+    assert.equal(callbackInvocations, 0);
   });
 });

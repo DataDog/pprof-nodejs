@@ -17,7 +17,7 @@
     "compile": "tsc -p .",
     "fix": "gts fix",
     "format": "clang-format --style file -i --glob='bindings/**/*.{h,hh,cpp,cc}'",
-    "install": "node scripts/install.js",
+    "install": "exit 0",
     "lint": "jsgl --local . && gts check && clang-format --style file -n -Werror --glob='bindings/**/*.{h,hh,cpp,cc}'",
     "prepare": "npm run compile && npm run rebuild",
     "pretest:js-asan": "npm run compile && npm run build:asan",
