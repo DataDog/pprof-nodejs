@@ -10,6 +10,7 @@
 
 import assert from 'assert';
 import delay from 'delay';
+import sinon from 'sinon';
 
 import {BunTimeProfiler, bunMonitorOutOfMemory} from '../src/bun-native-backend';
 import {TimeProfileNode} from '../src/v8-types';
@@ -134,6 +135,44 @@ describe('BunTimeProfiler', () => {
     const timeline = node.contexts ?? [];
 
     assert.equal(timeline.length, 1);
+  });
+
+  it('keeps sub-millisecond context transitions distinct', () => {
+    const dateNowStub = sinon.stub(Date, 'now').returns(1_700_000_000_000);
+    const hrtimeStub = sinon
+      .stub(process.hrtime, 'bigint')
+      .onCall(0)
+      .returns(1_000_000_000n)
+      .onCall(1)
+      .returns(1_000_100_000n)
+      .onCall(2)
+      .returns(1_000_250_000n)
+      .onCall(3)
+      .returns(1_000_400_000n)
+      .onCall(4)
+      .returns(1_000_500_000n);
+
+    try {
+      const profiler = new BunTimeProfiler({
+        intervalMicros: 100,
+        withContexts: true,
+      });
+      profiler.start();
+      profiler.context = {route: '/a'};
+      profiler.context = {route: '/b'};
+
+      const profile = profiler.stop(false);
+      const node = profile.topDownRoot.children[0] as TimeProfileNode;
+      const timeline = node.contexts ?? [];
+
+      assert.equal(timeline.length, 2);
+      assert.deepEqual(timeline[0].context, {route: '/a'});
+      assert.deepEqual(timeline[1].context, {route: '/b'});
+      assert.ok(timeline[1].timestamp > timeline[0].timestamp);
+    } finally {
+      hrtimeStub.restore();
+      dateNowStub.restore();
+    }
   });
 });
 

@@ -17,13 +17,18 @@ import {
 
 const MICROS_PER_MILLI = 1000;
 const NANOS_PER_MICRO = 1000;
+const EPOCH_ORIGIN_MICROS = BigInt(Date.now()) * BigInt(MICROS_PER_MILLI);
+const HRTIME_ORIGIN_NANOS = process.hrtime.bigint();
 
 function nowMicros(): number {
   return Number(process.hrtime.bigint() / 1000n);
 }
 
 function nowMicrosBigInt(): bigint {
-  return BigInt(Date.now() * MICROS_PER_MILLI);
+  return (
+    EPOCH_ORIGIN_MICROS +
+    (process.hrtime.bigint() - HRTIME_ORIGIN_NANOS) / BigInt(NANOS_PER_MICRO)
+  );
 }
 
 type TimeProfilerCtorArgs = {
