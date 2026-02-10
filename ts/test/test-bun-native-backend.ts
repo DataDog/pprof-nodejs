@@ -11,8 +11,13 @@
 import assert from 'assert';
 import delay from 'delay';
 import sinon from 'sinon';
+import {Worker} from 'worker_threads';
 
-import {BunTimeProfiler, bunMonitorOutOfMemory} from '../src/bun-native-backend';
+import {
+  BunTimeProfiler,
+  bunGetNativeThreadId,
+  bunMonitorOutOfMemory,
+} from '../src/bun-native-backend';
 import {TimeProfileNode} from '../src/v8-types';
 
 describe('BunTimeProfiler', () => {
@@ -193,5 +198,36 @@ describe('bunMonitorOutOfMemory', () => {
     );
 
     assert.equal(callbackInvocations, 0);
+  });
+});
+
+describe('bunGetNativeThreadId', () => {
+  it('returns different ids for main thread and worker thread', async function () {
+    this.timeout(5000);
+
+    const mainThreadId = bunGetNativeThreadId();
+    const backendPath = require.resolve('../src/bun-native-backend');
+    const worker = new Worker(
+      `
+      const {parentPort} = require('worker_threads');
+      const {bunGetNativeThreadId} = require(${JSON.stringify(backendPath)});
+      parentPort.postMessage(bunGetNativeThreadId());
+    `,
+      {eval: true}
+    );
+
+    const workerThreadId = await new Promise<number>((resolve, reject) => {
+      worker.once('message', message => resolve(message as number));
+      worker.once('error', reject);
+      worker.once('exit', code => {
+        if (code !== 0) {
+          reject(new Error('Worker exited with code ' + code));
+        }
+      });
+    });
+
+    assert.equal(typeof mainThreadId, 'number');
+    assert.equal(typeof workerThreadId, 'number');
+    assert.notEqual(mainThreadId, workerThreadId);
   });
 });

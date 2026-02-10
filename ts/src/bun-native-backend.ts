@@ -349,7 +349,20 @@ export class BunTimeProfiler {
 }
 
 export function bunGetNativeThreadId() {
-  return process.pid;
+  try {
+    // Keep worker identities distinct when worker_threads is available.
+    // Use a process-scoped numeric space to avoid collisions with threadId=0
+    // on the main thread.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const {threadId} = require('worker_threads') as {threadId?: unknown};
+    if (typeof threadId === 'number' && Number.isInteger(threadId)) {
+      return process.pid * 1000 + threadId;
+    }
+  } catch {
+    // Ignore resolution failures and fall back to pid-only identity.
+  }
+
+  return process.pid * 1000;
 }
 
 let heapSamplingEnabled = false;
