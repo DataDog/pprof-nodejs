@@ -48,7 +48,10 @@ function cpuUsageDeltaNanos(
   return (userMicros + systemMicros) * NANOS_PER_MICRO;
 }
 
-function stableContextValue(value: unknown): string {
+function stableContextValue(
+  value: unknown,
+  seen?: WeakSet<object>
+): string {
   switch (typeof value) {
     case 'string':
       return `s:${value}`;
@@ -63,16 +66,41 @@ function stableContextValue(value: unknown): string {
     case 'symbol':
       return `sy:${String(value)}`;
     case 'function':
-      return 'fn:';
+      return `fn:${(value as Function).name ?? ''}`;
     case 'object':
       if (value === null) {
         return 'null:';
       }
-      try {
-        return `o:${JSON.stringify(value)}`;
-      } catch {
-        return 'o:[unserializable]';
+
+      if (Array.isArray(value)) {
+        const nextSeen = seen ?? new WeakSet<object>();
+        if (nextSeen.has(value)) {
+          return 'a:[circular]';
+        }
+        nextSeen.add(value);
+        const encodedItems = value.map(item =>
+          stableContextValue(item, nextSeen)
+        );
+        nextSeen.delete(value);
+        return `a:[${encodedItems.join(',')}]`;
       }
+
+      const objectValue = value as Record<string, unknown>;
+      const nextSeen = seen ?? new WeakSet<object>();
+      if (nextSeen.has(objectValue)) {
+        return 'o:[circular]';
+      }
+      nextSeen.add(objectValue);
+
+      const keys = Object.keys(objectValue).sort();
+      let encoded = 'o:{';
+      for (const key of keys) {
+        encoded += `${key}:${stableContextValue(objectValue[key], nextSeen)};`;
+      }
+      encoded += '}';
+
+      nextSeen.delete(objectValue);
+      return encoded;
     default:
       return `${typeof value}:`;
   }
@@ -85,12 +113,11 @@ function contextSignature(context: object | undefined): string {
   if (context === null) {
     return '__null__';
   }
-  const contextEntries = Object.entries(context as Record<string, unknown>);
-  contextEntries.sort(([keyA], [keyB]) => keyA.localeCompare(keyB));
-
+  const contextObject = context as Record<string, unknown>;
+  const contextKeys = Object.keys(contextObject).sort();
   let signature = '';
-  for (const [key, value] of contextEntries) {
-    signature += `${key}\u0000${stableContextValue(value)}\u0000`;
+  for (const key of contextKeys) {
+    signature += `${key}\u0000${stableContextValue(contextObject[key])}\u0000`;
   }
   return signature;
 }

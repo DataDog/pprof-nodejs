@@ -105,6 +105,36 @@ describe('BunTimeProfiler', () => {
       route: '/health',
     });
   });
+
+  it('deduplicates semantically equivalent nested contexts', async () => {
+    const profiler = new BunTimeProfiler({
+      intervalMicros: 1000,
+      withContexts: true,
+    });
+    profiler.start();
+    profiler.context = {
+      request: {
+        path: '/health',
+        tags: {service: 'api', team: 'profiling'},
+      },
+      spans: [{name: 'db', durationMicros: 10n}],
+    };
+    await delay(5);
+    profiler.context = {
+      spans: [{durationMicros: 10n, name: 'db'}],
+      request: {
+        tags: {team: 'profiling', service: 'api'},
+        path: '/health',
+      },
+    };
+    await delay(5);
+
+    const profile = profiler.stop(false);
+    const node = profile.topDownRoot.children[0] as TimeProfileNode;
+    const timeline = node.contexts ?? [];
+
+    assert.equal(timeline.length, 1);
+  });
 });
 
 describe('bunMonitorOutOfMemory', () => {
