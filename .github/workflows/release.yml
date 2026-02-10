@@ -15,8 +15,20 @@ jobs:
       min-node-version: 18
       skip: 'linux-arm,linux-ia32' # skip building for these platforms
 
+  bun-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: npm install
+      - run: npm run bun:smoke
+      - run: npm run bun:smoke:pack
+
   publish:
-    needs: build
+    needs: [build, bun-smoke]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
