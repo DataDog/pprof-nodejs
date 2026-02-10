@@ -15,11 +15,10 @@ import {
   TimeProfilerMetrics,
 } from './v8-types';
 
-const NANOS_PER_MILLI = 1000 * 1000;
 const MICROS_PER_MILLI = 1000;
 
-function nowNanos(): number {
-  return Date.now() * NANOS_PER_MILLI;
+function nowMicros(): number {
+  return Number(process.hrtime.bigint() / 1000n);
 }
 
 function nowMicrosBigInt(): bigint {
@@ -28,6 +27,7 @@ function nowMicrosBigInt(): bigint {
 
 type TimeProfilerCtorArgs = {
   withContexts?: boolean;
+  intervalMicros?: number;
 };
 
 export class BunTimeProfiler {
@@ -39,6 +39,7 @@ export class BunTimeProfiler {
   public state: {[key: string]: number} = {sampleCount: 0};
 
   private readonly withContexts: boolean;
+  private readonly intervalMicros: number;
   private started = false;
   private startTime = 0;
 
@@ -47,21 +48,28 @@ export class BunTimeProfiler {
       (args[0] as TimeProfilerCtorArgs | undefined) ??
       ({} as TimeProfilerCtorArgs);
     this.withContexts = options.withContexts === true;
+    this.intervalMicros = Math.max(options.intervalMicros ?? 1000, 1);
   }
 
   start() {
     this.started = true;
-    this.startTime = nowNanos();
+    this.startTime = nowMicros();
     this.state.sampleCount = 0;
   }
 
-  stop(_restart: boolean): TimeProfile {
+  stop(restart: boolean): TimeProfile {
     if (!this.started) {
       throw new Error('Wall profiler is not started');
     }
 
-    const endTime = nowNanos();
-    this.state.sampleCount = 1;
+    const windowStartTime = this.startTime;
+    const endTime = nowMicros();
+    const elapsedMicros = Math.max(endTime - windowStartTime, 1);
+    const estimatedSamples = Math.max(
+      Math.floor(elapsedMicros / this.intervalMicros),
+      1
+    );
+    this.state.sampleCount = estimatedSamples;
 
     const context: TimeProfileNodeContext[] | undefined =
       this.withContexts && this.context
@@ -79,13 +87,13 @@ export class BunTimeProfiler {
       scriptId: 0,
       lineNumber: 0,
       columnNumber: 0,
-      hitCount: 1,
+      hitCount: estimatedSamples,
       contexts: context,
       children: [],
     };
 
-    return {
-      startTime: this.startTime,
+    const result = {
+      startTime: windowStartTime,
       endTime,
       topDownRoot: {
         name: '(root)',
@@ -97,6 +105,12 @@ export class BunTimeProfiler {
         children: [timeNode],
       },
     };
+
+    if (restart) {
+      this.startTime = endTime;
+    }
+
+    return result;
   }
 
   dispose() {
