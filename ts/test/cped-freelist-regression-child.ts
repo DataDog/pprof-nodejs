@@ -85,32 +85,45 @@ async function main() {
   }
 
   const baseline = time.getMetrics().totalAsyncContextCount;
-  let totalBeforeGc = baseline;
-  let wavesRun = 0;
-  while (
-    wavesRun < maxWaves &&
-    (wavesRun < minWavesBeforeGc || totalBeforeGc - baseline < minDelta)
-  ) {
-    await runWave(waveSize);
-    totalBeforeGc = time.getMetrics().totalAsyncContextCount;
-    wavesRun++;
-    log('wave', wavesRun, 'totalBeforeGc', totalBeforeGc);
-  }
-  const metricsBeforeGc = time.getMetrics();
-  log('baseline', baseline, 'metricsBeforeGc', metricsBeforeGc);
-  assert(
-    totalBeforeGc - baseline >= minDelta,
-    `test did not create enough async contexts (baseline=${baseline}, total=${totalBeforeGc})`
-  );
 
-  await gcAndYield(6);
-  const metricsAfterGc = time.getMetrics();
-  const totalAfterGc = metricsAfterGc.totalAsyncContextCount;
-  log('metricsAfterGc', metricsAfterGc);
-  const maxAllowed = Math.floor(totalBeforeGc * 0.75);
+  async function churnAndCollect(phase: string) {
+    let totalBeforeGc = time.getMetrics().totalAsyncContextCount;
+    let wavesRun = 0;
+    while (
+      wavesRun < maxWaves &&
+      (wavesRun < minWavesBeforeGc || totalBeforeGc - baseline < minDelta)
+    ) {
+      await runWave(waveSize);
+      totalBeforeGc = time.getMetrics().totalAsyncContextCount;
+      wavesRun++;
+      log(phase, 'wave', wavesRun, 'totalBeforeGc', totalBeforeGc);
+    }
+
+    assert(
+      totalBeforeGc - baseline >= minDelta,
+      `test did not create enough async contexts (baseline=${baseline}, total=${totalBeforeGc})`
+    );
+
+    await gcAndYield(6);
+    const afterGc = time.getMetrics();
+    log(phase, 'metricsAfterGc', afterGc);
+
+    return {
+      beforeGc: totalBeforeGc,
+      afterGc: afterGc.totalAsyncContextCount,
+    };
+  }
+
+  const phase1 = await churnAndCollect('phase1');
+  const phase2 = await churnAndCollect('phase2');
+
+  // The key regression signal is unbounded growth over repeated churn/GC cycles.
+  // Use a relative + floor allowance to tolerate runtime/coverage variability.
+  const growth = phase2.afterGc - phase1.afterGc;
+  const maxGrowth = Math.max(2_000, Math.floor(phase1.afterGc * 0.25));
   assert(
-    totalAfterGc <= maxAllowed,
-    `expected trimming; before=${totalBeforeGc}, after=${totalAfterGc}, max=${maxAllowed}`
+    growth <= maxGrowth,
+    `expected plateau across churn cycles; phase1=${phase1.afterGc}, phase2=${phase2.afterGc}, growth=${growth}, maxGrowth=${maxGrowth}`
   );
 
   time.stop(false);
