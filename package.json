@@ -72,6 +72,7 @@
     "out/src",
     "out/third_party/cloud-debug-nodejs",
     "proto",
+    "build/Release/*.node",
     "package-lock.json",
     "package.json",
     "README.md",
