@@ -505,10 +505,9 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   info.GetReturnValue().Set(TranslateAllocationProfile(root));
 }
 
-// getAllocationProfileV2(): AllocationNodeWrapper
+// getAllocationProfileV2(): ExternalAllocationNode
 NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
   auto isolate = info.GetIsolate();
-  auto holder = std::make_shared<AllocationProfileHolder>();
 
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
@@ -517,15 +516,15 @@ NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
 
-  // Convert to C++ tree and store in the holder
-  holder->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
+  auto root_node =
+      TranslateAllocationProfileToExternal(isolate, profile->GetRootNode());
 
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state) {
     state->OnNewProfile();
   }
 
-  auto root = AllocationNodeWrapper::New(holder, holder->profile.get());
+  auto root = ExternalAllocationNode::New(root_node);
   info.GetReturnValue().Set(root);
 }
 

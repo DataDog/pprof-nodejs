@@ -19,22 +19,31 @@
 
 namespace dd {
 
-NAN_MODULE_INIT(AllocationNodeWrapper::Init) {
+NAN_MODULE_INIT(ExternalAllocationNode::Init) {
   v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>();
   tpl->SetClassName(Nan::New("AllocationProfileNode").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-  Nan::SetPrototypeMethod(tpl, "getChildrenCount", GetChildrenCount);
-  Nan::SetPrototypeMethod(tpl, "getChild", GetChild);
-  Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
+  auto inst = tpl->InstanceTemplate();
+  Nan::SetAccessor(inst, Nan::New("name").ToLocalChecked(), GetName);
+  Nan::SetAccessor(
+      inst, Nan::New("scriptName").ToLocalChecked(), GetScriptName);
+  Nan::SetAccessor(inst, Nan::New("scriptId").ToLocalChecked(), GetScriptId);
+  Nan::SetAccessor(
+      inst, Nan::New("lineNumber").ToLocalChecked(), GetLineNumber);
+  Nan::SetAccessor(
+      inst, Nan::New("columnNumber").ToLocalChecked(), GetColumnNumber);
+  Nan::SetAccessor(
+      inst, Nan::New("allocations").ToLocalChecked(), GetAllocations);
+  Nan::SetAccessor(inst, Nan::New("children").ToLocalChecked(), GetChildren);
 
   PerIsolateData::For(v8::Isolate::GetCurrent())
       ->AllocationNodeConstructor()
       .Reset(Nan::GetFunction(tpl).ToLocalChecked());
 }
 
-v8::Local<v8::Object> AllocationNodeWrapper::New(
-    std::shared_ptr<AllocationProfileHolder> holder, Node* node) {
+v8::Local<v8::Object> ExternalAllocationNode::New(
+    std::shared_ptr<ExternalNode> node) {
   auto* isolate = v8::Isolate::GetCurrent();
 
   v8::Local<v8::Function> constructor =
@@ -42,36 +51,56 @@ v8::Local<v8::Object> AllocationNodeWrapper::New(
 
   v8::Local<v8::Object> obj = Nan::NewInstance(constructor).ToLocalChecked();
 
-  auto* wrapper = new AllocationNodeWrapper(holder, node);
+  auto* wrapper = new ExternalAllocationNode(node);
   wrapper->Wrap(obj);
-  wrapper->PopulateFields(obj);
 
   return obj;
 }
 
-void AllocationNodeWrapper::PopulateFields(v8::Local<v8::Object> obj) {
+NAN_GETTER(ExternalAllocationNode::GetName) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  auto* isolate = v8::Isolate::GetCurrent();
+  info.GetReturnValue().Set(
+      v8::Local<v8::String>::New(isolate, wrapper->node_->name));
+}
+
+NAN_GETTER(ExternalAllocationNode::GetScriptName) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  auto* isolate = v8::Isolate::GetCurrent();
+  info.GetReturnValue().Set(
+      v8::Local<v8::String>::New(isolate, wrapper->node_->script_name));
+}
+
+NAN_GETTER(ExternalAllocationNode::GetScriptId) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  info.GetReturnValue().Set(Nan::New(wrapper->node_->script_id));
+}
+
+NAN_GETTER(ExternalAllocationNode::GetLineNumber) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  info.GetReturnValue().Set(Nan::New(wrapper->node_->line_number));
+}
+
+NAN_GETTER(ExternalAllocationNode::GetColumnNumber) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  info.GetReturnValue().Set(Nan::New(wrapper->node_->column_number));
+}
+
+NAN_GETTER(ExternalAllocationNode::GetAllocations) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
   auto* isolate = v8::Isolate::GetCurrent();
   auto context = isolate->GetCurrentContext();
 
-  Nan::Set(obj,
-           Nan::New("name").ToLocalChecked(),
-           Nan::New(node_->name).ToLocalChecked());
-  Nan::Set(obj,
-           Nan::New("scriptName").ToLocalChecked(),
-           Nan::New(node_->script_name).ToLocalChecked());
-  Nan::Set(
-      obj, Nan::New("scriptId").ToLocalChecked(), Nan::New(node_->script_id));
-  Nan::Set(obj,
-           Nan::New("lineNumber").ToLocalChecked(),
-           Nan::New(node_->line_number));
-  Nan::Set(obj,
-           Nan::New("columnNumber").ToLocalChecked(),
-           Nan::New(node_->column_number));
-
-  v8::Local<v8::Array> allocations =
-      v8::Array::New(isolate, node_->allocations.size());
-  for (size_t i = 0; i < node_->allocations.size(); i++) {
-    const auto& alloc = node_->allocations[i];
+  const auto& allocations = wrapper->node_->allocations;
+  v8::Local<v8::Array> arr = v8::Array::New(isolate, allocations.size());
+  for (size_t i = 0; i < allocations.size(); i++) {
+    const auto& alloc = allocations[i];
     v8::Local<v8::Object> alloc_obj = v8::Object::New(isolate);
     Nan::Set(alloc_obj,
              Nan::New("sizeBytes").ToLocalChecked(),
@@ -79,41 +108,23 @@ void AllocationNodeWrapper::PopulateFields(v8::Local<v8::Object> obj) {
     Nan::Set(alloc_obj,
              Nan::New("count").ToLocalChecked(),
              Nan::New<v8::Number>(static_cast<double>(alloc.count)));
-    allocations->Set(context, i, alloc_obj).Check();
+    arr->Set(context, i, alloc_obj).Check();
   }
-  Nan::Set(obj, Nan::New("allocations").ToLocalChecked(), allocations);
+  info.GetReturnValue().Set(arr);
 }
 
-NAN_METHOD(AllocationNodeWrapper::GetChildrenCount) {
-  auto* wrapper = Nan::ObjectWrap::Unwrap<AllocationNodeWrapper>(info.Holder());
-  info.GetReturnValue().Set(
-      Nan::New(static_cast<uint32_t>(wrapper->node_->children.size())));
-}
+NAN_GETTER(ExternalAllocationNode::GetChildren) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+  auto* isolate = v8::Isolate::GetCurrent();
+  auto context = isolate->GetCurrentContext();
 
-NAN_METHOD(AllocationNodeWrapper::GetChild) {
-  auto* wrapper = Nan::ObjectWrap::Unwrap<AllocationNodeWrapper>(info.Holder());
-
-  if (info.Length() < 1 || !info[0]->IsUint32()) {
-    return Nan::ThrowTypeError("Index must be a uint32.");
-  }
-
-  uint32_t index = Nan::To<uint32_t>(info[0]).FromJust();
   const auto& children = wrapper->node_->children;
-
-  if (index >= children.size()) {
-    return Nan::ThrowRangeError("Child index out of bounds");
+  v8::Local<v8::Array> arr = v8::Array::New(isolate, children.size());
+  for (size_t i = 0; i < children.size(); i++) {
+    arr->Set(context, i, ExternalAllocationNode::New(children[i])).Check();
   }
-
-  auto child =
-      AllocationNodeWrapper::New(wrapper->holder_, children[index].get());
-  info.GetReturnValue().Set(child);
-}
-
-NAN_METHOD(AllocationNodeWrapper::Dispose) {
-  auto* wrapper = Nan::ObjectWrap::Unwrap<AllocationNodeWrapper>(info.Holder());
-  if (wrapper->holder_) {
-    wrapper->holder_->Dispose();
-  }
+  info.GetReturnValue().Set(arr);
 }
 
 }  // namespace dd

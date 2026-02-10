@@ -23,32 +23,24 @@
 
 namespace dd {
 
-struct AllocationProfileHolder {
-  std::shared_ptr<Node> profile;
-
-  void Dispose() { profile.reset(); }
-};
-
-class AllocationNodeWrapper : public Nan::ObjectWrap {
+class ExternalAllocationNode : public Nan::ObjectWrap {
  public:
   static NAN_MODULE_INIT(Init);
 
-  static v8::Local<v8::Object> New(
-      std::shared_ptr<AllocationProfileHolder> holder, Node* node);
+  static v8::Local<v8::Object> New(std::shared_ptr<ExternalNode> node);
 
  private:
-  AllocationNodeWrapper(std::shared_ptr<AllocationProfileHolder> holder,
-                        Node* node)
-      : holder_(holder), node_(node) {}
+  ExternalAllocationNode(std::shared_ptr<ExternalNode> node) : node_(node) {}
 
-  void PopulateFields(v8::Local<v8::Object> obj);
+  static NAN_GETTER(GetName);
+  static NAN_GETTER(GetScriptName);
+  static NAN_GETTER(GetScriptId);
+  static NAN_GETTER(GetLineNumber);
+  static NAN_GETTER(GetColumnNumber);
+  static NAN_GETTER(GetAllocations);
+  static NAN_GETTER(GetChildren);
 
-  static NAN_METHOD(GetChildrenCount);
-  static NAN_METHOD(GetChild);
-  static NAN_METHOD(Dispose);
-
-  std::shared_ptr<AllocationProfileHolder> holder_;
-  Node* node_;
+  std::shared_ptr<ExternalNode> node_;
 };
 
 }  // namespace dd

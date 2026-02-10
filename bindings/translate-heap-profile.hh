@@ -17,6 +17,7 @@
 #pragma once
 
 #include <v8-profiler.h>
+#include <v8.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,8 +35,24 @@ struct Node {
   std::vector<Allocation> allocations;
 };
 
+// ExternalNode with v8::Global<v8::String> fields — used by
+// ExternalAllocationNode. Promotion from Local to Global
+struct ExternalNode {
+  using Allocation = v8::AllocationProfile::Allocation;
+  v8::Global<v8::String> name;
+  v8::Global<v8::String> script_name;
+  int line_number;
+  int column_number;
+  int script_id;
+  std::vector<std::shared_ptr<ExternalNode>> children;
+  std::vector<Allocation> allocations;
+};
+
 std::shared_ptr<Node> TranslateAllocationProfileToCpp(
     v8::AllocationProfile::Node* node);
+
+std::shared_ptr<ExternalNode> TranslateAllocationProfileToExternal(
+    v8::Isolate* isolate, v8::AllocationProfile::Node* node);
 
 v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(

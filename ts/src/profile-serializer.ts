@@ -33,7 +33,6 @@ import {
 } from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
-  AllocationProfileNodeWrapper,
   GenerateAllocationLabelsFunction,
   GenerateTimeLabelsFunction,
   ProfileNode,
@@ -74,114 +73,6 @@ function isGeneratedLocation(
     location.line !== undefined &&
     location.line > 0
   );
-}
-
-function getFunction(
-  loc: SourceLocation,
-  scriptId: number | undefined,
-  functions: Function[],
-  functionIdMap: Map<string, number>,
-  stringTable: StringTable
-): Function {
-  let name = loc.name;
-  const keyStr = name
-    ? `${scriptId}:${name}`
-    : `${scriptId}:${loc.line}:${loc.column}`;
-  let id = functionIdMap.get(keyStr);
-  if (id !== undefined) {
-    // id is index+1, since 0 is not valid id.
-    return functions[id - 1];
-  }
-  id = functions.length + 1;
-  functionIdMap.set(keyStr, id);
-  if (!name) {
-    if (loc.line) {
-      if (loc.column) {
-        name = `(anonymous:L#${loc.line}:C#${loc.column})`;
-      } else {
-        name = `(anonymous:L#${loc.line})`;
-      }
-    } else {
-      name = '(anonymous)';
-    }
-  }
-  const nameId = stringTable.dedup(name);
-  const f = new Function({
-    id,
-    name: nameId,
-    systemName: nameId,
-    filename: stringTable.dedup(loc.file || ''),
-  });
-  functions.push(f);
-  return f;
-}
-
-function getLine(
-  loc: SourceLocation,
-  scriptId: number | undefined,
-  functions: Function[],
-  functionIdMap: Map<string, number>,
-  stringTable: StringTable
-): Line {
-  return new Line({
-    functionId: getFunction(
-      loc,
-      scriptId,
-      functions,
-      functionIdMap,
-      stringTable
-    ).id,
-    line: loc.line,
-  });
-}
-
-type LocationNodeInput = {
-  name?: string;
-  scriptName: string;
-  scriptId?: number;
-  lineNumber?: number;
-  columnNumber?: number;
-};
-
-function getLocation(
-  node: LocationNodeInput,
-  locations: Location[],
-  locationIdMap: Map<string, number>,
-  functions: Function[],
-  functionIdMap: Map<string, number>,
-  stringTable: StringTable,
-  sourceMapper?: SourceMapper
-): Location {
-  let profLoc: SourceLocation = {
-    file: node.scriptName || '',
-    line: node.lineNumber,
-    column: node.columnNumber,
-    name: node.name,
-  };
-
-  if (profLoc.line) {
-    if (sourceMapper && isGeneratedLocation(profLoc)) {
-      profLoc = sourceMapper.mappingInfo(profLoc);
-    }
-  }
-  const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.name}`;
-  let id = locationIdMap.get(keyStr);
-  if (id !== undefined) {
-    // id is index+1, since 0 is not valid id.
-    return locations[id - 1];
-  }
-  id = locations.length + 1;
-  locationIdMap.set(keyStr, id);
-  const line = getLine(
-    profLoc,
-    node.scriptId,
-    functions,
-    functionIdMap,
-    stringTable
-  );
-  const location = new Location({id, line: [line]});
-  locations.push(location);
-  return location;
 }
 
 /**
@@ -227,15 +118,7 @@ function serialize<T extends ProfileNode>(
       continue;
     }
     const stack = entry.stack;
-    const location = getLocation(
-      node,
-      locations,
-      locationIdMap,
-      functions,
-      functionIdMap,
-      stringTable,
-      sourceMapper
-    );
+    const location = getLocation(node, sourceMapper);
     stack.unshift(location.id as number);
     appendToSamples(entry, samples);
     for (const child of node.children as T[]) {
@@ -247,6 +130,77 @@ function serialize<T extends ProfileNode>(
   profile.location = locations;
   profile.function = functions;
   profile.stringTable = stringTable;
+
+  function getLocation(
+    node: ProfileNode,
+    sourceMapper?: SourceMapper
+  ): Location {
+    let profLoc: SourceLocation = {
+      file: node.scriptName || '',
+      line: node.lineNumber,
+      column: node.columnNumber,
+      name: node.name,
+    };
+
+    if (profLoc.line) {
+      if (sourceMapper && isGeneratedLocation(profLoc)) {
+        profLoc = sourceMapper.mappingInfo(profLoc);
+      }
+    }
+    const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.name}`;
+    let id = locationIdMap.get(keyStr);
+    if (id !== undefined) {
+      // id is index+1, since 0 is not valid id.
+      return locations[id - 1];
+    }
+    id = locations.length + 1;
+    locationIdMap.set(keyStr, id);
+    const line = getLine(profLoc, node.scriptId);
+    const location = new Location({id, line: [line]});
+    locations.push(location);
+    return location;
+  }
+
+  function getLine(loc: SourceLocation, scriptId?: number): Line {
+    return new Line({
+      functionId: getFunction(loc, scriptId).id,
+      line: loc.line,
+    });
+  }
+
+  function getFunction(loc: SourceLocation, scriptId?: number): Function {
+    let name = loc.name;
+    const keyStr = name
+      ? `${scriptId}:${name}`
+      : `${scriptId}:${loc.line}:${loc.column}`;
+    let id = functionIdMap.get(keyStr);
+    if (id !== undefined) {
+      // id is index+1, since 0 is not valid id.
+      return functions[id - 1];
+    }
+    id = functions.length + 1;
+    functionIdMap.set(keyStr, id);
+    if (!name) {
+      if (loc.line) {
+        if (loc.column) {
+          name = `(anonymous:L#${loc.line}:C#${loc.column})`;
+        } else {
+          name = `(anonymous:L#${loc.line})`;
+        }
+      } else {
+        name = '(anonymous)';
+      }
+    }
+    const nameId = stringTable.dedup(name);
+    const f = new Function({
+      id,
+      name: nameId,
+      systemName: nameId,
+      filename: stringTable.dedup(loc.file || ''),
+    });
+    functions.push(f);
+    return f;
+  }
 }
 
 /**
@@ -554,29 +508,6 @@ function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
   return labels;
 }
 
-function appendHeapSamples(
-  node: AllocationProfileNode | AllocationProfileNodeWrapper,
-  locationIds: number[],
-  samples: Sample[],
-  stringTable: StringTable,
-  generateLabels?: GenerateAllocationLabelsFunction
-) {
-  if (node.allocations.length === 0) {
-    return;
-  }
-  const labels = generateLabels
-    ? buildLabels(generateLabels({node}), stringTable)
-    : [];
-  for (const alloc of node.allocations) {
-    const sample = new Sample({
-      locationId: locationIds,
-      value: [alloc.count, alloc.sizeBytes * alloc.count],
-      label: labels,
-    });
-    samples.push(sample);
-  }
-}
-
 /**
  * Converts v8 heap profile into into a profile proto.
  * (https://github.com/google/pprof/blob/master/proto/profile.proto)
@@ -595,21 +526,28 @@ export function serializeHeapProfile(
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction
 ): Profile {
-  const stringTable = new StringTable();
-  const sampleValueType = createObjectCountValueType(stringTable);
-  const allocationValueType = createAllocationValueType(stringTable);
-
   const appendHeapEntryToSamples: AppendEntryToSamples<
     AllocationProfileNode
   > = (entry: Entry<AllocationProfileNode>, samples: Sample[]) => {
-    appendHeapSamples(
-      entry.node,
-      entry.stack,
-      samples,
-      stringTable,
-      generateLabels
-    );
+    if (entry.node.allocations.length > 0) {
+      const labels = generateLabels
+        ? buildLabels(generateLabels({node: entry.node}), stringTable)
+        : [];
+      for (const alloc of entry.node.allocations) {
+        const sample = new Sample({
+          locationId: entry.stack,
+          value: [alloc.count, alloc.sizeBytes * alloc.count],
+          label: labels,
+          // TODO: add tag for allocation size
+        });
+        samples.push(sample);
+      }
+    }
   };
+
+  const stringTable = new StringTable();
+  const sampleValueType = createObjectCountValueType(stringTable);
+  const allocationValueType = createAllocationValueType(stringTable);
 
   const profile = {
     sampleType: [sampleValueType, allocationValueType],
@@ -628,99 +566,4 @@ export function serializeHeapProfile(
   );
 
   return new Profile(profile);
-}
-
-/**
- * Lazy version of serializeHeapProfile that uses getChildrenCount/getChild
- * to avoid materializing the full children array at once.
- */
-export function serializeHeapProfileV2(
-  root: AllocationProfileNodeWrapper,
-  startTimeNanos: number,
-  intervalBytes: number,
-  ignoreSamplesPath?: string,
-  sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
-): Profile {
-  const stringTable = new StringTable();
-  const sampleValueType = createObjectCountValueType(stringTable);
-  const allocationValueType = createAllocationValueType(stringTable);
-
-  const samples: Sample[] = [];
-  const locations: Location[] = [];
-  const functions: Function[] = [];
-  const functionIdMap = new Map<string, number>();
-  const locationIdMap = new Map<string, number>();
-
-  interface Entry {
-    node: AllocationProfileNodeWrapper;
-    stack: Stack;
-  }
-
-  const entries: Entry[] = [];
-
-  // Start from root's children (skip root itself, like serialize does)
-  const rootChildCount = root.getChildrenCount();
-  for (let i = 0; i < rootChildCount; i++) {
-    entries.push({node: root.getChild(i), stack: []});
-  }
-
-  // Add node for external memory usage
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const {external}: {external: number} = process.memoryUsage() as any;
-  if (external > 0) {
-    const externalNode: AllocationProfileNodeWrapper = {
-      name: '(external)',
-      scriptName: '',
-      allocations: [{sizeBytes: external, count: 1}],
-      getChildrenCount: () => 0,
-      getChild: () => null as unknown as AllocationProfileNodeWrapper,
-      dispose: () => {},
-    };
-    entries.push({node: externalNode, stack: []});
-  }
-
-  while (entries.length > 0) {
-    const entry = entries.pop()!;
-    const node = entry.node;
-
-    // mjs files have a `file://` prefix in the scriptName -> remove it
-    if (node.scriptName.startsWith('file://')) {
-      node.scriptName = node.scriptName.slice(7);
-    }
-
-    if (ignoreSamplesPath && node.scriptName.indexOf(ignoreSamplesPath) > -1) {
-      continue;
-    }
-
-    const stack = entry.stack;
-    const location = getLocation(
-      node,
-      locations,
-      locationIdMap,
-      functions,
-      functionIdMap,
-      stringTable,
-      sourceMapper
-    );
-    stack.unshift(location.id as number);
-
-    appendHeapSamples(node, stack, samples, stringTable, generateLabels);
-
-    const childCount = node.getChildrenCount();
-    for (let i = 0; i < childCount; i++) {
-      entries.push({node: node.getChild(i), stack: stack.slice()});
-    }
-  }
-
-  return new Profile({
-    sampleType: [sampleValueType, allocationValueType],
-    timeNanos: startTimeNanos,
-    periodType: allocationValueType,
-    period: intervalBytes,
-    sample: samples,
-    location: locations,
-    function: functions,
-    stringTable: stringTable,
-  });
 }

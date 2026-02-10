@@ -142,6 +142,28 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
   return new_node;
 }
 
+std::shared_ptr<ExternalNode> TranslateAllocationProfileToExternal(
+    v8::Isolate* isolate, v8::AllocationProfile::Node* node) {
+  auto new_node = std::make_shared<ExternalNode>();
+  new_node->line_number = node->line_number;
+  new_node->column_number = node->column_number;
+  new_node->script_id = node->script_id;
+  new_node->name.Reset(isolate, node->name);
+  new_node->script_name.Reset(isolate, node->script_name);
+
+  new_node->children.reserve(node->children.size());
+  for (auto& child : node->children) {
+    new_node->children.push_back(
+        TranslateAllocationProfileToExternal(isolate, child));
+  }
+
+  new_node->allocations.reserve(node->allocations.size());
+  for (auto& allocation : node->allocations) {
+    new_node->allocations.push_back(allocation);
+  }
+  return new_node;
+}
+
 v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node) {
   return HeapProfileTranslator().TranslateAllocationProfile(node);

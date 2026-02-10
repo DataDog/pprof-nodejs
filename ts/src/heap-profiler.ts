@@ -23,14 +23,10 @@ import {
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
 } from './heap-profiler-bindings';
-import {
-  serializeHeapProfile,
-  serializeHeapProfileV2,
-} from './profile-serializer';
+import {serializeHeapProfile} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
-  AllocationProfileNodeWrapper,
   GenerateAllocationLabelsFunction,
 } from './v8-types';
 import {isMainThread} from 'worker_threads';
@@ -52,7 +48,7 @@ export function v8Profile(): AllocationProfileNode {
   return getAllocationProfile();
 }
 
-export function v8ProfileV2(): AllocationProfileNodeWrapper {
+export function v8ProfileV2(): AllocationProfileNode {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
@@ -91,6 +87,7 @@ export function convertProfile(
   // TODO: remove any once type definition is updated to include external.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const {external}: {external: number} = process.memoryUsage() as any;
+  let root: AllocationProfileNode;
   if (external > 0) {
     const externalNode: AllocationProfileNode = {
       name: '(external)',
@@ -98,10 +95,12 @@ export function convertProfile(
       children: [],
       allocations: [{sizeBytes: external, count: 1}],
     };
-    rootNode.children.push(externalNode);
+    root = {...rootNode, children: [...rootNode.children, externalNode]};
+  } else {
+    root = {...rootNode, children: [...rootNode.children]};
   }
   return serializeHeapProfile(
-    rootNode,
+    root,
     startTimeNanos,
     heapIntervalBytes,
     ignoreSamplePath,
@@ -113,7 +112,6 @@ export function convertProfile(
 /**
  * Collects a profile and returns it serialized in pprof format using lazy V2 API.
  * Throws if heap profiler is not enabled.
- * The underlying C++ profile is automatically disposed after serialization.
  *
  * @param ignoreSamplePath
  * @param sourceMapper
@@ -124,20 +122,12 @@ export function profileV2(
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction
 ): Profile {
-  const root = v8ProfileV2();
-  const startTimeNanos = Date.now() * 1000 * 1000;
-  try {
-    return serializeHeapProfileV2(
-      root,
-      startTimeNanos,
-      heapIntervalBytes,
-      ignoreSamplePath,
-      sourceMapper,
-      generateLabels
-    );
-  } finally {
-    root.dispose();
-  }
+  return convertProfile(
+    v8ProfileV2(),
+    ignoreSamplePath,
+    sourceMapper,
+    generateLabels
+  );
 }
 
 /**
