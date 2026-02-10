@@ -30,7 +30,7 @@
     "test:js-asan": "LSAN_OPTIONS='suppressions=./suppressions/lsan_suppr.txt' LD_PRELOAD=`gcc -print-file-name=libasan.so` mocha out/test/test-*.js",
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
     "test:js-valgrind": "valgrind --leak-check=full mocha out/test/test-*.js",
-    "test:js": "nyc mocha -r source-map-support/register out/test/test-*.js",
+    "test:js": "node -r ./scripts/nyc-os-cpus-compat.js ./node_modules/nyc/bin/nyc.js mocha -r source-map-support/register out/test/test-*.js",
     "test": "npm run test:js"
   },
   "author": {
