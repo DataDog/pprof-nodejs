@@ -108,8 +108,14 @@ export function convertProfile(
  */
 export function start(intervalBytes: number, stackDepth: number) {
   if (enabled) {
+    if (
+      intervalBytes === heapIntervalBytes &&
+      stackDepth === heapStackDepth
+    ) {
+      return;
+    }
     throw new Error(
-      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`
+      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${heapStackDepth}`
     );
   }
   heapIntervalBytes = intervalBytes;

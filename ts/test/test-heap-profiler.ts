@@ -168,6 +168,21 @@ describe('HeapProfiler', () => {
         'expected startSamplingHeapProfiler to be called'
       );
     });
+    it('should be a noop when enabled and started with same parameters', () => {
+      const intervalBytes = 1024 * 512;
+      const stackDepth = 32;
+      heapProfiler.start(intervalBytes, stackDepth);
+      assert.ok(
+        startStub.calledWith(intervalBytes, stackDepth),
+        'expected startSamplingHeapProfiler to be called'
+      );
+      startStub.resetHistory();
+      heapProfiler.start(intervalBytes, stackDepth);
+      assert.ok(
+        !startStub.called,
+        'expected startSamplingHeapProfiler not to be called second time'
+      );
+    });
     it('should throw error when enabled and started with different parameters', () => {
       const intervalBytes1 = 1024 * 512;
       const stackDepth1 = 32;
@@ -185,7 +200,7 @@ describe('HeapProfiler', () => {
         assert.strictEqual(
           (e as Error).message,
           'Heap profiler is already started  with intervalBytes 524288 and' +
-            ' stackDepth 64'
+            ' stackDepth 32'
         );
       }
       assert.ok(
