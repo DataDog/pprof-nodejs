@@ -12,6 +12,7 @@ import assert from 'assert';
 import delay from 'delay';
 
 import {BunTimeProfiler, bunMonitorOutOfMemory} from '../src/bun-native-backend';
+import {TimeProfileNode} from '../src/v8-types';
 
 describe('BunTimeProfiler', () => {
   it('uses microseconds for profile start/end timestamps', async () => {
@@ -38,6 +39,49 @@ describe('BunTimeProfiler', () => {
     assert.ok(first.startTime < first.endTime);
     assert.ok(second.startTime >= first.endTime);
     assert.ok(second.startTime < second.endTime);
+  });
+
+  it('records context transitions while sampling', async () => {
+    const profiler = new BunTimeProfiler({
+      intervalMicros: 1000,
+      withContexts: true,
+    });
+    profiler.start();
+    profiler.context = {};
+    await delay(5);
+    profiler.context = {vehicle: 'car'};
+    await delay(5);
+    profiler.context = {vehicle: 'car', brand: 'mercedes'};
+    await delay(5);
+
+    const profile = profiler.stop(false);
+    const node = profile.topDownRoot.children[0] as TimeProfileNode;
+    const timeline = node.contexts ?? [];
+    const labels = timeline.map(timeContext => timeContext.context ?? {});
+
+    assert.ok(timeline.length >= 3);
+    assert.deepEqual(labels[0], {});
+    assert.deepEqual(labels[1], {vehicle: 'car'});
+    assert.deepEqual(labels[2], {vehicle: 'car', brand: 'mercedes'});
+  });
+
+  it('marks profiles with CPU sample metadata when collectCpuTime is enabled', async () => {
+    const profiler = new BunTimeProfiler({
+      intervalMicros: 1000,
+      withContexts: true,
+      collectCpuTime: true,
+    });
+    profiler.start();
+    profiler.context = {service: 'bun'};
+    await delay(10);
+
+    const profile = profiler.stop(false);
+    const node = profile.topDownRoot.children[0] as TimeProfileNode;
+    const firstContext = node.contexts?.[0];
+
+    assert.equal(profile.hasCpuTime, true);
+    assert.ok(typeof firstContext?.cpuTime === 'number');
+    assert.ok((firstContext?.cpuTime ?? 0) >= 0);
   });
 });
 

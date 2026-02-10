@@ -16,6 +16,7 @@ import {
 } from './v8-types';
 
 const MICROS_PER_MILLI = 1000;
+const NANOS_PER_MICRO = 1000;
 
 function nowMicros(): number {
   return Number(process.hrtime.bigint() / 1000n);
@@ -28,10 +29,30 @@ function nowMicrosBigInt(): bigint {
 type TimeProfilerCtorArgs = {
   withContexts?: boolean;
   intervalMicros?: number;
+  collectCpuTime?: boolean;
 };
 
+function cloneContext(context: object | undefined): object | undefined {
+  if (!context) {
+    return context;
+  }
+  return {...(context as Record<string, unknown>)};
+}
+
+function cpuUsageDeltaNanos(
+  current: NodeJS.CpuUsage,
+  previous: NodeJS.CpuUsage
+): number {
+  const userMicros = Math.max(current.user - previous.user, 0);
+  const systemMicros = Math.max(current.system - previous.system, 0);
+  return (userMicros + systemMicros) * NANOS_PER_MICRO;
+}
+
+function contextSignature(context: object | undefined): string {
+  return JSON.stringify(context ?? {});
+}
+
 export class BunTimeProfiler {
-  public context: object | undefined;
   public metrics: TimeProfilerMetrics = {
     usedAsyncContextCount: 0,
     totalAsyncContextCount: 0,
@@ -40,8 +61,12 @@ export class BunTimeProfiler {
 
   private readonly withContexts: boolean;
   private readonly intervalMicros: number;
+  private readonly collectCpuTime: boolean;
   private started = false;
   private startTime = 0;
+  private contextTimeline: TimeProfileNodeContext[] = [];
+  private currentContext: object | undefined;
+  private lastContextCpuUsage: NodeJS.CpuUsage | undefined;
 
   constructor(...args: unknown[]) {
     const options =
@@ -49,12 +74,109 @@ export class BunTimeProfiler {
       ({} as TimeProfilerCtorArgs);
     this.withContexts = options.withContexts === true;
     this.intervalMicros = Math.max(options.intervalMicros ?? 1000, 1);
+    this.collectCpuTime = options.collectCpuTime === true;
+  }
+
+  get context(): object | undefined {
+    return this.currentContext;
+  }
+
+  set context(context: object | undefined) {
+    this.currentContext = cloneContext(context);
+    if (this.started && this.withContexts) {
+      this.recordContext(this.currentContext);
+    }
+  }
+
+  private recordContext(context: object | undefined) {
+    const nextContext: TimeProfileNodeContext = {
+      context,
+      timestamp: nowMicrosBigInt(),
+    };
+    if (this.collectCpuTime) {
+      const currentCpuUsage = process.cpuUsage();
+      if (this.lastContextCpuUsage) {
+        nextContext.cpuTime = cpuUsageDeltaNanos(
+          currentCpuUsage,
+          this.lastContextCpuUsage
+        );
+      } else {
+        nextContext.cpuTime = 0;
+      }
+      this.lastContextCpuUsage = currentCpuUsage;
+    }
+    this.contextTimeline.push(nextContext);
+  }
+
+  private normalizedContextTimeline(
+    endTimestampMicros: bigint
+  ): TimeProfileNodeContext[] | undefined {
+    if (!this.withContexts || this.contextTimeline.length === 0) {
+      return undefined;
+    }
+
+    const minSampleWindow = BigInt(this.intervalMicros);
+    const normalized: TimeProfileNodeContext[] = [];
+
+    for (let i = 0; i < this.contextTimeline.length; i++) {
+      const current = this.contextTimeline[i];
+      const nextTimestamp =
+        i + 1 < this.contextTimeline.length
+          ? this.contextTimeline[i + 1].timestamp
+          : endTimestampMicros;
+      const durationMicros =
+        nextTimestamp > current.timestamp
+          ? nextTimestamp - current.timestamp
+          : 0n;
+
+      // Ignore ultra-short context flips that are below one sampling period.
+      if (durationMicros < minSampleWindow) {
+        continue;
+      }
+
+      const last = normalized[normalized.length - 1];
+      if (
+        last &&
+        contextSignature(last.context) === contextSignature(current.context)
+      ) {
+        if (typeof current.cpuTime === 'number') {
+          last.cpuTime = (last.cpuTime ?? 0) + current.cpuTime;
+        }
+        continue;
+      }
+
+      normalized.push({
+        context: current.context,
+        timestamp: current.timestamp,
+        cpuTime: current.cpuTime,
+      });
+    }
+
+    if (normalized.length > 0) {
+      return normalized;
+    }
+
+    const lastRawContext = this.contextTimeline[this.contextTimeline.length - 1];
+    return [
+      {
+        context: lastRawContext.context,
+        timestamp: lastRawContext.timestamp,
+        cpuTime: lastRawContext.cpuTime,
+      },
+    ];
   }
 
   start() {
     this.started = true;
     this.startTime = nowMicros();
     this.state.sampleCount = 0;
+    this.contextTimeline = [];
+    this.lastContextCpuUsage = this.collectCpuTime
+      ? process.cpuUsage()
+      : undefined;
+    if (this.withContexts && this.currentContext) {
+      this.recordContext(this.currentContext);
+    }
   }
 
   stop(restart: boolean): TimeProfile {
@@ -71,15 +193,21 @@ export class BunTimeProfiler {
     );
     this.state.sampleCount = estimatedSamples;
 
-    const context: TimeProfileNodeContext[] | undefined =
-      this.withContexts && this.context
-        ? [
-            {
-              context: this.context,
-              timestamp: nowMicrosBigInt(),
-            },
-          ]
-        : undefined;
+    const stopTimestampMicros = nowMicrosBigInt();
+    const context = this.normalizedContextTimeline(stopTimestampMicros);
+
+    if (this.collectCpuTime) {
+      const currentCpuUsage = process.cpuUsage();
+      if (context && context.length > 0 && this.lastContextCpuUsage) {
+        const lastContext = context[context.length - 1];
+        const cpuTime = cpuUsageDeltaNanos(
+          currentCpuUsage,
+          this.lastContextCpuUsage
+        );
+        lastContext.cpuTime = (lastContext.cpuTime ?? 0) + cpuTime;
+      }
+      this.lastContextCpuUsage = currentCpuUsage;
+    }
 
     const timeNode = {
       name: 'Bun runtime',
@@ -95,6 +223,7 @@ export class BunTimeProfiler {
     const result = {
       startTime: windowStartTime,
       endTime,
+      hasCpuTime: this.collectCpuTime,
       topDownRoot: {
         name: '(root)',
         scriptName: '',
@@ -108,6 +237,14 @@ export class BunTimeProfiler {
 
     if (restart) {
       this.startTime = endTime;
+      this.state.sampleCount = 0;
+      this.contextTimeline = [];
+      this.lastContextCpuUsage = this.collectCpuTime
+        ? process.cpuUsage()
+        : undefined;
+      if (this.withContexts && this.currentContext) {
+        this.recordContext(this.currentContext);
+      }
     }
 
     return result;
