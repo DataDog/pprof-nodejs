@@ -1,0 +1,349 @@
+"use strict";
+/**
+ * Copyright 2026 Datadog
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BunTimeProfiler = void 0;
+exports.bunGetNativeThreadId = bunGetNativeThreadId;
+exports.bunStartSamplingHeapProfiler = bunStartSamplingHeapProfiler;
+exports.bunStopSamplingHeapProfiler = bunStopSamplingHeapProfiler;
+exports.bunGetAllocationProfile = bunGetAllocationProfile;
+exports.bunMonitorOutOfMemory = bunMonitorOutOfMemory;
+const MICROS_PER_MILLI = 1000;
+const NANOS_PER_MICRO = 1000;
+const EPOCH_ORIGIN_MICROS = BigInt(Date.now()) * BigInt(MICROS_PER_MILLI);
+const HRTIME_ORIGIN_NANOS = process.hrtime.bigint();
+function nowMicros() {
+    return Number(process.hrtime.bigint() / 1000n);
+}
+function nowMicrosBigInt() {
+    return (EPOCH_ORIGIN_MICROS +
+        (process.hrtime.bigint() - HRTIME_ORIGIN_NANOS) / BigInt(NANOS_PER_MICRO));
+}
+function cloneContext(context) {
+    if (!context) {
+        return context;
+    }
+    return { ...context };
+}
+function cpuUsageDeltaNanos(current, previous) {
+    const userMicros = Math.max(current.user - previous.user, 0);
+    const systemMicros = Math.max(current.system - previous.system, 0);
+    return (userMicros + systemMicros) * NANOS_PER_MICRO;
+}
+function stableContextValue(value, seen) {
+    switch (typeof value) {
+        case 'string':
+            return `s:${value}`;
+        case 'number':
+            return `n:${value}`;
+        case 'bigint':
+            return `bi:${value.toString(10)}`;
+        case 'boolean':
+            return `b:${value ? 1 : 0}`;
+        case 'undefined':
+            return 'u:';
+        case 'symbol':
+            return `sy:${String(value)}`;
+        case 'function':
+            return `fn:${value.name ?? ''}`;
+        case 'object':
+            if (value === null) {
+                return 'null:';
+            }
+            if (Array.isArray(value)) {
+                const nextSeen = seen ?? new WeakSet();
+                if (nextSeen.has(value)) {
+                    return 'a:[circular]';
+                }
+                nextSeen.add(value);
+                const encodedItems = value.map(item => stableContextValue(item, nextSeen));
+                nextSeen.delete(value);
+                return `a:[${encodedItems.join(',')}]`;
+            }
+            const objectValue = value;
+            const nextSeen = seen ?? new WeakSet();
+            if (nextSeen.has(objectValue)) {
+                return 'o:[circular]';
+            }
+            nextSeen.add(objectValue);
+            const keys = Object.keys(objectValue).sort();
+            let encoded = 'o:{';
+            for (const key of keys) {
+                encoded += `${key}:${stableContextValue(objectValue[key], nextSeen)};`;
+            }
+            encoded += '}';
+            nextSeen.delete(objectValue);
+            return encoded;
+        default:
+            return `${typeof value}:`;
+    }
+}
+function contextSignature(context) {
+    if (typeof context === 'undefined') {
+        return '__undefined__';
+    }
+    if (context === null) {
+        return '__null__';
+    }
+    const contextObject = context;
+    const contextKeys = Object.keys(contextObject).sort();
+    let signature = '';
+    for (const key of contextKeys) {
+        signature += `${key}\u0000${stableContextValue(contextObject[key])}\u0000`;
+    }
+    return signature;
+}
+class BunTimeProfiler {
+    constructor(...args) {
+        this.metrics = {
+            usedAsyncContextCount: 0,
+            totalAsyncContextCount: 0,
+        };
+        this.state = { sampleCount: 0 };
+        this.started = false;
+        this.startTime = 0;
+        this.contextTimeline = [];
+        this.currentContextSignature = contextSignature(undefined);
+        this.lastRecordedContextSignature = contextSignature(undefined);
+        const options = args[0] ??
+            {};
+        this.withContexts = options.withContexts === true;
+        this.intervalMicros = Math.max(options.intervalMicros ?? 1000, 1);
+        this.collectCpuTime = options.collectCpuTime === true;
+    }
+    get context() {
+        return this.currentContext;
+    }
+    set context(context) {
+        const nextContext = cloneContext(context);
+        this.currentContext = nextContext;
+        this.currentContextSignature = contextSignature(nextContext);
+        if (this.started && this.withContexts) {
+            if (this.lastRecordedContextSignature === this.currentContextSignature) {
+                return;
+            }
+            this.recordContext(nextContext, this.currentContextSignature);
+        }
+    }
+    recordContext(context, signature) {
+        const nextContext = {
+            context,
+            timestamp: nowMicrosBigInt(),
+            signature,
+        };
+        if (this.collectCpuTime) {
+            const currentCpuUsage = process.cpuUsage();
+            if (this.lastContextCpuUsage) {
+                nextContext.cpuTime = cpuUsageDeltaNanos(currentCpuUsage, this.lastContextCpuUsage);
+            }
+            else {
+                nextContext.cpuTime = 0;
+            }
+            this.lastContextCpuUsage = currentCpuUsage;
+        }
+        this.contextTimeline.push(nextContext);
+        this.lastRecordedContextSignature = signature;
+    }
+    normalizedContextTimeline(endTimestampMicros) {
+        if (!this.withContexts || this.contextTimeline.length === 0) {
+            return undefined;
+        }
+        const minSampleWindow = BigInt(this.intervalMicros);
+        const normalized = [];
+        let lastNormalizedSignature;
+        let pendingCpuTime = 0;
+        for (let i = 0; i < this.contextTimeline.length; i++) {
+            const current = this.contextTimeline[i];
+            const nextTimestamp = i + 1 < this.contextTimeline.length
+                ? this.contextTimeline[i + 1].timestamp
+                : endTimestampMicros;
+            const durationMicros = nextTimestamp > current.timestamp
+                ? nextTimestamp - current.timestamp
+                : 0n;
+            // Ignore ultra-short context flips that are below one sampling period.
+            if (durationMicros < minSampleWindow) {
+                if (typeof current.cpuTime === 'number') {
+                    pendingCpuTime += current.cpuTime;
+                }
+                continue;
+            }
+            const normalizedCpuTime = pendingCpuTime + (typeof current.cpuTime === 'number' ? current.cpuTime : 0);
+            pendingCpuTime = 0;
+            const last = normalized[normalized.length - 1];
+            if (last && lastNormalizedSignature === current.signature) {
+                if (normalizedCpuTime > 0) {
+                    last.cpuTime = (last.cpuTime ?? 0) + normalizedCpuTime;
+                }
+                continue;
+            }
+            normalized.push({
+                context: current.context,
+                timestamp: current.timestamp,
+                cpuTime: normalizedCpuTime > 0
+                    ? normalizedCpuTime
+                    : typeof current.cpuTime === 'number'
+                        ? current.cpuTime
+                        : undefined,
+            });
+            lastNormalizedSignature = current.signature;
+        }
+        if (normalized.length > 0) {
+            return normalized;
+        }
+        const lastRawContext = this.contextTimeline[this.contextTimeline.length - 1];
+        const fallbackCpuTime = pendingCpuTime > 0
+            ? pendingCpuTime
+            : typeof lastRawContext.cpuTime === 'number'
+                ? lastRawContext.cpuTime
+                : undefined;
+        return [
+            {
+                context: lastRawContext.context,
+                timestamp: lastRawContext.timestamp,
+                cpuTime: fallbackCpuTime,
+            },
+        ];
+    }
+    start() {
+        this.started = true;
+        this.startTime = nowMicros();
+        this.state.sampleCount = 0;
+        this.contextTimeline = [];
+        this.lastRecordedContextSignature = contextSignature(undefined);
+        this.lastContextCpuUsage = this.collectCpuTime
+            ? process.cpuUsage()
+            : undefined;
+        if (this.withContexts && this.currentContext) {
+            this.recordContext(this.currentContext, this.currentContextSignature);
+        }
+    }
+    stop(restart) {
+        if (!this.started) {
+            throw new Error('Wall profiler is not started');
+        }
+        const windowStartTime = this.startTime;
+        const endTime = nowMicros();
+        const elapsedMicros = Math.max(endTime - windowStartTime, 1);
+        const estimatedSamples = Math.max(Math.floor(elapsedMicros / this.intervalMicros), 1);
+        this.state.sampleCount = estimatedSamples;
+        const stopTimestampMicros = nowMicrosBigInt();
+        const context = this.normalizedContextTimeline(stopTimestampMicros);
+        if (this.collectCpuTime) {
+            const currentCpuUsage = process.cpuUsage();
+            if (context && context.length > 0 && this.lastContextCpuUsage) {
+                const lastContext = context[context.length - 1];
+                const cpuTime = cpuUsageDeltaNanos(currentCpuUsage, this.lastContextCpuUsage);
+                lastContext.cpuTime = (lastContext.cpuTime ?? 0) + cpuTime;
+            }
+            this.lastContextCpuUsage = currentCpuUsage;
+        }
+        const timeNode = {
+            name: 'Bun runtime',
+            scriptName: '',
+            scriptId: 0,
+            lineNumber: 0,
+            columnNumber: 0,
+            hitCount: estimatedSamples,
+            contexts: context,
+            children: [],
+        };
+        const result = {
+            startTime: windowStartTime,
+            endTime,
+            hasCpuTime: this.collectCpuTime,
+            topDownRoot: {
+                name: '(root)',
+                scriptName: '',
+                scriptId: 0,
+                lineNumber: 0,
+                columnNumber: 0,
+                hitCount: 0,
+                children: [timeNode],
+            },
+        };
+        if (restart) {
+            this.startTime = endTime;
+            this.state.sampleCount = 0;
+            this.contextTimeline = [];
+            this.lastRecordedContextSignature = contextSignature(undefined);
+            this.lastContextCpuUsage = this.collectCpuTime
+                ? process.cpuUsage()
+                : undefined;
+            if (this.withContexts && this.currentContext) {
+                this.recordContext(this.currentContext, this.currentContextSignature);
+            }
+        }
+        return result;
+    }
+    dispose() {
+        this.started = false;
+    }
+    v8ProfilerStuckEventLoopDetected() {
+        return 0;
+    }
+}
+exports.BunTimeProfiler = BunTimeProfiler;
+function bunGetNativeThreadId() {
+    try {
+        // Keep worker identities distinct when worker_threads is available.
+        // Use a process-scoped numeric space to avoid collisions with threadId=0
+        // on the main thread.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { threadId } = require('worker_threads');
+        if (typeof threadId === 'number' && Number.isInteger(threadId)) {
+            return process.pid * 1000 + threadId;
+        }
+    }
+    catch {
+        // Ignore resolution failures and fall back to pid-only identity.
+    }
+    return process.pid * 1000;
+}
+let heapSamplingEnabled = false;
+function bunStartSamplingHeapProfiler() {
+    heapSamplingEnabled = true;
+}
+function bunStopSamplingHeapProfiler() {
+    heapSamplingEnabled = false;
+}
+function bunGetAllocationProfile() {
+    if (!heapSamplingEnabled) {
+        throw new Error('Heap profiler is not enabled.');
+    }
+    const usage = process.memoryUsage();
+    const heapNode = {
+        name: 'Bun heap',
+        scriptName: '',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [
+            {
+                sizeBytes: Math.max(usage.heapUsed, 1),
+                count: 1,
+            },
+        ],
+        children: [],
+    };
+    return {
+        name: '(root)',
+        scriptName: '',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [],
+        children: [heapNode],
+    };
+}
+function bunMonitorOutOfMemory(_heapLimitExtensionSize, _maxHeapLimitExtensionCount, _dumpHeapProfileOnSdterr, _exportCommand, _callback, _callbackMode, _isMainThread) {
+    // Bun does not expose a near-heap-limit callback hook equivalent to V8's native API.
+    // Keep this as a no-op to avoid emitting synthetic OOM events or spurious profiles.
+}
+//# sourceMappingURL=bun-native-backend.js.map

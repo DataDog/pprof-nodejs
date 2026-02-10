@@ -3,7 +3,9 @@
 .vscode
 /*.build
 /build
-out
+out/*
+!out/src/
+!out/src/**
 node_modules
 system-test/busybench/package-lock.json
 system-test/busybench-js/package-lock.json
