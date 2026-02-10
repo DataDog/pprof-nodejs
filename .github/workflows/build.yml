@@ -44,6 +44,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: npm install
       - run: npm run bun:smoke
+      - run: npm run bun:smoke:pack
 
   build:
     uses: Datadog/action-prebuildify/.github/workflows/build.yml@main
