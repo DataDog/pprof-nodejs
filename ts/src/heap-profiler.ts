@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Profile} from 'pprof-format';
+import type {Profile} from 'pprof-format';
 
 import {
   getAllocationProfile,

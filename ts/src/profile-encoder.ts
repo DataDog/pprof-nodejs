@@ -17,7 +17,7 @@
 import {promisify} from 'util';
 import {gzip, gzipSync} from 'zlib';
 
-import {Profile} from 'pprof-format';
+import type {Profile} from 'pprof-format';
 
 const gzipPromise = promisify(gzip);
 

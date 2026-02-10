@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {
+import type {
   Function,
   Label,
   LabelInput,
@@ -26,6 +26,7 @@ import {
   StringTable,
   ProfileInput,
 } from 'pprof-format';
+import {loadPprofFormat} from './pprof-format-loader';
 import {
   GeneratedLocation,
   SourceLocation,
@@ -39,6 +40,18 @@ import {
   TimeProfile,
   TimeProfileNode,
 } from './v8-types';
+
+const pprofFormat = loadPprofFormat();
+const {
+  Function: PprofFunction,
+  Label: PprofLabel,
+  Line: PprofLine,
+  Location: PprofLocation,
+  Profile: PprofProfile,
+  Sample: PprofSample,
+  StringTable: PprofStringTable,
+  ValueType: PprofValueType,
+} = pprofFormat;
 
 export const NON_JS_THREADS_FUNCTION_NAME = 'Non JS threads activity';
 export const GARBAGE_COLLECTION_FUNCTION_NAME = 'Garbage Collection';
@@ -156,13 +169,13 @@ function serialize<T extends ProfileNode>(
     id = locations.length + 1;
     locationIdMap.set(keyStr, id);
     const line = getLine(profLoc, node.scriptId);
-    const location = new Location({id, line: [line]});
+    const location = new PprofLocation({id, line: [line]});
     locations.push(location);
     return location;
   }
 
   function getLine(loc: SourceLocation, scriptId?: number): Line {
-    return new Line({
+    return new PprofLine({
       functionId: getFunction(loc, scriptId).id,
       line: loc.line,
     });
@@ -192,7 +205,7 @@ function serialize<T extends ProfileNode>(
       }
     }
     const nameId = stringTable.dedup(name);
-    const f = new Function({
+    const f = new PprofFunction({
       id,
       name: nameId,
       systemName: nameId,
@@ -208,7 +221,7 @@ function serialize<T extends ProfileNode>(
  * adds strings used in this value type to the table.
  */
 function createSampleCountValueType(table: StringTable): ValueType {
-  return new ValueType({
+  return new PprofValueType({
     type: table.dedup('sample'),
     unit: table.dedup('count'),
   });
@@ -219,7 +232,7 @@ function createSampleCountValueType(table: StringTable): ValueType {
  * adds strings used in this value type to the table.
  */
 function createTimeValueType(table: StringTable): ValueType {
-  return new ValueType({
+  return new PprofValueType({
     type: table.dedup('wall'),
     unit: table.dedup('nanoseconds'),
   });
@@ -230,7 +243,7 @@ function createTimeValueType(table: StringTable): ValueType {
  * adds strings used in this value type to the table.
  */
 function createCpuValueType(table: StringTable): ValueType {
-  return new ValueType({
+  return new PprofValueType({
     type: table.dedup('cpu'),
     unit: table.dedup('nanoseconds'),
   });
@@ -241,7 +254,7 @@ function createCpuValueType(table: StringTable): ValueType {
  * adds strings used in this value type to the table.
  */
 function createObjectCountValueType(table: StringTable): ValueType {
-  return new ValueType({
+  return new PprofValueType({
     type: table.dedup('objects'),
     unit: table.dedup('count'),
   });
@@ -252,7 +265,7 @@ function createObjectCountValueType(table: StringTable): ValueType {
  * adds strings used in this value type to the table.
  */
 function createAllocationValueType(table: StringTable): ValueType {
-  return new ValueType({
+  return new PprofValueType({
     type: table.dedup('space'),
     unit: table.dedup('bytes'),
   });
@@ -377,7 +390,7 @@ export function serializeTimeProfile(
     }
   }
   const intervalNanos = intervalMicros * 1000;
-  const stringTable = new StringTable();
+  const stringTable = new PprofStringTable();
   const labelCaches: Map<number | bigint, Label>[] = [];
   for (const l of lowCardinalityLabels) {
     labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
@@ -424,7 +437,7 @@ export function serializeTimeProfile(
         if (prof.hasCpuTime) {
           values.push(context.cpuTime ?? 0);
         }
-        const sample = new Sample({
+        const sample = new PprofSample({
           locationId: entry.stack,
           value: values,
           label: dedupLabels(labelsArr),
@@ -444,7 +457,7 @@ export function serializeTimeProfile(
       if (prof.hasCpuTime) {
         values.push(unlabelledCpuTime);
       }
-      const sample = new Sample({
+      const sample = new PprofSample({
         locationId: entry.stack,
         value: values,
         label: buildLabels(labels, stringTable),
@@ -481,7 +494,7 @@ export function serializeTimeProfile(
     sourceMapper
   );
 
-  return new Profile(profile);
+  return new PprofProfile(profile);
 }
 
 function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
@@ -502,7 +515,7 @@ function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
       default:
         continue;
     }
-    labels.push(new Label(labelInput));
+    labels.push(new PprofLabel(labelInput));
   }
 
   return labels;
@@ -534,7 +547,7 @@ export function serializeHeapProfile(
         ? buildLabels(generateLabels({node: entry.node}), stringTable)
         : [];
       for (const alloc of entry.node.allocations) {
-        const sample = new Sample({
+        const sample = new PprofSample({
           locationId: entry.stack,
           value: [alloc.count, alloc.sizeBytes * alloc.count],
           label: labels,
@@ -545,7 +558,7 @@ export function serializeHeapProfile(
     }
   };
 
-  const stringTable = new StringTable();
+  const stringTable = new PprofStringTable();
   const sampleValueType = createObjectCountValueType(stringTable);
   const allocationValueType = createAllocationValueType(stringTable);
 
@@ -565,5 +578,5 @@ export function serializeHeapProfile(
     sourceMapper
   );
 
-  return new Profile(profile);
+  return new PprofProfile(profile);
 }
