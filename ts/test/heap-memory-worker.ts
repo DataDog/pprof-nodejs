@@ -36,16 +36,23 @@ function traverseTree(root: AllocationProfileNode): void {
   }
 }
 
-function measureMemoryUsage(getProfile: () => AllocationProfileNode): number {
+function measureMemoryUsage(getProfile: () => AllocationProfileNode): {
+  initial: number;
+  afterTraversal: number;
+} {
   gc!();
   gc!();
   const baseline = process.memoryUsage().heapUsed;
 
   const profile = getProfile();
-  const memoryUsage = process.memoryUsage().heapUsed - baseline;
+  const initial = process.memoryUsage().heapUsed - baseline;
+
   traverseTree(profile);
 
-  return memoryUsage;
+  return {
+    initial,
+    afterTraversal: process.memoryUsage().heapUsed - baseline,
+  };
 }
 
 process.on('message', (version: 'v1' | 'v2') => {
@@ -57,10 +64,10 @@ process.on('message', (version: 'v1' | 'v2') => {
       ? v8HeapProfiler.getAllocationProfile
       : v8HeapProfiler.getAllocationProfileV2;
 
-  const memoryUsage = measureMemoryUsage(getProfile);
+  const {initial, afterTraversal} = measureMemoryUsage(getProfile);
 
   heapProfiler.stop();
   keepAlive.length = 0;
 
-  process.send!(memoryUsage);
+  process.send!({initial, afterTraversal});
 });

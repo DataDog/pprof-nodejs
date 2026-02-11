@@ -85,8 +85,8 @@ describe('HeapProfiler V2 API', () => {
 
   describe('Memory comparison', () => {
     interface MemoryResult {
-      memoryUsage: number;
-      nodeCount: number;
+      initial: number;
+      afterTraversal: number;
     }
 
     function measureMemoryInWorker(
@@ -112,11 +112,18 @@ describe('HeapProfiler V2 API', () => {
       const v2MemoryUsage = await measureMemoryInWorker('v2');
 
       console.log(
-        `V1 memory usage: ${v1MemoryUsage}, V2 memory usage: ${v2MemoryUsage}`
+        ` V1 initial: ${v1MemoryUsage.initial}, afterTraversal: ${v1MemoryUsage.afterTraversal} 
+        | V2 initial: ${v2MemoryUsage.initial}, afterTraversal: ${v2MemoryUsage.afterTraversal}`
       );
+
       assert.ok(
-        v2MemoryUsage < v1MemoryUsage,
-        `V2 should use less memory: V1=${v1MemoryUsage}, V2=${v2MemoryUsage}`
+        v2MemoryUsage.initial < v1MemoryUsage.initial,
+        `V2 initial should be less: V1=${v1MemoryUsage.initial}, V2=${v2MemoryUsage.initial}`
+      );
+
+      assert.ok(
+        v2MemoryUsage.afterTraversal < v1MemoryUsage.afterTraversal,
+        `V2 afterTraversal should be less: V1=${v1MemoryUsage.afterTraversal}, V2=${v2MemoryUsage.afterTraversal}`
       );
     }).timeout(30000);
   });
