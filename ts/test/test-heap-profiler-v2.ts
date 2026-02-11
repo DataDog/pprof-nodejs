@@ -1,4 +1,5 @@
 import {strict as assert} from 'assert';
+import {fork} from 'child_process';
 import * as heapProfiler from '../src/heap-profiler';
 import * as v8HeapProfiler from '../src/heap-profiler-bindings';
 
@@ -80,5 +81,43 @@ describe('HeapProfiler V2 API', () => {
       assert.ok(profile.function);
       assert.ok(profile.stringTable);
     });
+  });
+
+  describe('Memory comparison', () => {
+    interface MemoryResult {
+      memoryUsage: number;
+      nodeCount: number;
+    }
+
+    function measureMemoryInWorker(
+      version: 'v1' | 'v2'
+    ): Promise<MemoryResult> {
+      return new Promise((resolve, reject) => {
+        const child = fork('./out/test/heap-memory-worker.js', [], {
+          execArgv: ['--expose-gc'],
+        });
+
+        child.on('message', (result: MemoryResult) => {
+          resolve(result);
+          child.kill();
+        });
+
+        child.on('error', reject);
+        child.send(version);
+      });
+    }
+
+    it('getAllocationProfileV2 should use less initial memory than getAllocationProfile', async () => {
+      const v1MemoryUsage = await measureMemoryInWorker('v1');
+      const v2MemoryUsage = await measureMemoryInWorker('v2');
+
+      console.log(
+        `V1 memory usage: ${v1MemoryUsage}, V2 memory usage: ${v2MemoryUsage}`
+      );
+      assert.ok(
+        v2MemoryUsage < v1MemoryUsage,
+        `V2 should use less memory: V1=${v1MemoryUsage}, V2=${v2MemoryUsage}`
+      );
+    }).timeout(30000);
   });
 });

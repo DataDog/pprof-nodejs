@@ -97,7 +97,7 @@ export function convertProfile(
     };
     root = {...rootNode, children: [...rootNode.children, externalNode]};
   } else {
-    root = {...rootNode, children: [...rootNode.children]};
+    root = rootNode;
   }
   return serializeHeapProfile(
     root,
