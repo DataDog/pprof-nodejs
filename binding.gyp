@@ -18,7 +18,8 @@
                             "bindings/thread-cpu-clock.cc",
                             "bindings/translate-heap-profile.cc",
                             "bindings/translate-time-profile.cc",
-                            "bindings/binding.cc"
+                            "bindings/binding.cc",
+                            "bindings/allocation-profile-node.cc"
                         ],
                         "include_dirs": [
                             "bindings",
@@ -42,6 +43,7 @@
                             "bindings/translate-heap-profile.cc",
                             "bindings/translate-time-profile.cc",
                             "bindings/test/binding.cc",
+                            "bindings/allocation-profile-node.cc"
                         ],
                         "include_dirs": [
                             "bindings",

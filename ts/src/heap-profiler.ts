@@ -18,6 +18,7 @@ import {Profile} from 'pprof-format';
 
 import {
   getAllocationProfile,
+  getAllocationProfileV2,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
@@ -45,6 +46,13 @@ export function v8Profile(): AllocationProfileNode {
     throw new Error('Heap profiler is not enabled.');
   }
   return getAllocationProfile();
+}
+
+export function v8ProfileV2(): AllocationProfileNode {
+  if (!enabled) {
+    throw new Error('Heap profiler is not enabled.');
+  }
+  return getAllocationProfileV2();
 }
 
 /**
@@ -79,6 +87,7 @@ export function convertProfile(
   // TODO: remove any once type definition is updated to include external.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const {external}: {external: number} = process.memoryUsage() as any;
+  let root: AllocationProfileNode;
   if (external > 0) {
     const externalNode: AllocationProfileNode = {
       name: '(external)',
@@ -86,12 +95,35 @@ export function convertProfile(
       children: [],
       allocations: [{sizeBytes: external, count: 1}],
     };
-    rootNode.children.push(externalNode);
+    root = {...rootNode, children: [...rootNode.children, externalNode]};
+  } else {
+    root = rootNode;
   }
   return serializeHeapProfile(
-    rootNode,
+    root,
     startTimeNanos,
     heapIntervalBytes,
+    ignoreSamplePath,
+    sourceMapper,
+    generateLabels
+  );
+}
+
+/**
+ * Collects a profile and returns it serialized in pprof format using lazy V2 API.
+ * Throws if heap profiler is not enabled.
+ *
+ * @param ignoreSamplePath
+ * @param sourceMapper
+ * @param generateLabels
+ */
+export function profileV2(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction
+): Profile {
+  return convertProfile(
+    v8ProfileV2(),
     ignoreSamplePath,
     sourceMapper,
     generateLabels

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Datadog, Inc
+ * Copyright 2024 Datadog, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,28 +17,30 @@
 #pragma once
 
 #include <nan.h>
-#include <node.h>
-#include <v8.h>
 #include <memory>
+
+#include "translate-heap-profile.hh"
 
 namespace dd {
 
-struct HeapProfilerState;
-
-class PerIsolateData {
- private:
-  Nan::Global<v8::Function> wall_profiler_constructor;
-  Nan::Global<v8::Function> allocation_node_constructor;
-  std::shared_ptr<HeapProfilerState> heap_profiler_state;
-
-  PerIsolateData() {}
-
+class ExternalAllocationNode : public Nan::ObjectWrap {
  public:
-  static PerIsolateData* For(v8::Isolate* isolate);
+  static NAN_MODULE_INIT(Init);
 
-  Nan::Global<v8::Function>& WallProfilerConstructor();
-  Nan::Global<v8::Function>& AllocationNodeConstructor();
-  std::shared_ptr<HeapProfilerState>& GetHeapProfilerState();
+  static v8::Local<v8::Object> New(std::shared_ptr<ExternalNode> node);
+
+ private:
+  ExternalAllocationNode(std::shared_ptr<ExternalNode> node) : node_(node) {}
+
+  static NAN_GETTER(GetName);
+  static NAN_GETTER(GetScriptName);
+  static NAN_GETTER(GetScriptId);
+  static NAN_GETTER(GetLineNumber);
+  static NAN_GETTER(GetColumnNumber);
+  static NAN_GETTER(GetAllocations);
+  static NAN_GETTER(GetChildren);
+
+  std::shared_ptr<ExternalNode> node_;
 };
 
 }  // namespace dd
