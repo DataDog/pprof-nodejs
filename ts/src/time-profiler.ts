@@ -29,7 +29,7 @@ import {
 } from './time-profiler-bindings';
 import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
 import {isMainThread} from 'worker_threads';
-
+import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
@@ -39,6 +39,7 @@ type Microseconds = number;
 type Milliseconds = number;
 
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+let gStore: AsyncLocalStorage<any> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -95,7 +96,10 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler({...options, isMainThread});
+  if (options.useCPED === true) {
+    gStore = new AsyncLocalStorage();
+  }
+  gProfiler = new TimeProfiler({...options, CPEDKey: gStore, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
@@ -105,6 +109,11 @@ export function start(options: TimeProfilerOptions = {}) {
   // If contexts are enabled without using CPED, set an initial empty context
   if (options.withContexts && !options.useCPED) {
     setContext({});
+  }
+
+  // If using CPED, ensure an async context frame exists
+  if (options.withContexts && options.useCPED && gStore) {
+    gStore.enterWith([]);
   }
 }
 
@@ -128,6 +137,10 @@ export function stop(
       gProfiler.stop(false);
       gProfiler.start();
     }
+    // Re-enter async context frame if using CPED, as it may have been cleared during restart
+    if (gStore) {
+      gStore.enterWith([]);
+    }
   } else {
     gV8ProfilerStuckEventLoopDetected = 0;
   }
@@ -144,6 +157,10 @@ export function stop(
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
   }
   return serializedProfile;
 }
@@ -160,6 +177,19 @@ export function setContext(context?: object) {
     throw new Error('Wall profiler is not started');
   }
   gProfiler.context = context;
+}
+
+export function runWithContext<R, TArgs extends any[]>(
+  context: object,
+  f: (...args: TArgs) => R,
+  ...args: TArgs
+): R {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  } else if (!gStore) {
+    throw new Error('Can only use runWithContext with AsyncContextFrame');
+  }
+  return gStore.run(gProfiler.createContextHolder(context), f, ...args);
 }
 
 export function getContext() {
