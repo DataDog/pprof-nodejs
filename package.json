@@ -36,7 +36,7 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "delay": "^5.0.0",
+    "delay": "^7.0.0",
     "node-gyp-build": "<4.0",
     "p-limit": "^3.1.0",
     "pprof-format": "^2.2.1",
