@@ -18,7 +18,8 @@
                             "bindings/thread-cpu-clock.cc",
                             "bindings/translate-heap-profile.cc",
                             "bindings/translate-time-profile.cc",
-                            "bindings/binding.cc"
+                            "bindings/binding.cc",
+                            "bindings/map-get.cc"
                         ],
                         "include_dirs": [
                             "bindings",

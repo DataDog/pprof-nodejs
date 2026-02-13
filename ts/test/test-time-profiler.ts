@@ -23,7 +23,6 @@ import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
 import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
-import {AsyncLocalStorage} from 'async_hooks';
 import {satisfies} from 'semver';
 
 import assert from 'assert';
@@ -35,6 +34,10 @@ const useCPED =
     process.execArgv.includes('--experimental-async-context-frame'));
 
 const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
+
+const unsupportedPlatform =
+  process.platform !== 'darwin' && process.platform !== 'linux';
+const shouldSkipCPEDTests = !useCPED || unsupportedPlatform;
 
 const PROFILE_OPTIONS = {
   durationMillis: 500,
@@ -50,14 +53,10 @@ describe('Time Profiler', () => {
     });
 
     it('should update state', function shouldUpdateState() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       const startTime = BigInt(Date.now()) * 1000n;
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
       time.start({
         intervalMicros: 20 * 1_000,
         durationMillis: PROFILE_OPTIONS.durationMillis,
@@ -106,16 +105,12 @@ describe('Time Profiler', () => {
     });
 
     it('should have labels', function shouldHaveLabels() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       this.timeout(3000);
 
       const intervalNanos = PROFILE_OPTIONS.intervalMicros * 1_000;
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
       time.start({
         intervalMicros: PROFILE_OPTIONS.intervalMicros,
         durationMillis: PROFILE_OPTIONS.durationMillis,
@@ -139,6 +134,10 @@ describe('Time Profiler', () => {
       for (let i = 0; i < repeats; ++i) {
         loop();
         enableEndPoint = i % 2 === 0;
+        const metrics = time.getMetrics();
+        const expectedAsyncContextCount = useCPED ? 1 : 0;
+        assert(metrics.totalAsyncContextCount >= expectedAsyncContextCount);
+        assert(metrics.usedAsyncContextCount >= expectedAsyncContextCount);
         validateProfile(
           time.stop(
             i < repeats - 1,
@@ -545,15 +544,10 @@ describe('Time Profiler', () => {
 
   describe('lowCardinalityLabels', () => {
     it('should handle lowCardinalityLabels parameter in stop function', async function testLowCardinalityLabels() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       this.timeout(3000);
-
-      if (useCPED) {
-        // Ensure an async context frame is created to hold the profiler context.
-        new AsyncLocalStorage().enterWith(1);
-      }
 
       // Set up some contexts with labels that we'll mark as low cardinality
       const lowCardLabel = 'service_name';
@@ -738,6 +732,242 @@ describe('Time Profiler', () => {
       const threadId = getNativeThreadId();
       assert.ok(typeof threadId === 'number');
       assert.ok(threadId > 0);
+    });
+  });
+
+  describe('runWithContext', () => {
+    it('should throw when profiler is not started', () => {
+      assert.throws(() => {
+        time.runWithContext({label: 'test'}, () => {});
+      }, /Wall profiler is not started/);
+    });
+
+    it('should throw when useCPED is not enabled', function testNoCPED() {
+      if (unsupportedPlatform) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: false,
+      });
+
+      try {
+        assert.throws(() => {
+          time.runWithContext({label: 'test'}, () => {});
+        }, /Can only use runWithContext with AsyncContextFrame/);
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should run function with context when useCPED is enabled', function testRunWithContext() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test-value', id: '123'};
+        let contextInsideFunction;
+
+        time.runWithContext(testContext, () => {
+          contextInsideFunction = time.getContext();
+        });
+
+        assert.deepEqual(
+          contextInsideFunction,
+          testContext,
+          'Context should be accessible within function'
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should pass arguments to function correctly', function testArguments() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test'};
+        const result = time.runWithContext(
+          testContext,
+          (a: number, b: string, c: boolean) => {
+            return {a, b, c};
+          },
+          42,
+          'hello',
+          true
+        );
+
+        assert.deepEqual(
+          result,
+          {a: 42, b: 'hello', c: true},
+          'Arguments should be passed correctly'
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should return function result', function testReturnValue() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test'};
+        const result = time.runWithContext(testContext, () => {
+          return 'test-result';
+        });
+
+        assert.strictEqual(
+          result,
+          'test-result',
+          'Function result should be returned'
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should handle nested runWithContext calls', function testNestedCalls() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const outerContext = {label: 'outer'};
+        const innerContext = {label: 'inner'};
+        const results: string[] = [];
+
+        time.runWithContext(outerContext, () => {
+          const ctx1 = time.getContext();
+          results.push((ctx1 as any).label);
+
+          time.runWithContext(innerContext, () => {
+            const ctx2 = time.getContext();
+            results.push((ctx2 as any).label);
+          });
+
+          const ctx3 = time.getContext();
+          results.push((ctx3 as any).label);
+        });
+
+        assert.deepEqual(
+          results,
+          ['outer', 'inner', 'outer'],
+          'Nested contexts should be properly isolated and restored'
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should isolate context from outside runWithContext', function testContextIsolation() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const runWithContextContext = {label: 'inside'};
+        let contextInside;
+
+        time.runWithContext(runWithContextContext, () => {
+          contextInside = time.getContext();
+        });
+
+        // Context outside runWithContext should be undefined since we're using CPED
+        const contextOutside = time.getContext();
+
+        assert.deepEqual(
+          contextInside,
+          runWithContextContext,
+          'Context inside should match'
+        );
+        assert.strictEqual(
+          contextOutside,
+          undefined,
+          'Context outside should be undefined with CPED'
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should work with async functions', async function testAsyncFunction() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'async-test'};
+
+        const result = await time.runWithContext(testContext, async () => {
+          const ctx1 = time.getContext();
+          await delay(10);
+          const ctx2 = time.getContext();
+          return {ctx1, ctx2};
+        });
+
+        assert.deepEqual(
+          result.ctx1,
+          testContext,
+          'Context should be available before await'
+        );
+        assert.deepEqual(
+          result.ctx2,
+          testContext,
+          'Context should be preserved after await'
+        );
+      } finally {
+        time.stop();
+      }
     });
   });
 });

@@ -36,10 +36,12 @@ export const time = {
   stop: timeProfiler.stop,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
+  runWithContext: timeProfiler.runWithContext,
   isStarted: timeProfiler.isStarted,
   v8ProfilerStuckEventLoopDetected:
     timeProfiler.v8ProfilerStuckEventLoopDetected,
   getState: timeProfiler.getState,
+  getMetrics: timeProfiler.getMetrics,
   constants: timeProfiler.constants,
 };
 
