@@ -35,7 +35,7 @@ class HeapProfiler {
   static NAN_METHOD(GetAllocationProfile);
 
   // Signature:
-  // getAllocationProfileV2(): ExternalAllocationNode
+  // getAllocationProfileV2(callback): callback result
   static NAN_METHOD(GetAllocationProfileV2);
 
   static NAN_METHOD(MonitorOutOfMemory);

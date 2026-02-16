@@ -48,7 +48,7 @@ NODE_MODULE_INIT(/* exports, module, context */) {
 #pragma GCC diagnostic pop
 #endif
 
-  dd::ExternalAllocationNode::Init(exports);
+  dd::AllocationProfileNodeView::Init(exports);
   dd::HeapProfiler::Init(exports);
   dd::WallProfiler::Init(exports);
   Nan::SetMethod(exports, "getNativeThreadId", GetNativeThreadId);

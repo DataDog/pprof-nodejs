@@ -505,9 +505,13 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   info.GetReturnValue().Set(TranslateAllocationProfile(root));
 }
 
-// getAllocationProfileV2(): ExternalAllocationNode
+// getAllocationProfileV2(callback): callback result
 NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
+  if (info.Length() < 1 || !info[0]->IsFunction()) {
+    return Nan::ThrowTypeError("getAllocationProfileV2 requires a callback");
+  }
   auto isolate = info.GetIsolate();
+  auto callback = info[0].As<v8::Function>();
 
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
@@ -516,16 +520,18 @@ NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
 
-  auto root_node =
-      TranslateAllocationProfileToExternal(isolate, profile->GetRootNode());
-
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state) {
     state->OnNewProfile();
   }
 
-  auto root = ExternalAllocationNode::New(root_node);
-  info.GetReturnValue().Set(root);
+  auto root = AllocationProfileNodeView::New(profile->GetRootNode());
+  v8::Local<v8::Value> argv[] = {root};
+  auto result =
+      Nan::Call(callback, isolate->GetCurrentContext()->Global(), 1, argv);
+  if (!result.IsEmpty()) {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
 }
 
 NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {

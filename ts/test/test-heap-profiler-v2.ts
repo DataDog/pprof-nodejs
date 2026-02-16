@@ -26,31 +26,31 @@ describe('HeapProfiler V2 API', () => {
 
   describe('v8ProfileV2', () => {
     it('should return AllocationProfileNode', () => {
-      const root = heapProfiler.v8ProfileV2();
+      heapProfiler.v8ProfileV2(root => {
+        assert.equal(typeof root.name, 'string');
+        assert.equal(typeof root.scriptName, 'string');
+        assert.equal(typeof root.scriptId, 'number');
+        assert.equal(typeof root.lineNumber, 'number');
+        assert.equal(typeof root.columnNumber, 'number');
+        assert.ok(Array.isArray(root.allocations));
 
-      assert.equal(typeof root.name, 'string');
-      assert.equal(typeof root.scriptName, 'string');
-      assert.equal(typeof root.scriptId, 'number');
-      assert.equal(typeof root.lineNumber, 'number');
-      assert.equal(typeof root.columnNumber, 'number');
-      assert.ok(Array.isArray(root.allocations));
+        assert.ok(Array.isArray(root.children));
+        assert.equal(typeof root.children.length, 'number');
 
-      assert.ok(Array.isArray(root.children));
-      assert.equal(typeof root.children.length, 'number');
-
-      if (root.children.length > 0) {
-        const child = root.children[0];
-        assert.equal(typeof child.name, 'string');
-        assert.ok(Array.isArray(child.children));
-        assert.ok(Array.isArray(child.allocations));
-      }
+        if (root.children.length > 0) {
+          const child = root.children[0];
+          assert.equal(typeof child.name, 'string');
+          assert.ok(Array.isArray(child.children));
+          assert.ok(Array.isArray(child.allocations));
+        }
+      });
     });
 
     it('should throw error when profiler not started', () => {
       heapProfiler.stop();
       assert.throws(
         () => {
-          heapProfiler.v8ProfileV2();
+          heapProfiler.v8ProfileV2(() => {});
         },
         (err: Error) => {
           return err.message === 'Heap profiler is not enabled.';
@@ -62,12 +62,12 @@ describe('HeapProfiler V2 API', () => {
 
   describe('getAllocationProfileV2', () => {
     it('should return AllocationProfileNode directly', () => {
-      const root = v8HeapProfiler.getAllocationProfileV2();
-
-      assert.equal(typeof root.name, 'string');
-      assert.equal(typeof root.scriptName, 'string');
-      assert.ok(Array.isArray(root.children));
-      assert.ok(Array.isArray(root.allocations));
+      v8HeapProfiler.getAllocationProfileV2(root => {
+        assert.equal(typeof root.name, 'string');
+        assert.equal(typeof root.scriptName, 'string');
+        assert.ok(Array.isArray(root.children));
+        assert.ok(Array.isArray(root.allocations));
+      });
     });
   });
 

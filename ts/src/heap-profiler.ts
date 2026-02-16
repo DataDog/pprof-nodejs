@@ -48,11 +48,13 @@ export function v8Profile(): AllocationProfileNode {
   return getAllocationProfile();
 }
 
-export function v8ProfileV2(): AllocationProfileNode {
+export function v8ProfileV2<T>(
+  callback: (root: AllocationProfileNode) => T
+): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
-  return getAllocationProfileV2();
+  return getAllocationProfileV2(callback);
 }
 
 /**
@@ -122,12 +124,9 @@ export function profileV2(
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction
 ): Profile {
-  return convertProfile(
-    v8ProfileV2(),
-    ignoreSamplePath,
-    sourceMapper,
-    generateLabels
-  );
+  return v8ProfileV2(root => {
+    return convertProfile(root, ignoreSamplePath, sourceMapper, generateLabels);
+  });
 }
 
 /**

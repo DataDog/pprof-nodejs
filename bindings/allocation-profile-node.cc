@@ -19,7 +19,7 @@
 
 namespace dd {
 
-NAN_MODULE_INIT(ExternalAllocationNode::Init) {
+NAN_MODULE_INIT(AllocationProfileNodeView::Init) {
   v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>();
   tpl->SetClassName(Nan::New("AllocationProfileNode").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
@@ -42,8 +42,8 @@ NAN_MODULE_INIT(ExternalAllocationNode::Init) {
       .Reset(Nan::GetFunction(tpl).ToLocalChecked());
 }
 
-v8::Local<v8::Object> ExternalAllocationNode::New(
-    std::shared_ptr<ExternalNode> node) {
+v8::Local<v8::Object> AllocationProfileNodeView::New(
+    v8::AllocationProfile::Node* node) {
   auto* isolate = v8::Isolate::GetCurrent();
 
   v8::Local<v8::Function> constructor =
@@ -51,49 +51,45 @@ v8::Local<v8::Object> ExternalAllocationNode::New(
 
   v8::Local<v8::Object> obj = Nan::NewInstance(constructor).ToLocalChecked();
 
-  auto* wrapper = new ExternalAllocationNode(node);
+  auto* wrapper = new AllocationProfileNodeView(node);
   wrapper->Wrap(obj);
 
   return obj;
 }
 
-NAN_GETTER(ExternalAllocationNode::GetName) {
+NAN_GETTER(AllocationProfileNodeView::GetName) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
-  auto* isolate = v8::Isolate::GetCurrent();
-  info.GetReturnValue().Set(
-      v8::Local<v8::String>::New(isolate, wrapper->node_->name));
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
+  info.GetReturnValue().Set(wrapper->node_->name);
 }
 
-NAN_GETTER(ExternalAllocationNode::GetScriptName) {
+NAN_GETTER(AllocationProfileNodeView::GetScriptName) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
-  auto* isolate = v8::Isolate::GetCurrent();
-  info.GetReturnValue().Set(
-      v8::Local<v8::String>::New(isolate, wrapper->node_->script_name));
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
+  info.GetReturnValue().Set(wrapper->node_->script_name);
 }
 
-NAN_GETTER(ExternalAllocationNode::GetScriptId) {
+NAN_GETTER(AllocationProfileNodeView::GetScriptId) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
   info.GetReturnValue().Set(Nan::New(wrapper->node_->script_id));
 }
 
-NAN_GETTER(ExternalAllocationNode::GetLineNumber) {
+NAN_GETTER(AllocationProfileNodeView::GetLineNumber) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
   info.GetReturnValue().Set(Nan::New(wrapper->node_->line_number));
 }
 
-NAN_GETTER(ExternalAllocationNode::GetColumnNumber) {
+NAN_GETTER(AllocationProfileNodeView::GetColumnNumber) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
   info.GetReturnValue().Set(Nan::New(wrapper->node_->column_number));
 }
 
-NAN_GETTER(ExternalAllocationNode::GetAllocations) {
+NAN_GETTER(AllocationProfileNodeView::GetAllocations) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
   auto* isolate = v8::Isolate::GetCurrent();
   auto context = isolate->GetCurrentContext();
 
@@ -113,16 +109,16 @@ NAN_GETTER(ExternalAllocationNode::GetAllocations) {
   info.GetReturnValue().Set(arr);
 }
 
-NAN_GETTER(ExternalAllocationNode::GetChildren) {
+NAN_GETTER(AllocationProfileNodeView::GetChildren) {
   auto* wrapper =
-      Nan::ObjectWrap::Unwrap<ExternalAllocationNode>(info.Holder());
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
   auto* isolate = v8::Isolate::GetCurrent();
   auto context = isolate->GetCurrentContext();
 
   const auto& children = wrapper->node_->children;
   v8::Local<v8::Array> arr = v8::Array::New(isolate, children.size());
   for (size_t i = 0; i < children.size(); i++) {
-    arr->Set(context, i, ExternalAllocationNode::New(children[i])).Check();
+    arr->Set(context, i, AllocationProfileNodeView::New(children[i])).Check();
   }
   info.GetReturnValue().Set(arr);
 }

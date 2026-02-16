@@ -17,20 +17,18 @@
 #pragma once
 
 #include <nan.h>
-#include <memory>
-
-#include "translate-heap-profile.hh"
+#include <v8-profiler.h>
 
 namespace dd {
 
-class ExternalAllocationNode : public Nan::ObjectWrap {
+class AllocationProfileNodeView : public Nan::ObjectWrap {
  public:
   static NAN_MODULE_INIT(Init);
 
-  static v8::Local<v8::Object> New(std::shared_ptr<ExternalNode> node);
+  static v8::Local<v8::Object> New(v8::AllocationProfile::Node* node);
 
  private:
-  ExternalAllocationNode(std::shared_ptr<ExternalNode> node) : node_(node) {}
+  AllocationProfileNodeView(v8::AllocationProfile::Node* node) : node_(node) {}
 
   static NAN_GETTER(GetName);
   static NAN_GETTER(GetScriptName);
@@ -40,7 +38,7 @@ class ExternalAllocationNode : public Nan::ObjectWrap {
   static NAN_GETTER(GetAllocations);
   static NAN_GETTER(GetChildren);
 
-  std::shared_ptr<ExternalNode> node_;
+  v8::AllocationProfile::Node* node_;
 };
 
 }  // namespace dd
