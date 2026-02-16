@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import delay from 'delay';
 import * as sinon from 'sinon';
 import {time, getNativeThreadId} from '../src';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
@@ -25,6 +24,7 @@ import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
 import {AsyncLocalStorage} from 'async_hooks';
 import {satisfies} from 'semver';
+import {setTimeout as setTimeoutPromise} from 'timers/promises';
 
 import assert from 'assert';
 
@@ -470,7 +470,7 @@ describe('Time Profiler', () => {
       time.profile(PROFILE_OPTIONS).then(() => {
         isProfiling = false;
       });
-      await delay(2 * PROFILE_OPTIONS.durationMillis);
+      await setTimeoutPromise(2 * PROFILE_OPTIONS.durationMillis);
       assert.strictEqual(false, isProfiling, 'profiler is still running');
     });
 
