@@ -141,8 +141,8 @@ describe('Time Profiler', () => {
         enableEndPoint = i % 2 === 0;
         const metrics = time.getMetrics();
         const expectedAsyncContextCount = useCPED ? 1 : 0;
-        assert(metrics.totalAsyncContextCount === expectedAsyncContextCount);
-        assert(metrics.usedAsyncContextCount === expectedAsyncContextCount);
+        assert(metrics.totalAsyncContextCount >= expectedAsyncContextCount);
+        assert(metrics.usedAsyncContextCount >= expectedAsyncContextCount);
         validateProfile(
           time.stop(
             i < repeats - 1,

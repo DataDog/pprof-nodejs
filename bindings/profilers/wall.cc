@@ -16,7 +16,6 @@
 
 #include <nan.h>
 #include <node.h>
-#include <v8-internal.h>
 #include <v8-profiler.h>
 #include <cinttypes>
 #include <cstdint>
@@ -26,7 +25,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "defer.hh"
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
 #include "wall.hh"
@@ -612,123 +610,6 @@ void GCEpilogueCallback(Isolate* isolate,
   static_cast<WallProfiler*>(data)->OnGCEnd();
 }
 
-#if DD_WALL_USE_CPED
-// Implementation of method calls on the CPED proxy that invoke the method on
-// the proxied object. "data" is a two-element array where element 0 is the
-// Symbol used to find the proxied object in the proxy and element 1 is either
-// the method name or a cached method.
-void CpedProxyMethodCallback(const FunctionCallbackInfo<Value>& info) {
-  auto isolate = info.GetIsolate();
-  auto context = isolate->GetCurrentContext();
-  auto cpedProxy = info.This();
-  auto data = info.Data().As<Array>();
-  auto symbol = data->Get(context, 0).ToLocalChecked().As<Symbol>();
-  auto propertyName = data->Get(context, 1).ToLocalChecked();
-  auto proxied = cpedProxy->Get(context, symbol).ToLocalChecked();
-  Local<Function> method;
-  if (propertyName->IsFunction()) {
-    // It was already cached as a method, so we can use it directly
-    method = propertyName.As<Function>();
-  } else {
-    method = proxied.As<Object>()
-                 ->Get(context, propertyName)
-                 .ToLocalChecked()
-                 .As<Function>();
-    // replace the property name with the method once resolved so later
-    // invocations are faster
-    data->Set(context, 1, method).Check();
-  }
-  MaybeLocal<Value> retval;
-  auto arglen = info.Length();
-  switch (arglen) {
-    case 0:
-      retval = method->Call(context, proxied, 0, nullptr);
-      break;
-    case 1: {
-      auto arg = info[0];
-      retval = method->Call(context, proxied, 1, &arg);
-      break;
-    }
-    case 2: {
-      Local<Value> args[] = {info[0], info[1]};
-      retval = method->Call(context, proxied, 2, args);
-      break;
-    }
-    default: {
-      // No Map methods take more than 2 arguments, so this path should never
-      // get invoked. We still implement it for completeness sake.
-      auto args = new Local<Value>[arglen];
-      for (int i = 0; i < arglen; ++i) {
-        args[i] = info[i];
-      }
-      retval = method->Call(context, proxied, arglen, args);
-      delete[] args;
-    }
-  }
-  info.GetReturnValue().Set(retval.ToLocalChecked());
-}
-
-// Implementation of property getters on the CPED proxy that get the property on
-// the proxied object. "data" the Symbol used to find the proxied object in the
-// proxy.
-void CpedProxyPropertyGetterCallback(Local<Name> property,
-                                     const PropertyCallbackInfo<Value>& info) {
-  auto isolate = info.GetIsolate();
-  auto context = isolate->GetCurrentContext();
-  auto cpedProxy = info.This();
-  auto symbol = info.Data().As<Symbol>();
-  auto proxied = cpedProxy->Get(context, symbol).ToLocalChecked();
-  auto value = proxied.As<Object>()->Get(context, property).ToLocalChecked();
-  info.GetReturnValue().Set(value);
-}
-
-// Sets up all the proxy methods and properties for the CPED proxy prototype
-void SetupCpedProxyProtoMethods(Isolate* isolate,
-                                Local<Object> cpedProxyProto,
-                                Local<Symbol> cpedProxySymbol) {
-  auto context = isolate->GetCurrentContext();
-
-  auto addProxyProtoMethod = [&](Local<Name> methodName) {
-    auto data = Array::New(isolate, 2);
-    data->Set(context, Number::New(isolate, 0), cpedProxySymbol).Check();
-    data->Set(context, Number::New(isolate, 1), methodName).Check();
-    cpedProxyProto
-        ->Set(context,
-              methodName,
-              Function::New(context, &CpedProxyMethodCallback, data)
-                  .ToLocalChecked())
-        .Check();
-  };
-
-  // Map methods + AsyncContextFrame.disable method
-  static constexpr const char* methodNames[] = {"clear",
-                                                "delete",
-                                                "entries",
-                                                "forEach",
-                                                "get",
-                                                "has",
-                                                "keys",
-                                                "set",
-                                                "values",
-                                                "disable"};
-
-  for (const char* methodName : methodNames) {
-    addProxyProtoMethod(
-        String::NewFromUtf8(isolate, methodName).ToLocalChecked());
-  }
-  addProxyProtoMethod(Symbol::GetIterator(isolate));
-
-  // Map.size property
-  cpedProxyProto
-      ->SetNativeDataProperty(context,
-                              String::NewFromUtf8Literal(isolate, "size"),
-                              &CpedProxyPropertyGetterCallback,
-                              nullptr,
-                              cpedProxySymbol)
-      .Check();
-}
-#endif  // DD_WALL_USE_CPED
-
 WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
                            std::chrono::microseconds duration,
                            bool includeLines,
@@ -774,30 +655,16 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   jsArray_ = v8::Global<v8::Uint32Array>(isolate, jsArray);
   std::fill(fields_, fields_ + kFieldCount, 0);
 
-#if DD_WALL_USE_CPED
   if (useCPED_) {
-    // Used to create CPED proxy objects that will have one internal field to
-    // store the sample context pointer.
-    auto cpedObjTpl = ObjectTemplate::New(isolate);
-    cpedObjTpl->SetInternalFieldCount(1);
-    cpedProxyTemplate_.Reset(isolate, cpedObjTpl);
-    // Symbol used for the property name that stores the proxied object in the
-    // CPED proxy object.
-    Local<Symbol> cpedProxySymbol =
-        Symbol::New(isolate,
-                    String::NewFromUtf8Literal(
-                        isolate, "WallProfiler::CPEDProxy::ProxiedObject"));
-    cpedProxySymbol_.Reset(isolate, cpedProxySymbol);
-    // Prototype for the CPED proxy object that will have methods and property
-    // getters that invoke the corresponding methods and properties on the
-    // proxied object. The set of methods & properties is chosen with the
-    // assumption that the proxied object is a Node.js AsyncContextFrame.
-    Local<Object> cpedProxyProto = Object::New(isolate);
-    cpedProxyProto_.Reset(isolate, cpedProxyProto);
-
-    SetupCpedProxyProtoMethods(isolate, cpedProxyProto, cpedProxySymbol);
+    cpedSymbol_.Reset(
+        isolate,
+        Private::ForApi(isolate,
+                        String::NewFromUtf8Literal(
+                            isolate, "dd::WallProfiler::cpedSymbol_")));
+    auto wrapObjectTemplate = ObjectTemplate::New(isolate);
+    wrapObjectTemplate->SetInternalFieldCount(1);
+    wrapObjectTemplate_.Reset(isolate, wrapObjectTemplate);
   }
-#endif  // DD_WALL_USE_CPED
 }
 
 WallProfiler::~WallProfiler() {
@@ -1282,29 +1149,39 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
   // No Node AsyncContextFrame in this continuation yet
   if (!cped->IsObject()) return;
 
+  auto v8Ctx = isolate->GetCurrentContext();
+  // This should always be called from a V8 context, but check just in case.
+  if (v8Ctx.IsEmpty()) return;
+
   auto cpedObj = cped.As<Object>();
-  PersistentContextPtr* contextPtr;
+  auto localSymbol = cpedSymbol_.Get(isolate);
+  auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
+  if (maybeProfData.IsEmpty()) return;
+
+  PersistentContextPtr* contextPtr = nullptr;
+  auto profData = maybeProfData.ToLocalChecked();
   SignalGuard m(setInProgress_);
-  auto proxyProto = cpedProxyProto_.Get(isolate);
-  if (!proxyProto->StrictEquals(cpedObj->GetPrototype())) {
-    auto v8Ctx = isolate->GetCurrentContext();
-    // This should always be called from a V8 context, but check just in case.
-    if (v8Ctx.IsEmpty()) return;
-    // Create a new CPED object with an internal field for the context pointer
-    auto proxyObj =
-        cpedProxyTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
-    // Set up the proxy object to hold the proxied object and have the prototype
-    // that proxies AsyncContextFrame methods and properties
-    proxyObj->SetPrototype(v8Ctx, proxyProto).Check();
-    proxyObj->Set(v8Ctx, cpedProxySymbol_.Get(isolate), cpedObj).Check();
-    // Set up the context pointer in the internal field
-    contextPtr = new PersistentContextPtr(&liveContextPtrs_, proxyObj);
+  if (profData->IsUndefined()) {
+    if (value->IsNullOrUndefined()) {
+      // Don't go to the trouble of mutating the CPED for null or undefined as
+      // the absence of a sample context will be interpreted as undefined in
+      // GetContextPtr anyway.
+      return;
+    }
+
+    auto wrap =
+        wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+    auto maybeSetResult = cpedObj->Set(v8Ctx, localSymbol, wrap);
+    if (maybeSetResult.IsNothing()) {
+      return;
+    }
+    contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
     liveContextPtrs_.insert(contextPtr);
-    // Set the proxy object as the continuation preserved embedder data
-    isolate->SetContinuationPreservedEmbedderData(proxyObj);
   } else {
-    contextPtr = PersistentContextPtr::Unwrap(cpedObj);
+    contextPtr =
+        static_cast<PersistentContextPtr*>(profData.As<External>()->Value());
   }
+
   contextPtr->Set(isolate, value);
 #else
   SetCurrentContextPtr(isolate, value);
@@ -1341,19 +1218,21 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
     // Must not try to create a handle scope if isolate is not in use.
     return ContextPtr();
   }
+  HandleScope scope(isolate);
 
-  auto addr = reinterpret_cast<internal::Address*>(
-      reinterpret_cast<uint64_t>(isolate) +
-      internal::Internals::kContinuationPreservedEmbedderDataOffset);
-
-  if (internal::Internals::HasHeapObjectTag(*addr)) {
-    auto cped = reinterpret_cast<Value*>(addr);
-    if (cped->IsObject()) {
-      auto cpedObj = static_cast<Object*>(cped);
-      if (cpedObj->InternalFieldCount() > 0) {
-        return static_cast<PersistentContextPtr*>(
-                   cpedObj->GetAlignedPointerFromInternalField(0))
-            ->Get();
+  auto cped = isolate->GetContinuationPreservedEmbedderData();
+  if (cped->IsObject()) {
+    auto v8Ctx = isolate->GetEnteredOrMicrotaskContext();
+    if (!v8Ctx.IsEmpty()) {
+      auto cpedObj = cped.As<Object>();
+      auto localSymbol = cpedSymbol_.Get(isolate);
+      auto maybeProfData = cpedObj->GetPrivate(v8Ctx, localSymbol);
+      if (!maybeProfData.IsEmpty()) {
+        auto profData = maybeProfData.ToLocalChecked();
+        if (profData->IsObject()) {
+          auto profObj = profData.As<Object>();
+          return PersistentContextPtr::Unwrap(profObj)->Get();
+        }
       }
     }
   }
@@ -1372,6 +1251,7 @@ Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
             String::NewFromUtf8Literal(isolate, "usedAsyncContextCount"),
             Number::New(isolate, usedAsyncContextCount))
       .ToChecked();
+  // totalAsyncContextCount == usedAsyncContextCount
   metrics
       ->Set(context,
             String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
@@ -1478,13 +1358,11 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 
 void WallProfiler::OnGCEnd() {
   auto oldCount = gcCount.fetch_sub(1, std::memory_order_relaxed);
-  if (oldCount != 1 || !useCPED_) {
-    return;
+  if (oldCount == 1 && useCPED_) {
+    // Not strictly necessary, as we'll reset it to something else on next GC,
+    // but why retain it longer than needed?
+    gcContext_.reset();
   }
-
-  // Not strictly necessary, as we'll reset it to something else on next GC,
-  // but why retain it longer than needed?
-  gcContext_.reset();
 }
 
 void WallProfiler::PushContext(int64_t time_from,
