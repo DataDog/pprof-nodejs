@@ -597,8 +597,7 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
   Nan::SetMethod(
       heapProfiler, "stopSamplingHeapProfiler", StopSamplingHeapProfiler);
   Nan::SetMethod(heapProfiler, "getAllocationProfile", GetAllocationProfile);
-  Nan::SetMethod(
-      heapProfiler, "mapAllocationProfile", MapAllocationProfile);
+  Nan::SetMethod(heapProfiler, "mapAllocationProfile", MapAllocationProfile);
   Nan::SetMethod(heapProfiler, "monitorOutOfMemory", MonitorOutOfMemory);
   Nan::Set(target,
            Nan::New<v8::String>("heapProfiler").ToLocalChecked(),

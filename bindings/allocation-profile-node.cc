@@ -19,6 +19,14 @@
 
 namespace dd {
 
+template <typename F>
+void AllocationProfileNodeView::mapAllocationProfileNode(
+    const Nan::PropertyCallbackInfo<v8::Value>& info, F&& mapper) {
+  auto* wrapper =
+      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
+  info.GetReturnValue().Set(mapper(wrapper->node_));
+}
+
 NAN_MODULE_INIT(AllocationProfileNodeView::Init) {
   v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>();
   tpl->SetClassName(Nan::New("AllocationProfileNode").ToLocalChecked());
@@ -58,69 +66,67 @@ v8::Local<v8::Object> AllocationProfileNodeView::New(
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetName) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(wrapper->node_->name);
+  mapAllocationProfileNode(
+      info, [](v8::AllocationProfile::Node* node) { return node->name; });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetScriptName) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(wrapper->node_->script_name);
+  mapAllocationProfileNode(info, [](v8::AllocationProfile::Node* node) {
+    return node->script_name;
+  });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetScriptId) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(Nan::New(wrapper->node_->script_id));
+  mapAllocationProfileNode(
+      info, [](v8::AllocationProfile::Node* node) { return node->script_id; });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetLineNumber) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(Nan::New(wrapper->node_->line_number));
+  mapAllocationProfileNode(info, [](v8::AllocationProfile::Node* node) {
+    return node->line_number;
+  });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetColumnNumber) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(Nan::New(wrapper->node_->column_number));
+  mapAllocationProfileNode(info, [](v8::AllocationProfile::Node* node) {
+    return node->column_number;
+  });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetAllocations) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  auto* isolate = v8::Isolate::GetCurrent();
-  auto context = isolate->GetCurrentContext();
+  mapAllocationProfileNode(info, [](v8::AllocationProfile::Node* node) {
+    auto* isolate = v8::Isolate::GetCurrent();
+    auto context = isolate->GetCurrentContext();
 
-  const auto& allocations = wrapper->node_->allocations;
-  v8::Local<v8::Array> arr = v8::Array::New(isolate, allocations.size());
-  for (size_t i = 0; i < allocations.size(); i++) {
-    const auto& alloc = allocations[i];
-    v8::Local<v8::Object> alloc_obj = v8::Object::New(isolate);
-    Nan::Set(alloc_obj,
-             Nan::New("sizeBytes").ToLocalChecked(),
-             Nan::New<v8::Number>(static_cast<double>(alloc.size)));
-    Nan::Set(alloc_obj,
-             Nan::New("count").ToLocalChecked(),
-             Nan::New<v8::Number>(static_cast<double>(alloc.count)));
-    arr->Set(context, i, alloc_obj).Check();
-  }
-  info.GetReturnValue().Set(arr);
+    const auto& allocations = node->allocations;
+    v8::Local<v8::Array> arr = v8::Array::New(isolate, allocations.size());
+    for (size_t i = 0; i < allocations.size(); i++) {
+      const auto& alloc = allocations[i];
+      v8::Local<v8::Object> alloc_obj = v8::Object::New(isolate);
+      Nan::Set(alloc_obj,
+               Nan::New("sizeBytes").ToLocalChecked(),
+               Nan::New<v8::Number>(static_cast<double>(alloc.size)));
+      Nan::Set(alloc_obj,
+               Nan::New("count").ToLocalChecked(),
+               Nan::New<v8::Number>(static_cast<double>(alloc.count)));
+      arr->Set(context, i, alloc_obj).Check();
+    }
+    return arr;
+  });
 }
 
 NAN_GETTER(AllocationProfileNodeView::GetChildren) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  auto* isolate = v8::Isolate::GetCurrent();
-  auto context = isolate->GetCurrentContext();
+  mapAllocationProfileNode(info, [](v8::AllocationProfile::Node* node) {
+    auto* isolate = v8::Isolate::GetCurrent();
+    auto context = isolate->GetCurrentContext();
 
-  const auto& children = wrapper->node_->children;
-  v8::Local<v8::Array> arr = v8::Array::New(isolate, children.size());
-  for (size_t i = 0; i < children.size(); i++) {
-    arr->Set(context, i, AllocationProfileNodeView::New(children[i])).Check();
-  }
-  info.GetReturnValue().Set(arr);
+    const auto& children = node->children;
+    v8::Local<v8::Array> arr = v8::Array::New(isolate, children.size());
+    for (size_t i = 0; i < children.size(); i++) {
+      arr->Set(context, i, AllocationProfileNodeView::New(children[i])).Check();
+    }
+    return arr;
+  });
 }
 
 }  // namespace dd

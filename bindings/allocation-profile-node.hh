@@ -30,6 +30,10 @@ class AllocationProfileNodeView : public Nan::ObjectWrap {
  private:
   AllocationProfileNodeView(v8::AllocationProfile::Node* node) : node_(node) {}
 
+  template <typename F>
+  static void mapAllocationProfileNode(
+      const Nan::PropertyCallbackInfo<v8::Value>& info, F&& mapper);
+
   static NAN_GETTER(GetName);
   static NAN_GETTER(GetScriptName);
   static NAN_GETTER(GetScriptId);
