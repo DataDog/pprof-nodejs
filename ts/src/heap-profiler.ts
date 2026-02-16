@@ -18,7 +18,7 @@ import {Profile} from 'pprof-format';
 
 import {
   getAllocationProfile,
-  getAllocationProfileV2,
+  mapAllocationProfile,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
@@ -54,7 +54,7 @@ export function v8ProfileV2<T>(
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
-  return getAllocationProfileV2(callback);
+  return mapAllocationProfile(callback);
 }
 
 /**

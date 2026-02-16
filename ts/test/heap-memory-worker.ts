@@ -90,7 +90,7 @@ function measureV2(): {initial: number; afterTraversal: number} {
   gc!();
   const baseline = process.memoryUsage().heapUsed;
 
-  return v8HeapProfiler.getAllocationProfileV2(root => {
+  return v8HeapProfiler.mapAllocationProfile(root => {
     const initial = process.memoryUsage().heapUsed - baseline;
     traverseTree(root);
     const afterTraversal = process.memoryUsage().heapUsed - baseline;

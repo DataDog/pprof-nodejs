@@ -60,9 +60,9 @@ describe('HeapProfiler V2 API', () => {
     });
   });
 
-  describe('getAllocationProfileV2', () => {
+  describe('mapAllocationProfile', () => {
     it('should return AllocationProfileNode directly', () => {
-      v8HeapProfiler.getAllocationProfileV2(root => {
+      v8HeapProfiler.mapAllocationProfile(root => {
         assert.equal(typeof root.name, 'string');
         assert.equal(typeof root.scriptName, 'string');
         assert.ok(Array.isArray(root.children));
@@ -107,7 +107,7 @@ describe('HeapProfiler V2 API', () => {
       });
     }
 
-    it('getAllocationProfileV2 should use less initial memory than getAllocationProfile', async () => {
+    it('mapAllocationProfile should use less initial memory than getAllocationProfile', async () => {
       const v1MemoryUsage = await measureMemoryInWorker('v1');
       const v2MemoryUsage = await measureMemoryInWorker('v2');
 

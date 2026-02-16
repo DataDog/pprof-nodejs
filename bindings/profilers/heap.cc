@@ -505,10 +505,10 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   info.GetReturnValue().Set(TranslateAllocationProfile(root));
 }
 
-// getAllocationProfileV2(callback): callback result
-NAN_METHOD(HeapProfiler::GetAllocationProfileV2) {
+// mapAllocationProfile(callback): callback result
+NAN_METHOD(HeapProfiler::MapAllocationProfile) {
   if (info.Length() < 1 || !info[0]->IsFunction()) {
-    return Nan::ThrowTypeError("getAllocationProfileV2 requires a callback");
+    return Nan::ThrowTypeError("mapAllocationProfile requires a callback");
   }
   auto isolate = info.GetIsolate();
   auto callback = info[0].As<v8::Function>();
@@ -598,7 +598,7 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
       heapProfiler, "stopSamplingHeapProfiler", StopSamplingHeapProfiler);
   Nan::SetMethod(heapProfiler, "getAllocationProfile", GetAllocationProfile);
   Nan::SetMethod(
-      heapProfiler, "getAllocationProfileV2", GetAllocationProfileV2);
+      heapProfiler, "mapAllocationProfile", MapAllocationProfile);
   Nan::SetMethod(heapProfiler, "monitorOutOfMemory", MonitorOutOfMemory);
   Nan::Set(target,
            Nan::New<v8::String>("heapProfiler").ToLocalChecked(),
