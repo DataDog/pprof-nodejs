@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import delay from 'delay';
+import {setTimeout} from 'timers/promises';
 
 import {
   serializeTimeProfile,
@@ -84,7 +84,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
 export async function profile(options: TimeProfilerOptions = {}) {
   options = {...DEFAULT_OPTIONS, ...options};
   start(options);
-  await delay(options.durationMillis!);
+  await setTimeout(options.durationMillis!);
   return stop();
 }
 
