@@ -48,6 +48,14 @@ export function v8Profile(): AllocationProfileNode {
   return getAllocationProfile();
 }
 
+/**
+ * Collects a heap profile when heapProfiler is enabled. Otherwise throws
+ * an error.
+ * Map the heap profiler to a converted profile using callback function
+ *
+ * @param callback - function to convert the heap profiler to a converted profile
+ * @returns <T> converted profile
+ */
 export function v8ProfileV2<T>(
   callback: (root: AllocationProfileNode) => T
 ): T {
