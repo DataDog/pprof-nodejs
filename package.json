@@ -52,7 +52,7 @@
     "deep-copy": "^1.4.2",
     "eslint-config-standard": "^17.1.0",
     "eslint-plugin-import": "^2.26.0",
-    "eslint-plugin-n": "^16.0.1",
+    "eslint-plugin-n": "^17.24.0",
     "eslint-plugin-promise": "^6.1.1",
     "gts": "^4.0.1",
     "js-green-licenses": "^4.0.0",
