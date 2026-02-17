@@ -21,15 +21,13 @@
 
 namespace dd {
 
-class AllocationProfileNodeView : public Nan::ObjectWrap {
+class AllocationProfileNodeView {
  public:
   static NAN_MODULE_INIT(Init);
 
   static v8::Local<v8::Object> New(v8::AllocationProfile::Node* node);
 
  private:
-  AllocationProfileNodeView(v8::AllocationProfile::Node* node) : node_(node) {}
-
   template <typename F>
   static void mapAllocationProfileNode(
       const Nan::PropertyCallbackInfo<v8::Value>& info, F&& mapper);
@@ -41,8 +39,6 @@ class AllocationProfileNodeView : public Nan::ObjectWrap {
   static NAN_GETTER(GetColumnNumber);
   static NAN_GETTER(GetAllocations);
   static NAN_GETTER(GetChildren);
-
-  v8::AllocationProfile::Node* node_;
 };
 
 }  // namespace dd

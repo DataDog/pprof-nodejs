@@ -24,9 +24,9 @@ namespace dd {
 template <typename F>
 void AllocationProfileNodeView::mapAllocationProfileNode(
     const Nan::PropertyCallbackInfo<Value>& info, F&& mapper) {
-  auto* wrapper =
-      Nan::ObjectWrap::Unwrap<AllocationProfileNodeView>(info.Holder());
-  info.GetReturnValue().Set(mapper(wrapper->node_));
+  auto* node = static_cast<AllocationProfile::Node*>(
+      Nan::GetInternalFieldPointer(info.Holder(), 0));
+  info.GetReturnValue().Set(mapper(node));
 }
 
 NAN_MODULE_INIT(AllocationProfileNodeView::Init) {
@@ -60,8 +60,7 @@ Local<Object> AllocationProfileNodeView::New(AllocationProfile::Node* node) {
 
   Local<Object> obj = Nan::NewInstance(constructor).ToLocalChecked();
 
-  auto* wrapper = new AllocationProfileNodeView(node);
-  wrapper->Wrap(obj);
+  Nan::SetInternalFieldPointer(obj, 0, node);
 
   return obj;
 }
