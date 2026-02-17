@@ -15,3 +15,9 @@ updates:
     ignore:
       # Internal dependencies that we update manually
       - dependency-name: "pprof-format"
+    versioning-strategy: "increase"
+    labels:
+      - dependabot
+      - dependencies
+      - javascript
+      - semver-patch
