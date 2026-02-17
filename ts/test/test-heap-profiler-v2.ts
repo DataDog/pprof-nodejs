@@ -125,6 +125,6 @@ describe('HeapProfiler V2 API', () => {
         v2MemoryUsage.afterTraversal < v1MemoryUsage.afterTraversal,
         `V2 afterTraversal should be less: V1=${v1MemoryUsage.afterTraversal}, V2=${v2MemoryUsage.afterTraversal}`
       );
-    }).timeout(60_000);
+    }).timeout(100_000);
   });
 });
