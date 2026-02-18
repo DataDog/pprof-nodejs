@@ -73,6 +73,13 @@ keys in an ACF are ALS instances, but this doesn't seem necessary.
 
 We use a mutex implemented as an atomic boolean to guard our writes to the map.
 The JavaScript code for AsyncContextFrame/AsyncLocalStorage treats the maps as
+immutable. Whenever a new AsyncLocalStorage is added to the map, or even its
+store value changes, the AsyncContextFrame map is copied into a new instance,
+the change effected there, and the CPED reference in the isolate updated to the
+new map. This means that for uncoordinated changes in JavaScript, we thankfully
+require no guard. We only need to ensure we're guarding our own writes to the
+map, which are the only in-place mutation of it. (Even we could've performed a
+copy, but it feels excessive.)
 
 Internally, we hold on to the sample context value with a shared pointer to a
 V8 `Global`:
@@ -120,21 +127,27 @@ being a single instance state of `WallProfiler` to being an element in ACF maps.
 
 ## Looking up values in a signal handler
 The signal handler unfortunately can't directly call any V8 APIs, so in order to
-traverse the chain of data above, it needs to rely on pointer arithmetic. Every
-`Global` and `Local` have one field, and `Address*`. Thus, to dereference the
-actual memory location of a JS object represented by a global reference `ref`,
-we use `**<reinterpret_cast>(Address**)(&ref)`. These addresses are _tagged_,
-meaning their LSB is set to 1, and need to be masked to obtain the actual memory
-address. We can safely get the current Isolate pointer, but then we need to
-interpret as an address the memory location at an internal offset where it keeps
-the current CPED. If it's a JS Map, then we need to do more dead-reckoning into
-it and retrieve a pointer to its OrderedHashMap, and then know its memory layout
-to find the right hash bucket and traverse the linked list until we find a
-key-value pair where the key address is our key object's current address (this
+traverse the chain of data above, it relies on some pointer arithmetic and
+structure definition. Every `Global` and `Local` have one field, and `Address*`.
+Thus, to dereference the actual memory location of a JS object represented by a
+global reference `ref`, we use `**<reinterpret_cast>(Address**)(&ref)`. These
+addresses are _tagged_, meaning their LSB is set to 1, and need to be masked to
+obtain the actual memory address. We can safely get the current Isolate pointer,
+but then we need to interpret as an address the memory location at an internal
+offset where it keeps the current CPED. If it's a JS Map, then we need to
+retrieve from it a pointer to its `OrderedHashMap`, and then know its memory
+layout to find the right hash bucket and traverse the linked list until we find
+a key-value pair where the key address is our key object's current address (this
 can be moved around by the GC, so that's why our Global is an `Address*`, for
 a sufficient number of indirections to keep up with the moves.) The algorithm
-for executing an equivalent of a `Map.get()` purely using pointer arithmetic
-with knowledge of the V8 object memory layouts is encapsualted in `map-get.cc`.
+for executing an equivalent of a `Map.get()` with knowledge of the V8 object
+memory layouts is encapsulated in `map-get.cc`. We define C++ structs that
+describe V8 internal `JSMap`, `FixedArray`, `OrderedHashMap` and
+`SmallOrderedHashMap` structures, treat the memory pointed to by those pointers
+as if they were these data structures (because they are), and read from them. If
+in the future V8 changes these structures, we wil also need to adapt.
+Unfortunately V8 doesn't export definitions of these data structures in a
+publicly accessible header.
 
 ## Odds and ends
 And that's mostly it! There are few more small odds and ends to make it work
