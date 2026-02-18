@@ -51,7 +51,7 @@ constexpr int kHeapObjectTag = 1;
 
 // OrderedHashMap/SmallOrderedHashMap shared constants
 constexpr int kNotFound = -1;
-constexpr int kSmallLoadFactor = 2;
+constexpr int kLoadFactor = 2;
 
 // ============================================================================
 // Helper Functions (needed by struct methods)
@@ -61,13 +61,14 @@ inline Address UntagPointer(Address tagged) {
   return tagged - kHeapObjectTag;
 }
 
-inline bool IsSmi(Address value) {
-  return (value & 1) == 0;
-}
-
-// SmiToInt Conversion below valid only on 64-bit platforms, the only ones we
-// support
+// IsSmi and SmiToInt implementations are valid only on 64-bit platforms, the
+// only ones we support.
 static_assert(sizeof(void*) == 8, "Only 64-bit platforms supported");
+
+inline bool IsSmi(Address value) {
+  // More rigorous than (value & 1) but valid on 64-bit platforms only.
+  return (value & 0xFFFFFFFF) == 0;
+}
 
 inline int SmiToInt(Address smi) {
   return static_cast<int>(static_cast<intptr_t>(smi) >> 32);
@@ -134,23 +135,11 @@ struct OrderedHashMapLayout {
   static constexpr int kNotFoundValue = kNotFound;
 
   // Get number of buckets (converts Smi to int)
-  int NumberOfBuckets() const {
-    return IsSmi(number_of_buckets_) ? SmiToInt(number_of_buckets_) : 0;
-  }
+  int NumberOfBuckets() const { return SmiToInt(number_of_buckets_); }
 
-  // Get an upper bound for number of element chain in a bucket. Used to prevent
-  // infinite lookup chain.
-  int GetMaxChainLength() const {
-    return IsSmi(number_of_elements_) && IsSmi(number_of_deleted_elements_)
-               ? SmiToInt(number_of_elements_) +
-                     SmiToInt(number_of_deleted_elements_)
-               : 0;
-  }
-
-  // Convert hash to bucket index
-  int HashToBucket(int hash) const {
-    int num_buckets = NumberOfBuckets();
-    return num_buckets > 0 ? (hash & (num_buckets - 1)) : 0;
+  int GetEntryCount() const {
+    return SmiToInt(number_of_elements_) +
+           SmiToInt(number_of_deleted_elements_);
   }
 
   // Get first entry index for a bucket
@@ -219,15 +208,13 @@ struct SmallOrderedHashMapLayout {
   static constexpr int kNotFoundValue = 255;
 
   // Get capacity from number of buckets
-  int Capacity() const { return number_of_buckets_ * kSmallLoadFactor; }
+  int Capacity() const { return number_of_buckets_ * kLoadFactor; }
 
   int NumberOfBuckets() const { return number_of_buckets_; }
 
-  int GetMaxChainLength() const {
+  int GetEntryCount() const {
     return number_of_elements_ + number_of_deleted_elements_;
   }
-
-  int HashToBucket(int hash) const { return hash & (NumberOfBuckets() - 1); }
 
   const uint8_t* GetHashTable() const {
     return reinterpret_cast<const uint8_t*>(data_table_ +
@@ -270,16 +257,18 @@ struct SmallOrderedHashMapLayout {
 // SmallOrderedHashMapLayout
 template <typename LayoutT>
 int FindEntryByHash(const LayoutT* layout, int hash, Address key_to_find) {
-  int max_chain_length = layout->GetMaxChainLength();
-  int bucket = layout->HashToBucket(hash);
+  const int entry_count = layout->GetEntryCount();
+  const int bucket = hash & (layout->NumberOfBuckets() - 1);
   int entry = layout->GetFirstEntry(bucket);
 
-  // Paranoid: by never traversing more than the sum of elements and deleted
-  // elements we guarantee this terminates in bound time even if for some
-  // unforeseen reason the chain is cyclical.
-  for (int max_chain_left = max_chain_length;
-       entry != LayoutT::kNotFoundValue && max_chain_left > 0;
-       max_chain_left--) {
+  // Paranoid: by never traversing more than the total number of entries in the
+  // map we guarantee this terminates in bound time even if for some unforeseen
+  // reason the chain is cyclical. Also, every entry value must be between
+  // [0, GetEntryCount).
+  for (int max_entries_left = entry_count;
+       entry != LayoutT::kNotFoundValue && entry >= 0 && entry < entry_count &&
+       max_entries_left > 0;
+       max_entries_left--) {
     Address key_at_entry = layout->GetKey(entry);
     if (key_at_entry == key_to_find) {
       return entry;
@@ -327,7 +316,7 @@ static uint8_t GetOrderedHashMapType(Address table_untagged) {
     if (num_buckets >= 2 && num_buckets <= 127) {
       // Check if num_buckets is a power of 2
       if ((num_buckets & (num_buckets - 1)) == 0) {
-        auto capacity = num_buckets * kSmallLoadFactor;
+        auto capacity = num_buckets * kLoadFactor;
         if (num_elements + num_deleted <= capacity) {
           return 1;  // small map
         }
@@ -335,7 +324,36 @@ static uint8_t GetOrderedHashMapType(Address table_untagged) {
     }
     return 2;  // undecided
   }
-  return 0;  // large map
+  // At this point, it should be an ordinary (that is, large) map. Let's
+  // validate its invariants.
+  const OrderedHashMapLayout* layout =
+      reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
+  if (IsSmi(layout->fixedArray_.length_)) {
+    auto length = SmiToInt(layout->fixedArray_.length_);
+    if (length > 2) {  // at least 3 for the 3 values below
+      if (IsSmi(layout->number_of_buckets_) &&
+          IsSmi(layout->number_of_deleted_elements_) &&
+          IsSmi(layout->number_of_elements_)) {
+        auto num_buckets = SmiToInt(layout->number_of_buckets_);
+        auto num_deleted = SmiToInt(layout->number_of_deleted_elements_);
+        auto num_elements = SmiToInt(layout->number_of_elements_);
+        // Check if num_buckets is a power of 2
+        if (num_buckets > 0 && (num_buckets & (num_buckets - 1)) == 0) {
+          auto capacity = num_buckets * kLoadFactor;
+          // Check if number of elements and deleted elements looks valid:
+          // neither is non-negative and they don't add up to more than capacity
+          if (num_elements >= 0 && num_deleted >= 0 &&
+              num_elements + num_deleted <= capacity) {
+            // Check if the fixed array is large enough to contain the whole map
+            if (length >= 3 + num_buckets + 3 * capacity) {
+              return 0;  // large map
+            }
+          }
+        }
+      }
+    }
+  }
+  return 2;  // undecided
 }
 
 // ============================================================================
