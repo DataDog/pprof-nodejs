@@ -54,7 +54,7 @@ class WallProfiler : public Nan::ObjectWrap {
   // Otherwise we'll use an object as a key to store the context in
   // AsyncContextFrame maps.
   v8::Global<v8::Object> cpedKey_;
-  int cpedKeyHash_;
+  int cpedKeyHash_ = 0;
   v8::Global<v8::ObjectTemplate> wrapObjectTemplate_;
 
   // We track live context pointers in a set to avoid memory leaks. They will
