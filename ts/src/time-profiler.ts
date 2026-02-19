@@ -110,11 +110,6 @@ export function start(options: TimeProfilerOptions = {}) {
   if (options.withContexts && !options.useCPED) {
     setContext({});
   }
-
-  // If using CPED, ensure an async context frame exists
-  if (options.withContexts && options.useCPED && gStore) {
-    gStore.enterWith([]);
-  }
 }
 
 export function stop(
@@ -136,10 +131,6 @@ export function stop(
     if (gV8ProfilerStuckEventLoopDetected > 0) {
       gProfiler.stop(false);
       gProfiler.start();
-    }
-    // Re-enter async context frame if using CPED, as it may have been cleared during restart
-    if (gStore) {
-      gStore.enterWith([]);
     }
   } else {
     gV8ProfilerStuckEventLoopDetected = 0;
