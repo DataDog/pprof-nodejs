@@ -1,11 +1,11 @@
-/**
- * Copyright 2018 Google Inc. All Rights Reserved.
+/*
+ * Copyright 2026 Datadog, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,30 +17,28 @@
 #pragma once
 
 #include <nan.h>
+#include <v8-profiler.h>
 
 namespace dd {
 
-class HeapProfiler {
+class AllocationProfileNodeView {
  public:
-  // Signature:
-  // startSamplingHeapProfiler()
-  static NAN_METHOD(StartSamplingHeapProfiler);
-
-  // Signature:
-  // stopSamplingHeapProfiler()
-  static NAN_METHOD(StopSamplingHeapProfiler);
-
-  // Signature:
-  // getAllocationProfile(): AllocationProfileNode
-  static NAN_METHOD(GetAllocationProfile);
-
-  // Signature:
-  // mapAllocationProfile(callback): callback result
-  static NAN_METHOD(MapAllocationProfile);
-
-  static NAN_METHOD(MonitorOutOfMemory);
-
   static NAN_MODULE_INIT(Init);
+
+  static v8::Local<v8::Object> New(v8::AllocationProfile::Node* node);
+
+ private:
+  template <typename F>
+  static void mapAllocationProfileNode(
+      const Nan::PropertyCallbackInfo<v8::Value>& info, F&& mapper);
+
+  static NAN_GETTER(GetName);
+  static NAN_GETTER(GetScriptName);
+  static NAN_GETTER(GetScriptId);
+  static NAN_GETTER(GetLineNumber);
+  static NAN_GETTER(GetColumnNumber);
+  static NAN_GETTER(GetAllocations);
+  static NAN_GETTER(GetChildren);
 };
 
 }  // namespace dd

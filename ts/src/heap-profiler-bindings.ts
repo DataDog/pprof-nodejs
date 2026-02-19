@@ -41,6 +41,12 @@ export function getAllocationProfile(): AllocationProfileNode {
   return profiler.heapProfiler.getAllocationProfile();
 }
 
+export function mapAllocationProfile<T>(
+  callback: (root: AllocationProfileNode) => T
+): T {
+  return profiler.heapProfiler.mapAllocationProfile(callback);
+}
+
 export type NearHeapLimitCallback = (profile: AllocationProfileNode) => void;
 
 export function monitorOutOfMemory(
