@@ -110,15 +110,15 @@ function serialize<T extends ProfileNode>(
     const node = entry.node;
 
     // mjs files have a `file://` prefix in the scriptName -> remove it
-    if (node.scriptName.startsWith('file://')) {
-      node.scriptName = node.scriptName.slice(7);
-    }
+    const scriptName = node.scriptName.startsWith('file://')
+      ? node.scriptName.slice(7)
+      : node.scriptName;
 
-    if (ignoreSamplesPath && node.scriptName.indexOf(ignoreSamplesPath) > -1) {
+    if (ignoreSamplesPath && scriptName.indexOf(ignoreSamplesPath) > -1) {
       continue;
     }
     const stack = entry.stack;
-    const location = getLocation(node, sourceMapper);
+    const location = getLocation(node, scriptName, sourceMapper);
     stack.unshift(location.id as number);
     appendToSamples(entry, samples);
     for (const child of node.children as T[]) {
@@ -133,10 +133,11 @@ function serialize<T extends ProfileNode>(
 
   function getLocation(
     node: ProfileNode,
+    scriptName: string,
     sourceMapper?: SourceMapper
   ): Location {
     let profLoc: SourceLocation = {
-      file: node.scriptName || '',
+      file: scriptName || '',
       line: node.lineNumber,
       column: node.columnNumber,
       name: node.name,
