@@ -96,15 +96,14 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  if (options.useCPED === true) {
-    gStore = new AsyncLocalStorage();
-  }
-  gProfiler = new TimeProfiler({...options, CPEDKey: gStore, isMainThread});
+  const store = options.useCPED === true ? new AsyncLocalStorage() : undefined;
+  gProfiler = new TimeProfiler({...options, CPEDKey: store, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
 
   gProfiler.start();
+  gStore = store;
 
   // If contexts are enabled without using CPED, set an initial empty context
   if (options.withContexts && !options.useCPED) {
