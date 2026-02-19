@@ -38,8 +38,6 @@ struct Result {
 
 using ContextPtr = std::shared_ptr<v8::Global<v8::Value>>;
 
-class PersistentContextPtr;
-
 class WallProfiler : public Nan::ObjectWrap {
  public:
   enum class CollectionMode { kNoCollect, kPassThrough, kCollectContexts };
@@ -56,10 +54,6 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::Global<v8::Object> cpedKey_;
   int cpedKeyHash_ = 0;
   v8::Global<v8::ObjectTemplate> wrapObjectTemplate_;
-
-  // We track live context pointers in a set to avoid memory leaks. They will
-  // be deleted when the profiler is disposed.
-  std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
@@ -98,7 +92,7 @@ class WallProfiler : public Nan::ObjectWrap {
   using ContextBuffer = std::vector<SampleContext>;
   ContextBuffer contexts_;
 
-  ~WallProfiler();
+  ~WallProfiler() = default;
   void Dispose(v8::Isolate* isolate, bool removeFromMap);
 
   // A new CPU profiler object will be created each time profiling is started

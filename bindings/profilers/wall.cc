@@ -107,22 +107,9 @@ void SetContextPtr(ContextPtr& contextPtr,
 
 class PersistentContextPtr : public node::ObjectWrap {
   ContextPtr context;
-  std::unordered_set<PersistentContextPtr*>* live;
 
  public:
-  PersistentContextPtr(std::unordered_set<PersistentContextPtr*>* live,
-                       Local<Object> wrap)
-      : live(live) {
-    Wrap(wrap);
-  }
-
-  void Detach() { live = nullptr; }
-
-  ~PersistentContextPtr() {
-    if (live) {
-      live->erase(this);
-    }
-  }
+  PersistentContextPtr(Local<Object> wrap) { Wrap(wrap); }
 
   void Set(Isolate* isolate, const Local<Value>& value) {
     SetContextPtr(context, isolate, value);
@@ -668,15 +655,6 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
   }
 }
 
-WallProfiler::~WallProfiler() {
-  // Delete all live contexts
-  for (auto ptr : liveContextPtrs_) {
-    ptr->Detach();  // so it doesn't invalidate our iterator
-    delete ptr;
-  }
-  liveContextPtrs_.clear();
-}
-
 void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
@@ -1181,8 +1159,7 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     // for easy access from JS when cpedKey is an ALS, it can do
     // als.getStore()?.[0];
     wrap->Set(v8Ctx, 0, value).Check();
-    auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
-    liveContextPtrs_.insert(contextPtr);
+    auto contextPtr = new PersistentContextPtr(wrap);
     contextPtr->Set(isolate, value);
 
     SignalGuard m(setInProgress_);
@@ -1253,18 +1230,23 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 }
 
 Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
-  auto usedAsyncContextCount = liveContextPtrs_.size();
+  // TODO: maybe rewrite this so that we use a counter field, and
+  // PersistenContextPtr destructor uses GetProfiler(Isolate*) to find the
+  // profiler and decrement the field. Obvious problem being that GetProfiler()
+  // can spuriously return nullptr if the map is updated from a different thread
+  // and thus can cause an imbalance in the counter that looks like a leak.
   auto context = isolate->GetCurrentContext();
   auto metrics = Object::New(isolate);
+  auto zero = Number::New(isolate, 0);
   metrics
       ->Set(context,
             String::NewFromUtf8Literal(isolate, "usedAsyncContextCount"),
-            Number::New(isolate, usedAsyncContextCount))
+            zero)
       .ToChecked();
   metrics
       ->Set(context,
             String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
-            Number::New(isolate, usedAsyncContextCount))
+            zero)
       .ToChecked();
   return metrics;
 }
