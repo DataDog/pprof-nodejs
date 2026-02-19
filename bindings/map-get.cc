@@ -289,10 +289,7 @@ Address FindValueByHash(const LayoutT* layout, int hash, Address key_to_find) {
   return entry == kNotFound ? 0 : layout->GetValue(entry);
 }
 
-// Detect if the table is an OrderedHashMap or a SmallOrderedHashMap (or it can
-// not safely be determined) by checking padding bytes. SmallOrderedHashMap has
-// always-zero padding bytes after the metadata.
-static uint8_t GetOrderedHashMapType(Address table_untagged) {
+static bool IsSmallOrderedHashMap(Address table_untagged) {
   const SmallOrderedHashMapLayout* potential_small =
       reinterpret_cast<const SmallOrderedHashMapLayout*>(table_untagged);
 
@@ -305,59 +302,57 @@ static uint8_t GetOrderedHashMapType(Address table_untagged) {
   // Small map will have some bits in bytes 0-2 be nonzero, and all bits in
   // bytes 3-7 zero. That effectively limits the value range of smallHeader to
   // [0x1-0xFFFFFF].
-  if (smallHeader > 0 && smallHeader < 0x1000000) {
-    auto num_elements = potential_small->number_of_elements_;
-    auto num_deleted = potential_small->number_of_deleted_elements_;
-    auto num_buckets = potential_small->number_of_buckets_;
+  if (smallHeader == 0 || smallHeader >= 0x1000000) return false;
 
-    // SmallOrderedHashMap has constraints:
-    // - num_buckets must be a power of 2 between 2 and 127
-    // - num_elements + num_deleted <= capacity (buckets * 2)
-    if (num_buckets >= 2 && num_buckets <= 127) {
-      // Check if num_buckets is a power of 2
-      if ((num_buckets & (num_buckets - 1)) == 0) {
-        auto capacity = num_buckets * kLoadFactor;
-        if (num_elements + num_deleted <= capacity) {
-          return 1;  // small map
-        }
-      }
-    }
-    return 2;  // undecided
-  }
-  // At this point, it should be an ordinary (that is, large) map.
+  auto num_elements = potential_small->number_of_elements_;
+  auto num_deleted = potential_small->number_of_deleted_elements_;
+  auto num_buckets = potential_small->number_of_buckets_;
+
+  // num_buckets must be between 2 and 127
+  if (num_buckets < 2 || num_buckets > 127) return false;
+
+  // num_buckets must be a power of 2
+  if ((num_buckets & (num_buckets - 1)) != 0) return false;
+
+  auto capacity = num_buckets * kLoadFactor;
+  // Sum of elements and deleted elements can't exceed capacity
+  return num_elements + num_deleted <= capacity;
+}
+
+static bool IsOrderedHashMap(Address table_untagged) {
   const OrderedHashMapLayout* layout =
       reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
 
   // Let's validate its invariants!
 
   // Its length must be a Smi.
-  if (!IsSmi(layout->fixedArray_.length_)) return 2;
+  if (!IsSmi(layout->fixedArray_.length_)) return false;
   auto length = SmiToInt(layout->fixedArray_.length_);
 
   // Must have at least 3 elements for number_of_* fields.
-  if (length < 3) return 2;
+  if (length < 3) return false;
 
   // All of them must be Smis
   if (!IsSmi(layout->number_of_buckets_) ||
       !IsSmi(layout->number_of_deleted_elements_) ||
       !IsSmi(layout->number_of_elements_))
-    return 2;
+    return false;
   auto num_buckets = SmiToInt(layout->number_of_buckets_);
   auto num_deleted = SmiToInt(layout->number_of_deleted_elements_);
   auto num_elements = SmiToInt(layout->number_of_elements_);
 
   // num_buckets must be a power of 2
-  if (num_buckets <= 0 || (num_buckets & (num_buckets - 1)) != 0) return 2;
+  if (num_buckets <= 0 || (num_buckets & (num_buckets - 1)) != 0) return false;
   auto capacity = num_buckets * kLoadFactor;
 
   // number of elements and number of deleted elements can't be negative, and
   // they can't add up to more than the capacity.
   if (num_elements < 0 || num_deleted < 0 ||
       num_elements + num_deleted > capacity)
-    return 2;
+    return false;
 
   // The length of the array must be enough to store the whole map.
-  return length >= 3 + num_buckets + 3 * capacity ? 0 : 2;
+  return length >= 3 + num_buckets + 3 * capacity;
 }
 
 // ============================================================================
@@ -372,17 +367,14 @@ Address GetValueFromMap(Address map_addr, int hash, Address key) {
       reinterpret_cast<const JSMapLayout*>(UntagPointer(map_addr));
   Address table_untagged = UntagPointer(map_untagged->table_);
 
-  switch (GetOrderedHashMapType(table_untagged)) {
-    case 0: {
-      const OrderedHashMapLayout* layout =
-          reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
-      return FindValueByHash(layout, hash, key);
-    }
-    case 1: {
-      const SmallOrderedHashMapLayout* layout =
-          reinterpret_cast<const SmallOrderedHashMapLayout*>(table_untagged);
-      return FindValueByHash(layout, hash, key);
-    }
+  if (IsSmallOrderedHashMap(table_untagged)) {
+    const SmallOrderedHashMapLayout* layout =
+        reinterpret_cast<const SmallOrderedHashMapLayout*>(table_untagged);
+    return FindValueByHash(layout, hash, key);
+  } else if (IsOrderedHashMap(table_untagged)) {
+    const OrderedHashMapLayout* layout =
+        reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
+    return FindValueByHash(layout, hash, key);
   }
   return 0;  // We couldn't determine the kind of the map, just return zero.
 }
