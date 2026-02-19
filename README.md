@@ -99,8 +99,10 @@ Install [`pprof`][npm-url] with `npm` or add to your `package.json`.
 
     * Collecting a heap profile with  V8 allocation profile format:
         ```javascript
-          const profile = await pprof.heap.v8Profile();
+          const profile = pprof.heap.v8Profile(root => root);
         ```
+        `v8Profile` accepts a callback and returns its result. `heap.profile()`
+        uses this to convert the allocation profile into pprof format.
 
 [build-image]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml/badge.svg?branch=main
 [build-url]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml
