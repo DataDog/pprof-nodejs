@@ -18,6 +18,7 @@ import {Profile} from 'pprof-format';
 
 import {
   getAllocationProfile,
+  mapAllocationProfile,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
@@ -45,6 +46,26 @@ export function v8Profile(): AllocationProfileNode {
     throw new Error('Heap profiler is not enabled.');
   }
   return getAllocationProfile();
+}
+
+/**
+ * Collects a heap profile when heapProfiler is enabled. Otherwise throws
+ * an error.
+ * Map the heap profiler to a converted profile using callback function.
+ *
+ * WARNING: Nodes in the tree are only valid during the callback. Do not store
+ * references to them. The memory is freed when the callback returns.
+ *
+ * @param callback - function to convert the heap profiler to a converted profile
+ * @returns <T> converted profile
+ */
+export function v8ProfileV2<T>(
+  callback: (root: AllocationProfileNode) => T
+): T {
+  if (!enabled) {
+    throw new Error('Heap profiler is not enabled.');
+  }
+  return mapAllocationProfile(callback);
 }
 
 /**
@@ -79,6 +100,7 @@ export function convertProfile(
   // TODO: remove any once type definition is updated to include external.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const {external}: {external: number} = process.memoryUsage() as any;
+  let root: AllocationProfileNode;
   if (external > 0) {
     const externalNode: AllocationProfileNode = {
       name: '(external)',
@@ -86,16 +108,36 @@ export function convertProfile(
       children: [],
       allocations: [{sizeBytes: external, count: 1}],
     };
-    rootNode.children.push(externalNode);
+    root = {...rootNode, children: [...rootNode.children, externalNode]};
+  } else {
+    root = rootNode;
   }
   return serializeHeapProfile(
-    rootNode,
+    root,
     startTimeNanos,
     heapIntervalBytes,
     ignoreSamplePath,
     sourceMapper,
     generateLabels
   );
+}
+
+/**
+ * Collects a profile and returns it serialized in pprof format using lazy V2 API.
+ * Throws if heap profiler is not enabled.
+ *
+ * @param ignoreSamplePath
+ * @param sourceMapper
+ * @param generateLabels
+ */
+export function profileV2(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction
+): Profile {
+  return v8ProfileV2(root => {
+    return convertProfile(root, ignoreSamplePath, sourceMapper, generateLabels);
+  });
 }
 
 /**
