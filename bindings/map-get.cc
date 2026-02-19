@@ -324,36 +324,40 @@ static uint8_t GetOrderedHashMapType(Address table_untagged) {
     }
     return 2;  // undecided
   }
-  // At this point, it should be an ordinary (that is, large) map. Let's
-  // validate its invariants.
+  // At this point, it should be an ordinary (that is, large) map.
   const OrderedHashMapLayout* layout =
       reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
-  if (IsSmi(layout->fixedArray_.length_)) {
-    auto length = SmiToInt(layout->fixedArray_.length_);
-    if (length > 2) {  // at least 3 for the 3 values below
-      if (IsSmi(layout->number_of_buckets_) &&
-          IsSmi(layout->number_of_deleted_elements_) &&
-          IsSmi(layout->number_of_elements_)) {
-        auto num_buckets = SmiToInt(layout->number_of_buckets_);
-        auto num_deleted = SmiToInt(layout->number_of_deleted_elements_);
-        auto num_elements = SmiToInt(layout->number_of_elements_);
-        // Check if num_buckets is a power of 2
-        if (num_buckets > 0 && (num_buckets & (num_buckets - 1)) == 0) {
-          auto capacity = num_buckets * kLoadFactor;
-          // Check if number of elements and deleted elements looks valid:
-          // neither is non-negative and they don't add up to more than capacity
-          if (num_elements >= 0 && num_deleted >= 0 &&
-              num_elements + num_deleted <= capacity) {
-            // Check if the fixed array is large enough to contain the whole map
-            if (length >= 3 + num_buckets + 3 * capacity) {
-              return 0;  // large map
-            }
-          }
-        }
-      }
-    }
-  }
-  return 2;  // undecided
+
+  // Let's validate its invariants!
+
+  // Its length must be a Smi.
+  if (!IsSmi(layout->fixedArray_.length_)) return 2;
+  auto length = SmiToInt(layout->fixedArray_.length_);
+
+  // Must have at least 3 elements for number_of_* fields.
+  if (length < 3) return 2;
+
+  // All of them must be Smis
+  if (!IsSmi(layout->number_of_buckets_) ||
+      !IsSmi(layout->number_of_deleted_elements_) ||
+      !IsSmi(layout->number_of_elements_))
+    return 2;
+  auto num_buckets = SmiToInt(layout->number_of_buckets_);
+  auto num_deleted = SmiToInt(layout->number_of_deleted_elements_);
+  auto num_elements = SmiToInt(layout->number_of_elements_);
+
+  // num_buckets must be a power of 2
+  if (num_buckets <= 0 || (num_buckets & (num_buckets - 1)) != 0) return 2;
+  auto capacity = num_buckets * kLoadFactor;
+
+  // number of elements and number of deleted elements can't be negative, and
+  // they can't add up to more than the capacity.
+  if (num_elements < 0 || num_deleted < 0 ||
+      num_elements + num_deleted > capacity)
+    return 2;
+
+  // The length of the array must be enough to store the whole map.
+  return length >= 3 + num_buckets + 3 * capacity ? 0 : 2;
 }
 
 // ============================================================================
