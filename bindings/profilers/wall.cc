@@ -1261,7 +1261,6 @@ Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
             String::NewFromUtf8Literal(isolate, "usedAsyncContextCount"),
             Number::New(isolate, usedAsyncContextCount))
       .ToChecked();
-  // totalAsyncContextCount == usedAsyncContextCount
   metrics
       ->Set(context,
             String::NewFromUtf8Literal(isolate, "totalAsyncContextCount"),
@@ -1368,11 +1367,12 @@ void WallProfiler::OnGCStart(v8::Isolate* isolate) {
 
 void WallProfiler::OnGCEnd() {
   auto oldCount = gcCount.fetch_sub(1, std::memory_order_relaxed);
-  if (oldCount == 1 && useCPED()) {
-    // Not strictly necessary, as we'll reset it to something else on next GC,
-    // but why retain it longer than needed?
-    gcContext_.reset();
+  if (oldCount != 1 || !useCPED()) {
+    return;
   }
+  // Not strictly necessary, as we'll reset it to something else on next GC,
+  // but why retain it longer than needed?
+  gcContext_.reset();
 }
 
 void WallProfiler::PushContext(int64_t time_from,
