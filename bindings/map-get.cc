@@ -352,7 +352,8 @@ static bool IsOrderedHashMap(Address table_untagged) {
     return false;
 
   // The length of the array must be enough to store the whole map.
-  return length >= 3 + num_buckets + OrderedHashMapLayout::kEntrySize * capacity;
+  return length >=
+         3 + num_buckets + OrderedHashMapLayout::kEntrySize * capacity;
 }
 
 // ============================================================================
