@@ -143,6 +143,10 @@ class WallProfiler : public Nan::ObjectWrap {
 
   v8::Local<v8::Value> GetContext(v8::Isolate*);
   void SetContext(v8::Isolate*, v8::Local<v8::Value>);
+  v8::Local<v8::Object> CreateContextHolder(v8::Isolate*,
+                                            v8::Local<v8::Context>,
+                                            v8::Local<v8::Value>);
+
   void PushContext(int64_t time_from,
                    int64_t time_to,
                    int64_t cpu_time,
@@ -186,6 +190,7 @@ class WallProfiler : public Nan::ObjectWrap {
   static NAN_MODULE_INIT(Init);
   static NAN_GETTER(GetContext);
   static NAN_SETTER(SetContext);
+  static NAN_METHOD(CreateContextHolder);
   static NAN_GETTER(SharedArrayGetter);
   static NAN_GETTER(GetMetrics);
 };
