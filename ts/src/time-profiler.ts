@@ -29,7 +29,7 @@ import {
 } from './time-profiler-bindings';
 import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
 import {isMainThread} from 'worker_threads';
-
+import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
@@ -39,6 +39,7 @@ type Microseconds = number;
 type Milliseconds = number;
 
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+let gStore: AsyncLocalStorage<any> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -95,12 +96,14 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler({...options, isMainThread});
+  const store = options.useCPED === true ? new AsyncLocalStorage() : undefined;
+  gProfiler = new TimeProfiler({...options, CPEDKey: store, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
 
   gProfiler.start();
+  gStore = store;
 
   // If contexts are enabled without using CPED, set an initial empty context
   if (options.withContexts && !options.useCPED) {
@@ -144,6 +147,10 @@ export function stop(
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
   }
   return serializedProfile;
 }

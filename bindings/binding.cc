@@ -18,6 +18,7 @@
 #include <node.h>
 #include <v8.h>
 
+#include "allocation-profile-node.hh"
 #include "profilers/heap.hh"
 #include "profilers/wall.hh"
 
@@ -47,6 +48,7 @@ NODE_MODULE_INIT(/* exports, module, context */) {
 #pragma GCC diagnostic pop
 #endif
 
+  dd::AllocationProfileNodeView::Init(exports);
   dd::HeapProfiler::Init(exports);
   dd::WallProfiler::Init(exports);
   Nan::SetMethod(exports, "getNativeThreadId", GetNativeThreadId);

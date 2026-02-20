@@ -28,6 +28,7 @@
 
 #include <node.h>
 #include <v8-profiler.h>
+#include "allocation-profile-node.hh"
 
 namespace dd {
 
@@ -54,17 +55,6 @@ static size_t NearHeapLimit(void* data,
                             size_t initial_heap_limit);
 static void InterruptCallback(v8::Isolate* isolate, void* data);
 static void AsyncCallback(uv_async_t* handle);
-
-struct Node {
-  using Allocation = v8::AllocationProfile::Allocation;
-  std::string name;
-  std::string script_name;
-  int line_number;
-  int column_number;
-  int script_id;
-  std::vector<std::shared_ptr<Node>> children;
-  std::vector<Allocation> allocations;
-};
 
 enum CallbackMode {
   kNoCallback = 0,
@@ -138,73 +128,6 @@ struct HeapProfilerState {
   bool callbackInstalled = false;
   bool insideCallback = false;
 };
-
-std::shared_ptr<Node> TranslateAllocationProfileToCpp(
-    v8::AllocationProfile::Node* node) {
-  auto new_node = std::make_shared<Node>();
-  new_node->line_number = node->line_number;
-  new_node->column_number = node->column_number;
-  new_node->script_id = node->script_id;
-  Nan::Utf8String name(node->name);
-  new_node->name.assign(*name, name.length());
-  Nan::Utf8String script_name(node->script_name);
-  new_node->script_name.assign(*script_name, script_name.length());
-
-  new_node->children.reserve(node->children.size());
-  for (auto& child : node->children) {
-    new_node->children.push_back(TranslateAllocationProfileToCpp(child));
-  }
-
-  new_node->allocations.reserve(node->allocations.size());
-  for (auto& allocation : node->allocations) {
-    new_node->allocations.push_back(allocation);
-  }
-  return new_node;
-}
-
-v8::Local<v8::Value> TranslateAllocationProfile(Node* node) {
-  v8::Local<v8::Object> js_node = Nan::New<v8::Object>();
-
-  Nan::Set(js_node,
-           Nan::New<v8::String>("name").ToLocalChecked(),
-           Nan::New(node->name).ToLocalChecked());
-  Nan::Set(js_node,
-           Nan::New<v8::String>("scriptName").ToLocalChecked(),
-           Nan::New(node->script_name).ToLocalChecked());
-  Nan::Set(js_node,
-           Nan::New<v8::String>("scriptId").ToLocalChecked(),
-           Nan::New<v8::Integer>(node->script_id));
-  Nan::Set(js_node,
-           Nan::New<v8::String>("lineNumber").ToLocalChecked(),
-           Nan::New<v8::Integer>(node->line_number));
-  Nan::Set(js_node,
-           Nan::New<v8::String>("columnNumber").ToLocalChecked(),
-           Nan::New<v8::Integer>(node->column_number));
-
-  v8::Local<v8::Array> children = Nan::New<v8::Array>(node->children.size());
-  for (size_t i = 0; i < node->children.size(); i++) {
-    Nan::Set(children, i, TranslateAllocationProfile(node->children[i].get()));
-  }
-  Nan::Set(
-      js_node, Nan::New<v8::String>("children").ToLocalChecked(), children);
-  v8::Local<v8::Array> allocations =
-      Nan::New<v8::Array>(node->allocations.size());
-  for (size_t i = 0; i < node->allocations.size(); i++) {
-    v8::AllocationProfile::Allocation alloc = node->allocations[i];
-    v8::Local<v8::Object> js_alloc = Nan::New<v8::Object>();
-    Nan::Set(js_alloc,
-             Nan::New<v8::String>("sizeBytes").ToLocalChecked(),
-             Nan::New<v8::Number>(alloc.size));
-    Nan::Set(js_alloc,
-             Nan::New<v8::String>("count").ToLocalChecked(),
-             Nan::New<v8::Number>(alloc.count));
-    Nan::Set(allocations, i, js_alloc);
-  }
-  Nan::Set(js_node,
-           Nan::New<v8::String>("allocations").ToLocalChecked(),
-           allocations);
-  return js_node;
-}
 
 static void dumpAllocationProfile(FILE* file,
                                   Node* node,
@@ -582,6 +505,35 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   info.GetReturnValue().Set(TranslateAllocationProfile(root));
 }
 
+// mapAllocationProfile(callback): callback result
+NAN_METHOD(HeapProfiler::MapAllocationProfile) {
+  if (info.Length() < 1 || !info[0]->IsFunction()) {
+    return Nan::ThrowTypeError("mapAllocationProfile requires a callback");
+  }
+  auto isolate = info.GetIsolate();
+  auto callback = info[0].As<v8::Function>();
+
+  std::unique_ptr<v8::AllocationProfile> profile(
+      isolate->GetHeapProfiler()->GetAllocationProfile());
+
+  if (!profile) {
+    return Nan::ThrowError("Heap profiler is not enabled.");
+  }
+
+  auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state) {
+    state->OnNewProfile();
+  }
+
+  auto root = AllocationProfileNodeView::New(profile->GetRootNode());
+  v8::Local<v8::Value> argv[] = {root};
+  auto result =
+      Nan::Call(callback, isolate->GetCurrentContext()->Global(), 1, argv);
+  if (!result.IsEmpty()) {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
+}
+
 NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   if (info.Length() != 7) {
     return Nan::ThrowTypeError("MonitorOOMCondition must have 7 arguments.");
@@ -645,6 +597,7 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
   Nan::SetMethod(
       heapProfiler, "stopSamplingHeapProfiler", StopSamplingHeapProfiler);
   Nan::SetMethod(heapProfiler, "getAllocationProfile", GetAllocationProfile);
+  Nan::SetMethod(heapProfiler, "mapAllocationProfile", MapAllocationProfile);
   Nan::SetMethod(heapProfiler, "monitorOutOfMemory", MonitorOutOfMemory);
   Nan::Set(target,
            Nan::New<v8::String>("heapProfiler").ToLocalChecked(),

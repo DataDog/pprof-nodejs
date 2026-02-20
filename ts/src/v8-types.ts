@@ -51,6 +51,7 @@ export interface TimeProfileNode extends ProfileNode {
 
 export interface AllocationProfileNode extends ProfileNode {
   allocations: Allocation[];
+  children: AllocationProfileNode[];
 }
 
 export interface Allocation {
