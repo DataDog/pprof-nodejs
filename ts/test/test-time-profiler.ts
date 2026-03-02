@@ -24,6 +24,7 @@ import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
 import {satisfies} from 'semver';
 import {setTimeout as setTimeoutPromise} from 'timers/promises';
+import {fork} from 'child_process';
 
 import assert from 'assert';
 
@@ -721,6 +722,45 @@ describe('Time Profiler', () => {
         );
       });
     });
+  });
+
+  describe('Memory comparison', () => {
+    function measureMemoryInWorker(version: 'v1' | 'v2'): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const child = fork('./out/test/time-memory-worker.js', [], {
+          execArgv: ['--expose-gc'],
+        });
+
+        child.on('message', (result: any) => {
+          resolve(result);
+          child.kill();
+        });
+
+        child.on('error', reject);
+        child.send(version);
+      });
+    }
+
+    it('stopAndCollect should use less memory than stop when profile is large', async function testTimeMemory() {
+      if (unsupportedPlatform) {
+        this.skip();
+      }
+
+      const v1 = await measureMemoryInWorker('v1');
+      const v2 = await measureMemoryInWorker('v2');
+
+      console.log(v1.initial, v2.initial);
+      assert.ok(
+        v2.initial < v1.initial,
+        `V2 initial should be less: V1=${v1.initial}, V2=${v2.initial}`
+      );
+
+      console.log(v1.afterTraversal, v2.afterTraversal);
+      assert.ok(
+        v2.afterTraversal < v1.afterTraversal,
+        `V2 afterTraversal should be less: V1=${v1.afterTraversal}, V2=${v2.afterTraversal}`
+      );
+    }).timeout(120_000);
   });
 
   describe('getNativeThreadId', () => {

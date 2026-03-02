@@ -27,7 +27,11 @@ import {
   getNativeThreadId,
   constants as profilerConstants,
 } from './time-profiler-bindings';
-import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
+import {
+  GenerateTimeLabelsFunction,
+  TimeProfile,
+  TimeProfilerMetrics,
+} from './v8-types';
 import {isMainThread} from 'worker_threads';
 import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
@@ -38,7 +42,14 @@ const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
 type Microseconds = number;
 type Milliseconds = number;
 
-let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+type NativeTimeProfiler = InstanceType<typeof TimeProfiler> & {
+  stopAndCollect?: <T>(
+    restart: boolean,
+    callback: (profile: TimeProfile) => T
+  ) => T;
+};
+
+let gProfiler: NativeTimeProfiler | undefined;
 let gStore: AsyncLocalStorage<any> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
@@ -87,6 +98,13 @@ export async function profile(options: TimeProfilerOptions = {}) {
   start(options);
   await setTimeout(options.durationMillis!);
   return stop();
+}
+
+export async function profileV2(options: TimeProfilerOptions = {}) {
+  options = {...DEFAULT_OPTIONS, ...options};
+  start(options);
+  await setTimeout(options.durationMillis!);
+  return stopV2();
 }
 
 // Temporarily retained for backwards compatibility with older tracer
@@ -144,6 +162,52 @@ export function stop(
     lowCardinalityLabels
   );
   if (!restart) {
+    gProfiler.dispose();
+    gProfiler = undefined;
+    gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
+  }
+  return serializedProfile;
+}
+
+/**
+ * Same as stop() but uses the lazy callback path: serialization happens inside
+ * a native callback while the V8 profile is still alive.
+ * This reduces memory overhead.
+ */
+export function stopV2(
+  restart = false,
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels?: string[]
+) {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  }
+
+  const serializedProfile = gProfiler.stopAndCollect(
+    restart,
+    (profile: TimeProfile) =>
+      serializeTimeProfile(
+        profile,
+        gIntervalMicros,
+        gSourceMapper,
+        true,
+        generateLabels,
+        lowCardinalityLabels
+      )
+  );
+  if (restart) {
+    gV8ProfilerStuckEventLoopDetected =
+      gProfiler.v8ProfilerStuckEventLoopDetected();
+    if (gV8ProfilerStuckEventLoopDetected > 0) {
+      gProfiler.stop(false);
+      gProfiler.start();
+    }
+  } else {
+    gV8ProfilerStuckEventLoopDetected = 0;
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;

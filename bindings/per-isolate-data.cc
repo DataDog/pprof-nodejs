@@ -56,6 +56,10 @@ Nan::Global<v8::Function>& PerIsolateData::AllocationNodeConstructor() {
   return allocation_node_constructor;
 }
 
+Nan::Global<v8::Function>& PerIsolateData::TimeProfileNodeConstructor() {
+  return time_profile_node_constructor;
+}
+
 std::shared_ptr<HeapProfilerState>& PerIsolateData::GetHeapProfilerState() {
   return heap_profiler_state;
 }
