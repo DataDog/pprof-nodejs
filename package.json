@@ -44,6 +44,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.1",
     "@types/node": "24.3.3",
+    "@types/semver": "^7.5.8",
     "@types/sinon": "^21.0.0",
     "@types/tmp": "^0.2.3",
     "clang-format": "^1.8.0",
