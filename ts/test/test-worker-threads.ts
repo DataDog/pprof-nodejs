@@ -1,4 +1,4 @@
-// eslint-disable-next-line node/no-unsupported-features/node-builtins
+// eslint-disable-next-line n/no-unsupported-features/node-builtins
 import {execFile} from 'child_process';
 import {promisify} from 'util';
 import {Worker} from 'worker_threads';
@@ -24,7 +24,7 @@ describe('Worker Threads', () => {
         worker.postMessage('hello');
 
         worker.on('message', () => {
-          worker.terminate();
+          void worker.terminate();
         });
 
         workers.push(
@@ -36,7 +36,7 @@ describe('Worker Threads', () => {
                 reject(new Error('Worker exited with code 0'));
               }
             });
-          })
+          }),
         );
       }
       await Promise.all(workers);

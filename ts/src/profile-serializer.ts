@@ -54,7 +54,7 @@ type Stack = number[];
  */
 type AppendEntryToSamples<T extends ProfileNode> = (
   entry: Entry<T>,
-  samples: Sample[]
+  samples: Sample[],
 ) => void;
 
 /**
@@ -66,7 +66,7 @@ interface Entry<T extends ProfileNode> {
 }
 
 function isGeneratedLocation(
-  location: SourceLocation
+  location: SourceLocation,
 ): location is GeneratedLocation {
   return (
     location.column !== undefined &&
@@ -93,7 +93,7 @@ function serialize<T extends ProfileNode>(
   appendToSamples: AppendEntryToSamples<T>,
   stringTable: StringTable,
   ignoreSamplesPath?: string,
-  sourceMapper?: SourceMapper
+  sourceMapper?: SourceMapper,
 ) {
   const samples: Sample[] = [];
   const locations: Location[] = [];
@@ -134,7 +134,7 @@ function serialize<T extends ProfileNode>(
   function getLocation(
     node: ProfileNode,
     scriptName: string,
-    sourceMapper?: SourceMapper
+    sourceMapper?: SourceMapper,
   ): Location {
     let profLoc: SourceLocation = {
       file: scriptName || '',
@@ -264,7 +264,7 @@ function computeTotalHitCount(root: TimeProfileNode): number {
     root.hitCount +
     (root.children as TimeProfileNode[]).reduce(
       (sum, node) => sum + computeTotalHitCount(node),
-      0
+      0,
     )
   );
 }
@@ -357,7 +357,7 @@ export function serializeTimeProfile(
   sourceMapper?: SourceMapper,
   recomputeSamplingInterval = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels: string[] = []
+  lowCardinalityLabels: string[] = [],
 ): Profile {
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -371,9 +371,9 @@ export function serializeTimeProfile(
       intervalMicros = Math.min(
         Math.max(
           Math.floor((prof.endTime - prof.startTime) / totalHitCount),
-          intervalMicros
+          intervalMicros,
         ),
-        2 * intervalMicros
+        2 * intervalMicros,
       );
     }
   }
@@ -406,7 +406,7 @@ export function serializeTimeProfile(
 
   const appendTimeEntryToSamples: AppendEntryToSamples<TimeProfileNode> = (
     entry: Entry<TimeProfileNode>,
-    samples: Sample[]
+    samples: Sample[],
   ) => {
     let unlabelledHits = entry.node.hitCount;
     let unlabelledCpuTime = 0;
@@ -414,7 +414,7 @@ export function serializeTimeProfile(
     for (const context of entry.node.contexts || []) {
       const labels = generateLabels
         ? generateLabels({node: entry.node, context})
-        : context.context ?? {};
+        : (context.context ?? {});
       const labelsArr = buildLabels(labels, stringTable);
       if (labelsArr.length > 0) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
@@ -479,7 +479,7 @@ export function serializeTimeProfile(
     appendTimeEntryToSamples,
     stringTable,
     undefined,
-    sourceMapper
+    sourceMapper,
   );
 
   return new Profile(profile);
@@ -525,7 +525,7 @@ export function serializeHeapProfile(
   intervalBytes: number,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   const appendHeapEntryToSamples: AppendEntryToSamples<
     AllocationProfileNode
@@ -563,7 +563,7 @@ export function serializeHeapProfile(
     appendHeapEntryToSamples,
     stringTable,
     ignoreSamplesPath,
-    sourceMapper
+    sourceMapper,
   );
 
   return new Profile(profile);

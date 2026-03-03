@@ -54,7 +54,7 @@
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-n": "^16.0.1",
     "eslint-plugin-promise": "^6.1.1",
-    "gts": "^4.0.1",
+    "gts": "^7.0.0",
     "js-green-licenses": "^4.0.0",
     "mocha": "^11.7.5",
     "nan": "^2.23.1",
