@@ -83,7 +83,7 @@ export interface SourceLocation {
 async function processSourceMap(
   infoMap: Map<string, MapInfoCompiled>,
   mapPath: string,
-  debug: boolean
+  debug: boolean,
 ): Promise<void> {
   // this handles the case when the path is undefined, null, or
   // the empty string
@@ -108,7 +108,7 @@ async function processSourceMap(
     //       type is expected to be of `RawSourceMap` but the existing
     //       working code uses a string.)
     consumer = (await new sourceMap.SourceMapConsumer(
-      contents as {} as sourceMap.RawSourceMap
+      contents as {} as sourceMap.RawSourceMap,
     )) as {} as sourceMap.RawSourceMap;
   } catch (e) {
     throw error(
@@ -116,7 +116,7 @@ async function processSourceMap(
         'sourceMap file ' +
         mapPath +
         ': ' +
-        e
+        e,
     );
   }
 
@@ -157,7 +157,7 @@ async function processSourceMap(
         logger.debug(`Loaded source map for ${generatedPath} => ${mapPath}`);
       }
       return;
-    } catch (err) {
+    } catch {
       if (debug) {
         logger.debug(`Generated path ${generatedPath} does not exist`);
       }
@@ -174,11 +174,11 @@ export class SourceMapper {
 
   static async create(
     searchDirs: string[],
-    debug = false
+    debug = false,
   ): Promise<SourceMapper> {
     if (debug) {
       logger.debug(
-        `Looking for source map files in dirs: [${searchDirs.join(', ')}]`
+        `Looking for source map files in dirs: [${searchDirs.join(', ')}]`,
       );
     }
     const mapFiles: string[] = [];
@@ -272,7 +272,7 @@ export class SourceMapper {
     if (entry === null) {
       if (this.debug) {
         logger.debug(
-          `Source map lookup failed: no map found for ${location.file} (normalized: ${inputPath})`
+          `Source map lookup failed: no map found for ${location.file} (normalized: ${inputPath})`,
         );
       }
       return location;
@@ -291,7 +291,7 @@ export class SourceMapper {
     if (pos.source === null) {
       if (this.debug) {
         logger.debug(
-          `Source map lookup failed for ${location.name}(${location.file}:${location.line}:${location.column})`
+          `Source map lookup failed for ${location.name}(${location.file}:${location.line}:${location.column})`,
         );
       }
       return location;
@@ -306,7 +306,7 @@ export class SourceMapper {
 
     if (this.debug) {
       logger.debug(
-        `Source map lookup succeeded for ${location.name}(${location.file}:${location.line}:${location.column}) => ${loc.name}(${loc.file}:${loc.line}:${loc.column})`
+        `Source map lookup succeeded for ${location.name}(${location.file}:${location.line}:${location.column}) => ${loc.name}(${loc.file}:${loc.line}:${loc.column})`,
       );
     }
     return loc;
@@ -315,18 +315,18 @@ export class SourceMapper {
 
 async function createFromMapFiles(
   mapFiles: string[],
-  debug: boolean
+  debug: boolean,
 ): Promise<SourceMapper> {
   const limit = createLimiter(CONCURRENCY);
   const mapper = new SourceMapper(debug);
   const promises: Array<Promise<void>> = mapFiles.map(mapPath =>
-    limit(() => processSourceMap(mapper.infoMap, mapPath, debug))
+    limit(() => processSourceMap(mapper.infoMap, mapPath, debug)),
   );
   try {
     await Promise.all(promises);
   } catch (err) {
     throw error(
-      'An error occurred while processing the source map files' + err
+      'An error occurred while processing the source map files' + err,
     );
   }
   return mapper;
@@ -349,7 +349,7 @@ async function* walk(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   fileFilter = (filename: string) => true,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  directoryFilter = (root: string, dirname: string) => true
+  directoryFilter = (root: string, dirname: string) => true,
 ): AsyncIterable<string> {
   async function* walkRecursive(dir: string): AsyncIterable<string> {
     try {
@@ -381,7 +381,7 @@ async function getMapFiles(baseDir: string): Promise<string[]> {
     baseDir,
     filename => /\.[cm]?js\.map$/.test(filename),
     (root, dirname) =>
-      root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules'
+      root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules',
   )) {
     mapFiles.push(path.relative(baseDir, entry));
   }
