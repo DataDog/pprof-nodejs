@@ -29,7 +29,7 @@ import {
 } from './time-profiler-bindings';
 import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
 import {isMainThread} from 'worker_threads';
-
+import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
 
 const DEFAULT_INTERVAL_MICROS: Microseconds = 1000;
@@ -39,6 +39,7 @@ type Microseconds = number;
 type Milliseconds = number;
 
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+let gStore: AsyncLocalStorage<unknown> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -95,12 +96,14 @@ export function start(options: TimeProfilerOptions = {}) {
     throw new Error('Wall profiler is already started');
   }
 
-  gProfiler = new TimeProfiler({...options, isMainThread});
+  const store = options.useCPED === true ? new AsyncLocalStorage() : undefined;
+  gProfiler = new TimeProfiler({...options, CPEDKey: store, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
   gV8ProfilerStuckEventLoopDetected = 0;
 
   gProfiler.start();
+  gStore = store;
 
   // If contexts are enabled without using CPED, set an initial empty context
   if (options.withContexts && !options.useCPED) {
@@ -111,7 +114,7 @@ export function start(options: TimeProfilerOptions = {}) {
 export function stop(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels?: string[]
+  lowCardinalityLabels?: string[],
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -138,12 +141,16 @@ export function stop(
     gSourceMapper,
     true,
     generateLabels,
-    lowCardinalityLabels
+    lowCardinalityLabels,
   );
   if (!restart) {
     gProfiler.dispose();
     gProfiler = undefined;
     gSourceMapper = undefined;
+    if (gStore !== undefined) {
+      gStore.disable();
+      gStore = undefined;
+    }
   }
   return serializedProfile;
 }
@@ -160,6 +167,19 @@ export function setContext(context?: object) {
     throw new Error('Wall profiler is not started');
   }
   gProfiler.context = context;
+}
+
+export function runWithContext<R, TArgs extends unknown[]>(
+  context: object,
+  f: (...args: TArgs) => R,
+  ...args: TArgs
+): R {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  } else if (!gStore) {
+    throw new Error('Can only use runWithContext with AsyncContextFrame');
+  }
+  return gStore.run(gProfiler.createContextHolder(context), f, ...args);
 }
 
 export function getContext() {

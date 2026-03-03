@@ -1,5 +1,5 @@
 /**
- * Copyright 2018 Google Inc. All Rights Reserved.
+ * Copyright 2025 Datadog. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,27 +16,10 @@
 
 #pragma once
 
-#include <nan.h>
+#include <cstdint>
+
+using Address = uintptr_t;
 
 namespace dd {
-
-class HeapProfiler {
- public:
-  // Signature:
-  // startSamplingHeapProfiler()
-  static NAN_METHOD(StartSamplingHeapProfiler);
-
-  // Signature:
-  // stopSamplingHeapProfiler()
-  static NAN_METHOD(StopSamplingHeapProfiler);
-
-  // Signature:
-  // mapAllocationProfile(callback): callback result
-  static NAN_METHOD(MapAllocationProfile);
-
-  static NAN_METHOD(MonitorOutOfMemory);
-
-  static NAN_MODULE_INIT(Init);
-};
-
+Address GetValueFromMap(Address map_addr, int hash, Address key);
 }  // namespace dd

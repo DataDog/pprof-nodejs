@@ -17,7 +17,7 @@
 import {Profile} from 'pprof-format';
 
 import {
-  getAllocationProfile,
+  mapAllocationProfile,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
@@ -33,45 +33,29 @@ import {isMainThread} from 'worker_threads';
 let enabled = false;
 let heapIntervalBytes = 0;
 let heapStackDepth = 0;
-
-/*
+/**
  * Collects a heap profile when heapProfiler is enabled. Otherwise throws
  * an error.
+ * Map the heap profiler to a converted profile using callback function.
  *
- * Data is returned in V8 allocation profile format.
+ * WARNING: Nodes in the tree are only valid during the callback. Do not store
+ * references to them. The memory is freed when the callback returns.
+ *
+ * @param callback - function to convert the heap profiler to a converted profile
+ * @returns <T> converted profile
  */
-export function v8Profile(): AllocationProfileNode {
+export function v8Profile<T>(callback: (root: AllocationProfileNode) => T): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
-  return getAllocationProfile();
-}
-
-/**
- * Collects a profile and returns it serialized in pprof format.
- * Throws if heap profiler is not enabled.
- *
- * @param ignoreSamplePath
- * @param sourceMapper
- */
-export function profile(
-  ignoreSamplePath?: string,
-  sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
-): Profile {
-  return convertProfile(
-    v8Profile(),
-    ignoreSamplePath,
-    sourceMapper,
-    generateLabels
-  );
+  return mapAllocationProfile(callback);
 }
 
 export function convertProfile(
   rootNode: AllocationProfileNode,
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   const startTimeNanos = Date.now() * 1000 * 1000;
   // Add node for external memory usage.
@@ -79,6 +63,7 @@ export function convertProfile(
   // TODO: remove any once type definition is updated to include external.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const {external}: {external: number} = process.memoryUsage() as any;
+  let root: AllocationProfileNode;
   if (external > 0) {
     const externalNode: AllocationProfileNode = {
       name: '(external)',
@@ -86,16 +71,36 @@ export function convertProfile(
       children: [],
       allocations: [{sizeBytes: external, count: 1}],
     };
-    rootNode.children.push(externalNode);
+    root = {...rootNode, children: [...rootNode.children, externalNode]};
+  } else {
+    root = rootNode;
   }
   return serializeHeapProfile(
-    rootNode,
+    root,
     startTimeNanos,
     heapIntervalBytes,
     ignoreSamplePath,
     sourceMapper,
-    generateLabels
+    generateLabels,
   );
+}
+
+/**
+ * Collects a profile and returns it serialized in pprof format using lazy V2 API.
+ * Throws if heap profiler is not enabled.
+ *
+ * @param ignoreSamplePath
+ * @param sourceMapper
+ * @param generateLabels
+ */
+export function profile(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction,
+): Profile {
+  return v8Profile(root => {
+    return convertProfile(root, ignoreSamplePath, sourceMapper, generateLabels);
+  });
 }
 
 /**
@@ -109,7 +114,7 @@ export function convertProfile(
 export function start(intervalBytes: number, stackDepth: number) {
   if (enabled) {
     throw new Error(
-      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`
+      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`,
     );
   }
   heapIntervalBytes = intervalBytes;
@@ -165,13 +170,13 @@ export function monitorOutOfMemory(
   heapLimitExtensionSize: number,
   maxHeapLimitExtensionCount: number,
   dumpHeapProfileOnSdterr: boolean,
-  exportCommand?: Array<String>,
+  exportCommand?: Array<string>,
   callback?: NearHeapLimitCallback,
-  callbackMode?: number
+  callbackMode?: number,
 ) {
   if (!enabled) {
     throw new Error(
-      'Heap profiler must already be started to call monitorOutOfMemory'
+      'Heap profiler must already be started to call monitorOutOfMemory',
     );
   }
   let newCallback;
@@ -187,6 +192,6 @@ export function monitorOutOfMemory(
     exportCommand || [],
     newCallback,
     typeof callbackMode !== 'undefined' ? callbackMode : CallbackMode.Async,
-    isMainThread
+    isMainThread,
   );
 }

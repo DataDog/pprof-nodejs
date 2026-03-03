@@ -29,7 +29,7 @@ time.start({
 });
 
 parentPort?.on('message', () => {
-  delay(50).then(() => {
+  void delay(50).then(() => {
     parentPort?.postMessage('hello');
   });
 });

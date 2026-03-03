@@ -35,10 +35,30 @@ import {
 const copy = require('deep-copy');
 const assert = require('assert');
 
+function mapToGetterNode(node: AllocationProfileNode): AllocationProfileNode {
+  const children = (node.children || []).map(mapToGetterNode);
+  const allocations = node.allocations || [];
+  const result = {};
+
+  Object.defineProperties(result, {
+    name: {get: () => node.name},
+    scriptName: {get: () => node.scriptName},
+    scriptId: {get: () => node.scriptId},
+    lineNumber: {get: () => node.lineNumber},
+    columnNumber: {get: () => node.columnNumber},
+    allocations: {get: () => allocations},
+    children: {get: () => children},
+  });
+  return result as AllocationProfileNode;
+}
+
 describe('HeapProfiler', () => {
   let startStub: sinon.SinonStub<[number, number], void>;
   let stopStub: sinon.SinonStub<[], void>;
-  let profileStub: sinon.SinonStub<[], AllocationProfileNode>;
+  let profileStub: sinon.SinonStub<
+    [(root: AllocationProfileNode) => unknown],
+    unknown
+  >;
   let dateStub: sinon.SinonStub<[], number>;
   let memoryUsageStub: sinon.SinonStub<[], NodeJS.MemoryUsage>;
   beforeEach(() => {
@@ -58,8 +78,8 @@ describe('HeapProfiler', () => {
   describe('profile', () => {
     it('should return a profile equal to the expected profile when external memory is allocated', async () => {
       profileStub = sinon
-        .stub(v8HeapProfiler, 'getAllocationProfile')
-        .returns(copy(v8HeapProfile));
+        .stub(v8HeapProfiler, 'mapAllocationProfile')
+        .callsFake(callback => callback(mapToGetterNode(copy(v8HeapProfile))));
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 1024,
         rss: 2048,
@@ -76,8 +96,10 @@ describe('HeapProfiler', () => {
 
     it('should return a profile equal to the expected profile when including all samples', async () => {
       profileStub = sinon
-        .stub(v8HeapProfiler, 'getAllocationProfile')
-        .returns(copy(v8HeapWithPathProfile));
+        .stub(v8HeapProfiler, 'mapAllocationProfile')
+        .callsFake(callback =>
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
+        );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
         rss: 2048,
@@ -94,8 +116,10 @@ describe('HeapProfiler', () => {
 
     it('should return a profile equal to the expected profile when excluding profiler samples', async () => {
       profileStub = sinon
-        .stub(v8HeapProfiler, 'getAllocationProfile')
-        .returns(copy(v8HeapWithPathProfile));
+        .stub(v8HeapProfiler, 'mapAllocationProfile')
+        .callsFake(callback =>
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
+        );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
         rss: 2048,
@@ -112,8 +136,10 @@ describe('HeapProfiler', () => {
 
     it('should return a profile equal to the expected profile when adding labels', async () => {
       profileStub = sinon
-        .stub(v8HeapProfiler, 'getAllocationProfile')
-        .returns(copy(v8HeapWithPathProfile));
+        .stub(v8HeapProfiler, 'mapAllocationProfile')
+        .callsFake(callback =>
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
+        );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
         rss: 2048,
@@ -138,7 +164,7 @@ describe('HeapProfiler', () => {
         },
         (err: Error) => {
           return err.message === 'Heap profiler is not enabled.';
-        }
+        },
       );
     });
 
@@ -153,7 +179,7 @@ describe('HeapProfiler', () => {
         },
         (err: Error) => {
           return err.message === 'Heap profiler is not enabled.';
-        }
+        },
       );
     });
   });
@@ -165,7 +191,7 @@ describe('HeapProfiler', () => {
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
         startStub.calledWith(intervalBytes1, stackDepth1),
-        'expected startSamplingHeapProfiler to be called'
+        'expected startSamplingHeapProfiler to be called',
       );
     });
     it('should throw error when enabled and started with different parameters', () => {
@@ -174,7 +200,7 @@ describe('HeapProfiler', () => {
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
         startStub.calledWith(intervalBytes1, stackDepth1),
-        'expected startSamplingHeapProfiler to be called'
+        'expected startSamplingHeapProfiler to be called',
       );
       startStub.resetHistory();
       const intervalBytes2 = 1024 * 128;
@@ -185,12 +211,12 @@ describe('HeapProfiler', () => {
         assert.strictEqual(
           (e as Error).message,
           'Heap profiler is already started  with intervalBytes 524288 and' +
-            ' stackDepth 64'
+            ' stackDepth 64',
         );
       }
       assert.ok(
         !startStub.called,
-        'expected startSamplingHeapProfiler not to be called second time'
+        'expected startSamplingHeapProfiler not to be called second time',
       );
     });
   });
@@ -205,7 +231,7 @@ describe('HeapProfiler', () => {
       heapProfiler.stop();
       assert.ok(
         stopStub.called,
-        'expected stopSamplingHeapProfiler to be called'
+        'expected stopSamplingHeapProfiler to be called',
       );
     });
   });
