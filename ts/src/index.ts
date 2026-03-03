@@ -36,6 +36,7 @@ export const time = {
   stop: timeProfiler.stop,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
+  runWithContext: timeProfiler.runWithContext,
   isStarted: timeProfiler.isStarted,
   v8ProfilerStuckEventLoopDetected:
     timeProfiler.v8ProfilerStuckEventLoopDetected,
@@ -48,7 +49,6 @@ export const heap = {
   start: heapProfiler.start,
   stop: heapProfiler.stop,
   profile: heapProfiler.profile,
-  profileV2: heapProfiler.profileV2,
   convertProfile: heapProfiler.convertProfile,
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,

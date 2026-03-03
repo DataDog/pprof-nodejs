@@ -59,7 +59,7 @@ if (useCPED && supportedPlatform) {
         assert.strictEqual(
           retrieved,
           context,
-          'Should retrieve the same object'
+          'Should retrieve the same object',
         );
 
         profiler.dispose();
@@ -124,6 +124,27 @@ if (useCPED && supportedPlatform) {
 
         profiler.dispose();
       });
+
+      it('should work with createContextHolder pattern', () => {
+        // This tests the pattern used by runWithContext where
+        // createContextHolder creates a wrap object that's stored in CPED map
+
+        const als = new AsyncLocalStorage();
+        const profiler = createProfiler(als);
+
+        const context = {label: 'wrapped-context', id: 999};
+
+        // Using als.run mimics what runWithContext does internally
+        als.run(profiler.createContextHolder(context), () => {
+          const retrieved = profiler.context;
+
+          // The wrap object stores context at index 0
+          assert.ok(retrieved !== null && typeof retrieved === 'object');
+          assert.deepStrictEqual(retrieved, context);
+        });
+
+        profiler.dispose();
+      });
     });
 
     describe('multiple context frames', () => {
@@ -179,7 +200,7 @@ if (useCPED && supportedPlatform) {
   });
 }
 
-function createProfiler(als: AsyncLocalStorage<any>) {
+function createProfiler(als: AsyncLocalStorage<unknown>) {
   return new profiler.TimeProfiler({
     intervalMicros: 10000,
     durationMillis: 500,

@@ -1089,6 +1089,7 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::SetPrototypeMethod(tpl,
                           "v8ProfilerStuckEventLoopDetected",
                           V8ProfilerStuckEventLoopDetected);
+  Nan::SetPrototypeMethod(tpl, "createContextHolder", CreateContextHolder);
 
   Nan::SetAccessor(tpl->InstanceTemplate(),
                    Nan::New("state").ToLocalChecked(),
@@ -1176,21 +1177,27 @@ void WallProfiler::SetContext(Isolate* isolate, Local<Value> value) {
     SignalGuard m(setInProgress_);
     cpedMap->Delete(v8Ctx, localKey).Check();
   } else {
-    auto wrap =
-        wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
-    // for easy access from JS when cpedKey is an ALS, it can do
-    // als.getStore()?.[0];
-    wrap->Set(v8Ctx, 0, value).Check();
-    auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
-    liveContextPtrs_.insert(contextPtr);
-    contextPtr->Set(isolate, value);
-
+    auto contextHolder = CreateContextHolder(isolate, v8Ctx, value);
     SignalGuard m(setInProgress_);
-    cpedMap->Set(v8Ctx, localKey, wrap).ToLocalChecked();
+    cpedMap->Set(v8Ctx, localKey, contextHolder).ToLocalChecked();
   }
 #else
   SetCurrentContextPtr(isolate, value);
 #endif
+}
+
+Local<Object> WallProfiler::CreateContextHolder(Isolate* isolate,
+                                                Local<Context> v8Ctx,
+                                                Local<Value> value) {
+  auto wrap =
+      wrapObjectTemplate_.Get(isolate)->NewInstance(v8Ctx).ToLocalChecked();
+  // for easy access from JS when cpedKey is an ALS, it can do
+  // als.getStore()?.[0];
+  wrap->Set(v8Ctx, 0, value).Check();
+  auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
+  liveContextPtrs_.insert(contextPtr);
+  contextPtr->Set(isolate, value);
+  return wrap;
 }
 
 ContextPtr WallProfiler::GetContextPtrSignalSafe(Isolate* isolate) {
@@ -1277,6 +1284,18 @@ NAN_GETTER(WallProfiler::GetContext) {
 NAN_SETTER(WallProfiler::SetContext) {
   auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
   profiler->SetContext(info.GetIsolate(), value);
+}
+
+NAN_METHOD(WallProfiler::CreateContextHolder) {
+  auto profiler = Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+  if (!profiler->useCPED()) {
+    return Nan::ThrowTypeError(
+        "CreateContextHolder can only be used with CPED");
+  }
+  auto isolate = info.GetIsolate();
+  auto contextHolder = profiler->CreateContextHolder(
+      isolate, isolate->GetCurrentContext(), info[0]);
+  info.GetReturnValue().Set(contextHolder);
 }
 
 NAN_GETTER(WallProfiler::SharedArrayGetter) {

@@ -39,7 +39,7 @@ type Microseconds = number;
 type Milliseconds = number;
 
 let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
-let gStore: AsyncLocalStorage<any> | undefined;
+let gStore: AsyncLocalStorage<unknown> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -114,7 +114,7 @@ export function start(options: TimeProfilerOptions = {}) {
 export function stop(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels?: string[]
+  lowCardinalityLabels?: string[],
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -141,7 +141,7 @@ export function stop(
     gSourceMapper,
     true,
     generateLabels,
-    lowCardinalityLabels
+    lowCardinalityLabels,
   );
   if (!restart) {
     gProfiler.dispose();
@@ -167,6 +167,19 @@ export function setContext(context?: object) {
     throw new Error('Wall profiler is not started');
   }
   gProfiler.context = context;
+}
+
+export function runWithContext<R, TArgs extends unknown[]>(
+  context: object,
+  f: (...args: TArgs) => R,
+  ...args: TArgs
+): R {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  } else if (!gStore) {
+    throw new Error('Can only use runWithContext with AsyncContextFrame');
+  }
+  return gStore.run(gProfiler.createContextHolder(context), f, ...args);
 }
 
 export function getContext() {

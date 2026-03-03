@@ -17,7 +17,6 @@
 import {Profile} from 'pprof-format';
 
 import {
-  getAllocationProfile,
   mapAllocationProfile,
   startSamplingHeapProfiler,
   stopSamplingHeapProfiler,
@@ -34,20 +33,6 @@ import {isMainThread} from 'worker_threads';
 let enabled = false;
 let heapIntervalBytes = 0;
 let heapStackDepth = 0;
-
-/*
- * Collects a heap profile when heapProfiler is enabled. Otherwise throws
- * an error.
- *
- * Data is returned in V8 allocation profile format.
- */
-export function v8Profile(): AllocationProfileNode {
-  if (!enabled) {
-    throw new Error('Heap profiler is not enabled.');
-  }
-  return getAllocationProfile();
-}
-
 /**
  * Collects a heap profile when heapProfiler is enabled. Otherwise throws
  * an error.
@@ -59,40 +44,18 @@ export function v8Profile(): AllocationProfileNode {
  * @param callback - function to convert the heap profiler to a converted profile
  * @returns <T> converted profile
  */
-export function v8ProfileV2<T>(
-  callback: (root: AllocationProfileNode) => T
-): T {
+export function v8Profile<T>(callback: (root: AllocationProfileNode) => T): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
   return mapAllocationProfile(callback);
 }
 
-/**
- * Collects a profile and returns it serialized in pprof format.
- * Throws if heap profiler is not enabled.
- *
- * @param ignoreSamplePath
- * @param sourceMapper
- */
-export function profile(
-  ignoreSamplePath?: string,
-  sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
-): Profile {
-  return convertProfile(
-    v8Profile(),
-    ignoreSamplePath,
-    sourceMapper,
-    generateLabels
-  );
-}
-
 export function convertProfile(
   rootNode: AllocationProfileNode,
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   const startTimeNanos = Date.now() * 1000 * 1000;
   // Add node for external memory usage.
@@ -118,7 +81,7 @@ export function convertProfile(
     heapIntervalBytes,
     ignoreSamplePath,
     sourceMapper,
-    generateLabels
+    generateLabels,
   );
 }
 
@@ -130,12 +93,12 @@ export function convertProfile(
  * @param sourceMapper
  * @param generateLabels
  */
-export function profileV2(
+export function profile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
-  return v8ProfileV2(root => {
+  return v8Profile(root => {
     return convertProfile(root, ignoreSamplePath, sourceMapper, generateLabels);
   });
 }
@@ -151,7 +114,7 @@ export function profileV2(
 export function start(intervalBytes: number, stackDepth: number) {
   if (enabled) {
     throw new Error(
-      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`
+      `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`,
     );
   }
   heapIntervalBytes = intervalBytes;
@@ -207,13 +170,13 @@ export function monitorOutOfMemory(
   heapLimitExtensionSize: number,
   maxHeapLimitExtensionCount: number,
   dumpHeapProfileOnSdterr: boolean,
-  exportCommand?: Array<String>,
+  exportCommand?: Array<string>,
   callback?: NearHeapLimitCallback,
-  callbackMode?: number
+  callbackMode?: number,
 ) {
   if (!enabled) {
     throw new Error(
-      'Heap profiler must already be started to call monitorOutOfMemory'
+      'Heap profiler must already be started to call monitorOutOfMemory',
     );
   }
   let newCallback;
@@ -229,6 +192,6 @@ export function monitorOutOfMemory(
     exportCommand || [],
     newCallback,
     typeof callbackMode !== 'undefined' ? callbackMode : CallbackMode.Async,
-    isMainThread
+    isMainThread,
   );
 }

@@ -35,6 +35,10 @@ const useCPED =
 
 const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
 
+const unsupportedPlatform =
+  process.platform !== 'darwin' && process.platform !== 'linux';
+const shouldSkipCPEDTests = !useCPED || unsupportedPlatform;
+
 const PROFILE_OPTIONS = {
   durationMillis: 500,
   intervalMicros: 1000,
@@ -49,7 +53,7 @@ describe('Time Profiler', () => {
     });
 
     it('should update state', function shouldUpdateState() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       const startTime = BigInt(Date.now()) * 1000n;
@@ -89,7 +93,7 @@ describe('Time Profiler', () => {
         assert.deepEqual(
           context!.context,
           initialContext,
-          'Unexpected context'
+          'Unexpected context',
         );
 
         assert.ok(context!.timestamp >= startTime);
@@ -101,7 +105,7 @@ describe('Time Profiler', () => {
     });
 
     it('should have labels', function shouldHaveLabels() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       this.timeout(3000);
@@ -133,8 +137,8 @@ describe('Time Profiler', () => {
         validateProfile(
           time.stop(
             i < repeats - 1,
-            enableEndPoint || collectAsyncId ? generateLabels : undefined
-          )
+            enableEndPoint || collectAsyncId ? generateLabels : undefined,
+          ),
         );
       }
 
@@ -222,7 +226,7 @@ describe('Time Profiler', () => {
           hrtimeBigIntIdx,
           asyncIdLabelIdx,
         ] = ['loop', 'fn0', 'fn1', 'fn2', 'hrtimeBigInt', asyncIdLabel].map(x =>
-          stringTable.dedup(x)
+          stringTable.dedup(x),
         );
 
         function getString(n: number | bigint): string {
@@ -277,7 +281,7 @@ describe('Time Profiler', () => {
           const labels = sample.label;
           if (collectAsyncId) {
             const idx = labels.findIndex(
-              label => label.key === asyncIdLabelIdx
+              label => label.key === asyncIdLabelIdx,
             );
             if (idx !== -1) {
               // Remove async ID label so it doesn't confuse the assertions on
@@ -291,7 +295,7 @@ describe('Time Profiler', () => {
               if (enableEndPoint) {
                 assert(
                   labels.length < 4,
-                  'loop can have at most two labels and one endpoint'
+                  'loop can have at most two labels and one endpoint',
                 );
                 labels.forEach(label => {
                   assert(
@@ -299,7 +303,7 @@ describe('Time Profiler', () => {
                       labelIs(label, 'label', 'value1') ||
                       labelIs(label, endPointLabel, endPoint) ||
                       labelIs(label, rootSpanIdLabel, rootSpanId),
-                    'loop can be observed with value0 or value1 or root span id or endpoint'
+                    'loop can be observed with value0 or value1 or root span id or endpoint',
                   );
                 });
               } else {
@@ -309,7 +313,7 @@ describe('Time Profiler', () => {
                     labelIs(label, 'label', 'value0') ||
                       labelIs(label, 'label', 'value1') ||
                       labelIs(label, rootSpanIdLabel, rootSpanId),
-                    'loop can be observed with value0 or value1 or root span id'
+                    'loop can be observed with value0 or value1 or root span id',
                   );
                 });
               }
@@ -319,8 +323,8 @@ describe('Time Profiler', () => {
               assert(
                 labels.length < 2,
                 `fn0 can have at most one label, instead got: ${labels.map(
-                  labelStr
-                )}`
+                  labelStr,
+                )}`,
               );
               labels.forEach(label => {
                 if (labelIs(label, 'label', 'value0')) {
@@ -338,7 +342,7 @@ describe('Time Profiler', () => {
               if (enableEndPoint) {
                 assert(
                   labels.length === 3,
-                  'fn1 must be observed with a label, a root span id and an endpoint'
+                  'fn1 must be observed with a label, a root span id and an endpoint',
                 );
                 const labelMap = getLabels(labels);
                 assert.deepEqual(labelMap, {
@@ -348,13 +352,13 @@ describe('Time Profiler', () => {
               } else {
                 assert(
                   labels.length === 2,
-                  'fn1 must be observed with a label'
+                  'fn1 must be observed with a label',
                 );
                 labels.forEach(label => {
                   assert(
                     labelIs(label, 'label', 'value1') ||
                       labelIs(label, rootSpanIdLabel, rootSpanId),
-                    'Only value1 can be observed with fn1'
+                    'Only value1 can be observed with fn1',
                   );
                 });
               }
@@ -364,7 +368,7 @@ describe('Time Profiler', () => {
               assert(
                 labels.length === 0,
                 'fn2 must be observed with no labels. Observed instead with ' +
-                  labelStr(labels[0])
+                  labelStr(labels[0]),
               );
               fn2ObservedWithoutLabels = true;
               break;
@@ -377,7 +381,7 @@ describe('Time Profiler', () => {
         assert(fn1ObservedWithLabel1, 'fn1 was not observed with value1');
         assert(
           fn2ObservedWithoutLabels,
-          'fn2 was not observed without a label'
+          'fn2 was not observed without a label',
         );
         assert(!collectAsyncId || observedAsyncId, 'Async ID was not observed');
       }
@@ -441,7 +445,7 @@ describe('Time Profiler', () => {
 
     before(() => {
       sinonStubs.push(
-        sinon.stub(v8TimeProfiler, 'TimeProfiler').returns(timeProfilerStub)
+        sinon.stub(v8TimeProfiler, 'TimeProfiler').returns(timeProfilerStub),
       );
       sinonStubs.push(sinon.stub(Date, 'now').returns(0));
     });
@@ -454,7 +458,7 @@ describe('Time Profiler', () => {
 
     it('should profile during duration and finish profiling after duration', async () => {
       let isProfiling = true;
-      time.profile(PROFILE_OPTIONS).then(() => {
+      void time.profile(PROFILE_OPTIONS).then(() => {
         isProfiling = false;
       });
       await setTimeoutPromise(2 * PROFILE_OPTIONS.durationMillis);
@@ -475,7 +479,7 @@ describe('Time Profiler', () => {
       assert.equal(
         time.v8ProfilerStuckEventLoopDetected(),
         0,
-        'v8 bug detected'
+        'v8 bug detected',
       );
 
       sinon.assert.notCalled(timeProfilerStub.start);
@@ -503,7 +507,7 @@ describe('Time Profiler', () => {
 
     before(() => {
       sinonStubs.push(
-        sinon.stub(v8TimeProfiler, 'TimeProfiler').returns(timeProfilerStub)
+        sinon.stub(v8TimeProfiler, 'TimeProfiler').returns(timeProfilerStub),
       );
       sinonStubs.push(sinon.stub(Date, 'now').returns(0));
     });
@@ -523,7 +527,7 @@ describe('Time Profiler', () => {
       assert.equal(
         time.v8ProfilerStuckEventLoopDetected(),
         2,
-        'v8 bug not detected'
+        'v8 bug not detected',
       );
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stop.resetHistory();
@@ -536,7 +540,7 @@ describe('Time Profiler', () => {
 
   describe('lowCardinalityLabels', () => {
     it('should handle lowCardinalityLabels parameter in stop function', async function testLowCardinalityLabels() {
-      if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      if (unsupportedPlatform) {
         this.skip();
       }
       this.timeout(3000);
@@ -637,7 +641,7 @@ describe('Time Profiler', () => {
       assert(foundLowCardLabel, 'Should find low cardinality label in samples');
       assert(
         foundHighCardLabel,
-        'Should find high cardinality label in samples'
+        'Should find high cardinality label in samples',
       );
 
       // Verify that the lowCardinalityLabels parameter is working correctly
@@ -658,17 +662,17 @@ describe('Time Profiler', () => {
         labelsByValue.size === 2,
         `Expected exactly 2 distinct low cardinality label values, found ${
           labelsByValue.size
-        }. Values: ${Array.from(labelsByValue.keys()).join(', ')}`
+        }. Values: ${Array.from(labelsByValue.keys()).join(', ')}`,
       );
 
       // Verify we found both expected values
       assert(
         labelsByValue.has('web-service'),
-        'Should find web-service labels'
+        'Should find web-service labels',
       );
       assert(
         labelsByValue.has('api-service'),
-        'Should find api-service labels'
+        'Should find api-service labels',
       );
 
       // Verify that the lowCardinalityLabels parameter was properly used
@@ -676,7 +680,7 @@ describe('Time Profiler', () => {
       labelsByValue.forEach((labels, value) => {
         assert(
           labels.length > 0,
-          `Should have at least one label with value '${value}'`
+          `Should have at least one label with value '${value}'`,
         );
 
         // Check that all labels have the same key (service_name)
@@ -684,7 +688,7 @@ describe('Time Profiler', () => {
           const keyStr = profile.stringTable.strings[Number(label.key)];
           assert(
             keyStr === lowCardLabel,
-            `Expected label key to be '${lowCardLabel}', got '${keyStr}'`
+            `Expected label key to be '${lowCardLabel}', got '${keyStr}'`,
           );
         });
       });
@@ -693,17 +697,17 @@ describe('Time Profiler', () => {
       // This verifies that the lowCardinalityLabels parameter is properly handled
       const allUniqueValues = new Set(
         lowCardinalityLabels.map(
-          label => profile.stringTable.strings[Number(label.str)]
-        )
+          label => profile.stringTable.strings[Number(label.str)],
+        ),
       );
       assert(
         allUniqueValues.size === 2,
-        `Expected exactly 2 unique low cardinality label values across all samples, found ${allUniqueValues.size}`
+        `Expected exactly 2 unique low cardinality label values across all samples, found ${allUniqueValues.size}`,
       );
       assert(
         allUniqueValues.has('web-service') &&
           allUniqueValues.has('api-service'),
-        'Should find both web-service and api-service values in the low cardinality labels'
+        'Should find both web-service and api-service values in the low cardinality labels',
       );
 
       // Verify that low cardinality labels with the same value are the same object
@@ -713,7 +717,7 @@ describe('Time Profiler', () => {
         assert(
           uniqueObjects.size === 1,
           `All labels with value '${value}' should be the same object, found ${uniqueObjects.size} different objects. ` +
-            'The lowCardinalityLabels parameter should enable deduplication of Label objects with identical key/value pairs.'
+            'The lowCardinalityLabels parameter should enable deduplication of Label objects with identical key/value pairs.',
         );
       });
     });
@@ -724,6 +728,242 @@ describe('Time Profiler', () => {
       const threadId = getNativeThreadId();
       assert.ok(typeof threadId === 'number');
       assert.ok(threadId > 0);
+    });
+  });
+
+  describe('runWithContext', () => {
+    it('should throw when profiler is not started', () => {
+      assert.throws(() => {
+        time.runWithContext({label: 'test'}, () => {});
+      }, /Wall profiler is not started/);
+    });
+
+    it('should throw when useCPED is not enabled', function testNoCPED() {
+      if (unsupportedPlatform) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: false,
+      });
+
+      try {
+        assert.throws(() => {
+          time.runWithContext({label: 'test'}, () => {});
+        }, /Can only use runWithContext with AsyncContextFrame/);
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should run function with context when useCPED is enabled', function testRunWithContext() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test-value', id: '123'};
+        let contextInsideFunction;
+
+        time.runWithContext(testContext, () => {
+          contextInsideFunction = time.getContext();
+        });
+
+        assert.deepEqual(
+          contextInsideFunction,
+          testContext,
+          'Context should be accessible within function',
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should pass arguments to function correctly', function testArguments() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test'};
+        const result = time.runWithContext(
+          testContext,
+          (a: number, b: string, c: boolean) => {
+            return {a, b, c};
+          },
+          42,
+          'hello',
+          true,
+        );
+
+        assert.deepEqual(
+          result,
+          {a: 42, b: 'hello', c: true},
+          'Arguments should be passed correctly',
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should return function result', function testReturnValue() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'test'};
+        const result = time.runWithContext(testContext, () => {
+          return 'test-result';
+        });
+
+        assert.strictEqual(
+          result,
+          'test-result',
+          'Function result should be returned',
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should handle nested runWithContext calls', function testNestedCalls() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const outerContext = {label: 'outer'};
+        const innerContext = {label: 'inner'};
+        const results: string[] = [];
+
+        time.runWithContext(outerContext, () => {
+          const ctx1 = time.getContext();
+          results.push((ctx1 as Record<string, string>).label);
+
+          time.runWithContext(innerContext, () => {
+            const ctx2 = time.getContext();
+            results.push((ctx2 as Record<string, string>).label);
+          });
+
+          const ctx3 = time.getContext();
+          results.push((ctx3 as Record<string, string>).label);
+        });
+
+        assert.deepEqual(
+          results,
+          ['outer', 'inner', 'outer'],
+          'Nested contexts should be properly isolated and restored',
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should isolate context from outside runWithContext', function testContextIsolation() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const runWithContextContext = {label: 'inside'};
+        let contextInside;
+
+        time.runWithContext(runWithContextContext, () => {
+          contextInside = time.getContext();
+        });
+
+        // Context outside runWithContext should be undefined since we're using CPED
+        const contextOutside = time.getContext();
+
+        assert.deepEqual(
+          contextInside,
+          runWithContextContext,
+          'Context inside should match',
+        );
+        assert.strictEqual(
+          contextOutside,
+          undefined,
+          'Context outside should be undefined with CPED',
+        );
+      } finally {
+        time.stop();
+      }
+    });
+
+    it('should work with async functions', async function testAsyncFunction() {
+      if (shouldSkipCPEDTests) {
+        this.skip();
+      }
+
+      time.start({
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        durationMillis: PROFILE_OPTIONS.durationMillis,
+        withContexts: true,
+        useCPED: true,
+      });
+
+      try {
+        const testContext = {label: 'async-test'};
+
+        const result = await time.runWithContext(testContext, async () => {
+          const ctx1 = time.getContext();
+          await setTimeoutPromise(10);
+          const ctx2 = time.getContext();
+          return {ctx1, ctx2};
+        });
+
+        assert.deepEqual(
+          result.ctx1,
+          testContext,
+          'Context should be available before await',
+        );
+        assert.deepEqual(
+          result.ctx2,
+          testContext,
+          'Context should be preserved after await',
+        );
+      } finally {
+        time.stop();
+      }
     });
   });
 });
