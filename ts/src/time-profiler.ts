@@ -45,12 +45,12 @@ type Milliseconds = number;
 type NativeTimeProfiler = InstanceType<typeof TimeProfiler> & {
   stopAndCollect?: <T>(
     restart: boolean,
-    callback: (profile: TimeProfile) => T
+    callback: (profile: TimeProfile) => T,
   ) => T;
 };
 
 let gProfiler: NativeTimeProfiler | undefined;
-let gStore: AsyncLocalStorage<any> | undefined;
+let gStore: AsyncLocalStorage<unknown> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
@@ -132,7 +132,7 @@ export function start(options: TimeProfilerOptions = {}) {
 export function stop(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels?: string[]
+  lowCardinalityLabels?: string[],
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -159,7 +159,7 @@ export function stop(
     gSourceMapper,
     true,
     generateLabels,
-    lowCardinalityLabels
+    lowCardinalityLabels,
   );
   if (!restart) {
     gProfiler.dispose();
@@ -181,7 +181,7 @@ export function stop(
 export function stopV2(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels?: string[]
+  lowCardinalityLabels?: string[],
 ) {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
@@ -196,8 +196,8 @@ export function stopV2(
         gSourceMapper,
         true,
         generateLabels,
-        lowCardinalityLabels
-      )
+        lowCardinalityLabels,
+      ),
   );
   if (restart) {
     gV8ProfilerStuckEventLoopDetected =
@@ -233,7 +233,7 @@ export function setContext(context?: object) {
   gProfiler.context = context;
 }
 
-export function runWithContext<R, TArgs extends any[]>(
+export function runWithContext<R, TArgs extends unknown[]>(
   context: object,
   f: (...args: TArgs) => R,
   ...args: TArgs

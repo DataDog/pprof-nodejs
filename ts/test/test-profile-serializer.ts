@@ -43,18 +43,18 @@ import {
 
 const assert = require('assert');
 
-function getNonJSThreadsSample(profile: Profile): Number[] | null {
+function getNonJSThreadsSample(profile: Profile): number[] | null {
   for (const sample of profile.sample!) {
     const locationId = sample.locationId[0];
     const location = getAndVerifyPresence(
       profile.location!,
-      locationId as number
+      locationId as number,
     );
     const functionId = location.line![0].functionId;
     const fn = getAndVerifyPresence(profile.function!, functionId as number);
     const fn_name = profile.stringTable.strings[fn.name as number];
     if (fn_name === NON_JS_THREADS_FUNCTION_NAME) {
-      return sample.value as Number[];
+      return sample.value as number[];
     }
   }
 
@@ -102,7 +102,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       assert.equal(getNonJSThreadsSample(timeProfileOutWithLabels), null);
     });
@@ -132,7 +132,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       assert.equal(getNonJSThreadsSample(timeProfileOutWithLabels), null);
     });
@@ -166,7 +166,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       const valuesWithLabels = getNonJSThreadsSample(timeProfileOutWithLabels);
       assert.notEqual(valuesWithLabels, null);
@@ -197,7 +197,7 @@ describe('profile-serializer', () => {
       const heapProfileOut = serializeHeapProfile(
         v8AnonymousFunctionHeapProfile,
         0,
-        512 * 1024
+        512 * 1024,
       );
       assert.deepEqual(heapProfileOut, anonymousFunctionHeapProfile);
     });
@@ -217,7 +217,7 @@ describe('profile-serializer', () => {
           0,
           512 * 1024,
           undefined,
-          sourceMapper
+          sourceMapper,
         );
         assert.deepEqual(heapProfileOut, heapSourceProfile);
       });
@@ -228,7 +228,7 @@ describe('profile-serializer', () => {
         const timeProfileOut = serializeTimeProfile(
           v8TimeGeneratedProfile,
           1000,
-          sourceMapper
+          sourceMapper,
         );
         assert.deepEqual(timeProfileOut, timeSourceProfile);
       });
@@ -278,7 +278,7 @@ describe('profile-serializer', () => {
 
       fs.writeFileSync(
         path.join(testMapDir, 'generated.js.map'),
-        mapGen.toString()
+        mapGen.toString(),
       );
       fs.writeFileSync(path.join(testMapDir, 'generated.js'), '');
 
@@ -319,24 +319,24 @@ describe('profile-serializer', () => {
       const line = loc.line![0];
       const func = getAndVerifyPresence(
         profile.function!,
-        line.functionId as number
+        line.functionId as number,
       );
       const filename = getAndVerifyString(
         profile.stringTable,
         func,
-        'filename'
+        'filename',
       );
 
       // Should be mapped to source.ts
       assert.ok(
         filename.includes('source.ts'),
-        `Expected source.ts but got ${filename}`
+        `Expected source.ts but got ${filename}`,
       );
       // With column 0 and LEAST_UPPER_BOUND, should map to FIRST mapping (line 100)
       assert.strictEqual(
         line.line,
         FIRST_CALL_SOURCE_LINE,
-        'Column 0 should use LEAST_UPPER_BOUND to find first mapping on line'
+        'Column 0 should use LEAST_UPPER_BOUND to find first mapping on line',
       );
     });
 
@@ -377,7 +377,7 @@ describe('profile-serializer', () => {
       assert.strictEqual(
         line.line,
         SECOND_CALL_SOURCE_LINE,
-        'Column 26 should use GREATEST_LOWER_BOUND to find mapping at column 25'
+        'Column 26 should use GREATEST_LOWER_BOUND to find mapping at column 25',
       );
     });
 
@@ -418,7 +418,7 @@ describe('profile-serializer', () => {
       assert.strictEqual(
         line.line,
         FIRST_CALL_SOURCE_LINE,
-        'Column 11 should use GREATEST_LOWER_BOUND to find mapping at column 10'
+        'Column 11 should use GREATEST_LOWER_BOUND to find mapping at column 10',
       );
     });
   });

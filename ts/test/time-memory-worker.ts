@@ -13,7 +13,7 @@ function createUniqueFunctions(count: number): Array<() => void> {
   for (let i = 0; i < count; i++) {
     const fn = new Function(
       `//# sourceURL=wide_fn_${i}_${SCRIPT_PADDING}.js\n` +
-        `var x${i}=0,e${i}=Date.now()+1;while(Date.now()<e${i}){x${i}++;}`
+        `var x${i}=0,e${i}=Date.now()+1;while(Date.now()<e${i}){x${i}++;}`,
     ) as () => void;
     fns.push(fn);
   }
@@ -27,7 +27,7 @@ function createDeepCallChain(chainId: number, depth: number): () => void {
     innermost = new Function(
       'next',
       `//# sourceURL=chain_${chainId}_d${i}_${SCRIPT_PADDING}.js\n` +
-        'var c=0,e=Date.now()+1;while(Date.now()<e){c++;} if(next)next();'
+        'var c=0,e=Date.now()+1;while(Date.now()<e){c++;} if(next)next();',
     ).bind(null, next) as () => void;
   }
   return innermost!;
@@ -38,7 +38,7 @@ const CHAIN_STRIDE = 30;
 function generateCpuWork(
   wideFns: Array<() => void>,
   deepChains: Array<() => void>,
-  durationMs: number
+  durationMs: number,
 ): void {
   const deadline = Date.now() + durationMs;
   let i = 0;
@@ -131,7 +131,7 @@ function measureV2(): MemoryResult {
       const afterTraversal = process.memoryUsage().heapUsed - baseline;
 
       return {initial, afterTraversal};
-    }
+    },
   );
 
   profiler.dispose();
