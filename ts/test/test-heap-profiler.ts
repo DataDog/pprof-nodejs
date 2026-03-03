@@ -98,7 +98,7 @@ describe('HeapProfiler', () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'mapAllocationProfile')
         .callsFake(callback =>
-          callback(mapToGetterNode(copy(v8HeapWithPathProfile)))
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
         );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
@@ -118,7 +118,7 @@ describe('HeapProfiler', () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'mapAllocationProfile')
         .callsFake(callback =>
-          callback(mapToGetterNode(copy(v8HeapWithPathProfile)))
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
         );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
@@ -138,7 +138,7 @@ describe('HeapProfiler', () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'mapAllocationProfile')
         .callsFake(callback =>
-          callback(mapToGetterNode(copy(v8HeapWithPathProfile)))
+          callback(mapToGetterNode(copy(v8HeapWithPathProfile))),
         );
       memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
         external: 0,
@@ -164,7 +164,7 @@ describe('HeapProfiler', () => {
         },
         (err: Error) => {
           return err.message === 'Heap profiler is not enabled.';
-        }
+        },
       );
     });
 
@@ -179,7 +179,7 @@ describe('HeapProfiler', () => {
         },
         (err: Error) => {
           return err.message === 'Heap profiler is not enabled.';
-        }
+        },
       );
     });
   });
@@ -191,7 +191,7 @@ describe('HeapProfiler', () => {
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
         startStub.calledWith(intervalBytes1, stackDepth1),
-        'expected startSamplingHeapProfiler to be called'
+        'expected startSamplingHeapProfiler to be called',
       );
     });
     it('should throw error when enabled and started with different parameters', () => {
@@ -200,7 +200,7 @@ describe('HeapProfiler', () => {
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
         startStub.calledWith(intervalBytes1, stackDepth1),
-        'expected startSamplingHeapProfiler to be called'
+        'expected startSamplingHeapProfiler to be called',
       );
       startStub.resetHistory();
       const intervalBytes2 = 1024 * 128;
@@ -211,12 +211,12 @@ describe('HeapProfiler', () => {
         assert.strictEqual(
           (e as Error).message,
           'Heap profiler is already started  with intervalBytes 524288 and' +
-            ' stackDepth 64'
+            ' stackDepth 64',
         );
       }
       assert.ok(
         !startStub.called,
-        'expected startSamplingHeapProfiler not to be called second time'
+        'expected startSamplingHeapProfiler not to be called second time',
       );
     });
   });
@@ -231,7 +231,7 @@ describe('HeapProfiler', () => {
       heapProfiler.stop();
       assert.ok(
         stopStub.called,
-        'expected stopSamplingHeapProfiler to be called'
+        'expected stopSamplingHeapProfiler to be called',
       );
     });
   });

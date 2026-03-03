@@ -196,7 +196,7 @@ export const timeProfile = new Profile({
 // decodedTimeProfile
 const encodedTimeProfile = timeProfile.encode();
 export const decodedTimeProfile = Object.freeze(
-  Profile.decode(encodedTimeProfile)
+  Profile.decode(encodedTimeProfile),
 );
 
 const heapLeaf1 = {
@@ -350,7 +350,7 @@ export const heapProfile = new Profile({
 // decodedHeapProfile
 const encodedHeapProfile = heapProfile.encode();
 export const decodedHeapProfile = Object.freeze(
-  Profile.decode(encodedHeapProfile)
+  Profile.decode(encodedHeapProfile),
 );
 
 const heapLinesWithExternal = [
@@ -462,7 +462,7 @@ export const heapProfileWithExternal = new Profile({
 // decodedHeapProfile
 const encodedHeapProfileWithExternal = heapProfile.encode();
 export const decodedHeapProfileWithExternal = Object.freeze(
-  Profile.decode(encodedHeapProfileWithExternal)
+  Profile.decode(encodedHeapProfileWithExternal),
 );
 
 const anonymousHeapNode = {
@@ -827,7 +827,7 @@ export const heapProfileIncludePathWithLabels = new Profile({
 // decodedHeapProfile
 const encodedHeapProfileIncludePath = heapProfileIncludePath.encode();
 export const decodedHeapProfileIncludePath = Object.freeze(
-  Profile.decode(encodedHeapProfileIncludePath)
+  Profile.decode(encodedHeapProfileIncludePath),
 );
 
 const heapExcludePathFunctions = [
@@ -888,7 +888,7 @@ export const heapProfileExcludePath = new Profile({
 // decodedHeapProfile
 const encodedHeapProfileExcludePath = heapProfileExcludePath.encode();
 export const decodedHeapProfileExcludePath = Object.freeze(
-  Profile.decode(encodedHeapProfileExcludePath)
+  Profile.decode(encodedHeapProfileExcludePath),
 );
 
 export const mapDirPath = ((name: string) => {
@@ -1239,7 +1239,7 @@ export function getAndVerifyPresence(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   list: any[],
   id: number,
-  zeroIndex = false
+  zeroIndex = false,
 ) {
   assert.strictEqual(typeof id, 'number', 'has id');
   const index = id - (zeroIndex ? 0 : 1);
@@ -1251,13 +1251,13 @@ export function getAndVerifyString(
   stringTable: StringTable,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   source: any,
-  field: string
+  field: string,
 ) {
   assert.ok(hasOwnProperty.call(source, field), 'has id field');
   const str = getAndVerifyPresence(
     stringTable.strings,
     source[field] as number,
-    true
+    true,
   );
   assert.strictEqual(typeof str, 'string', 'is a string');
   return str;

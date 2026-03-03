@@ -59,7 +59,7 @@ if (useCPED && supportedPlatform) {
         assert.strictEqual(
           retrieved,
           context,
-          'Should retrieve the same object'
+          'Should retrieve the same object',
         );
 
         profiler.dispose();
@@ -200,7 +200,7 @@ if (useCPED && supportedPlatform) {
   });
 }
 
-function createProfiler(als: AsyncLocalStorage<any>) {
+function createProfiler(als: AsyncLocalStorage<unknown>) {
   return new profiler.TimeProfiler({
     intervalMicros: 10000,
     durationMillis: 500,
