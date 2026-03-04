@@ -16,6 +16,7 @@
 
 import * as sinon from 'sinon';
 import {time, getNativeThreadId} from '../src';
+import {profileV2, stopV2} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
@@ -493,6 +494,79 @@ describe('Time Profiler', () => {
 
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
+    });
+  });
+
+  describe('profileV2', () => {
+    it('should exclude program and idle time', async () => {
+      const profile = await time.profileV2(PROFILE_OPTIONS);
+      assert.ok(profile.stringTable);
+      assert.equal(profile.stringTable.strings!.indexOf('(program)'), -1);
+    });
+  });
+
+  describe('profileV2 (w/ stubs)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
+    const timeProfilerStub = {
+      start: sinon.stub(),
+      // stopAndCollect invokes the callback synchronously with the raw profile,
+      // mirroring what the native binding does.
+      stopAndCollect: sinon
+        .stub()
+        .callsFake(
+          (_restart: boolean, cb: (p: typeof v8TimeProfile) => unknown) =>
+            cb(v8TimeProfile),
+        ),
+      dispose: sinon.stub(),
+      v8ProfilerStuckEventLoopDetected: sinon.stub().returns(0),
+    };
+
+    before(() => {
+      sinonStubs.push(
+        sinon.stub(v8TimeProfiler, 'TimeProfiler').returns(timeProfilerStub),
+      );
+      sinonStubs.push(sinon.stub(Date, 'now').returns(0));
+    });
+
+    after(() => {
+      sinonStubs.forEach(stub => stub.restore());
+    });
+
+    it('should profile during duration and finish profiling after duration', async () => {
+      let isProfiling = true;
+      void profileV2(PROFILE_OPTIONS).then(() => {
+        isProfiling = false;
+      });
+      await setTimeoutPromise(2 * PROFILE_OPTIONS.durationMillis);
+      assert.strictEqual(false, isProfiling, 'profiler is still running');
+    });
+
+    it('should return a profile equal to the expected profile', async () => {
+      const profile = await profileV2(PROFILE_OPTIONS);
+      assert.deepEqual(timeProfile, profile);
+    });
+
+    it('should be able to restart when stopping', async () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      timeProfilerStub.start.resetHistory();
+      timeProfilerStub.stopAndCollect.resetHistory();
+
+      assert.deepEqual(timeProfile, stopV2(true));
+      assert.equal(
+        time.v8ProfilerStuckEventLoopDetected(),
+        0,
+        'v8 bug detected',
+      );
+      sinon.assert.notCalled(timeProfilerStub.start);
+      sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
+
+      timeProfilerStub.start.resetHistory();
+      timeProfilerStub.stopAndCollect.resetHistory();
+
+      assert.deepEqual(timeProfile, stopV2());
+      sinon.assert.notCalled(timeProfilerStub.start);
+      sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
     });
   });
 
