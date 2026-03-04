@@ -35,10 +35,12 @@ function createLimiter(concurrency: number) {
     return new Promise<T>((resolve, reject) => {
       const run = () => {
         active++;
-        fn().then(resolve, reject).finally(() => {
-          active--;
-          if (queue.length > 0) queue.shift()!();
-        });
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            if (queue.length > 0) queue.shift()!();
+          });
       };
       if (active < concurrency) run();
       else queue.push(run);
