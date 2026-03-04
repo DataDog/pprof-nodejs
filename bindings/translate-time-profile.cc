@@ -87,6 +87,15 @@ int ResolveHitCount(const v8::CpuProfileNode* node, ContextsByNode* cbn) {
   return it != cbn->end() ? it->second.hitcount : 0;
 }
 
+int ComputeTotalHitCount(const v8::CpuProfileNode* node, ContextsByNode* cbn) {
+  int total = ResolveHitCount(node, cbn);
+  int32_t count = node->GetChildrenCount();
+  for (int32_t i = 0; i < count; i++) {
+    total += ComputeTotalHitCount(node->GetChild(i), cbn);
+  }
+  return total;
+}
+
 // WrapNode: create a JS wrapper for a profile node.
 // Normal mode stores CpuProfileNode* directly.
 // line-info mode stores owned info.
@@ -541,6 +550,10 @@ v8::Local<v8::Value> BuildTimeProfileView(const v8::CpuProfile* profile,
   Nan::Set(js_profile,
            Nan::New("nonJSThreadsCpuTime").ToLocalChecked(),
            Nan::New<v8::Number>(non_js_threads_cpu_time));
+  Nan::Set(js_profile,
+           Nan::New("totalHitCount").ToLocalChecked(),
+           Nan::New<v8::Integer>(
+               ComputeTotalHitCount(root_node, state.contexts_by_node)));
   return js_profile;
 }
 

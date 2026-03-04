@@ -1,5 +1,6 @@
 import {TimeProfiler} from '../src/time-profiler-bindings';
 import {ProfileNode, TimeProfile, TimeProfileNode} from '../src/v8-types';
+import {computeTotalHitCount} from '../src/profile-serializer';
 
 const gc = (global as NodeJS.Global & {gc?: () => void}).gc;
 if (!gc) {
@@ -51,19 +52,6 @@ function generateCpuWork(
   }
 }
 
-function traverseTree(root: TimeProfileNode): void {
-  const stack: ProfileNode[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-
-    if (node.children) {
-      for (const child of node.children) {
-        stack.push(child);
-      }
-    }
-  }
-}
-
 const WIDE_FN_COUNT = 5000;
 const CHAIN_COUNT = 100;
 const CHAIN_DEPTH = 60;
@@ -89,9 +77,20 @@ function buildWorkload() {
   return {wideFns, deepChains};
 }
 
+function traverseTree(root: TimeProfileNode): void {
+  const stack: ProfileNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    for (const child of node.children) {
+      stack.push(child);
+    }
+  }
+}
+
 interface MemoryResult {
   initial: number;
   afterTraversal: number;
+  afterHitCount: number;
 }
 
 function measureV1(): MemoryResult {
@@ -107,11 +106,15 @@ function measureV1(): MemoryResult {
   const initial = process.memoryUsage().heapUsed - baseline;
 
   traverseTree(profile.topDownRoot);
-  gc!();
   const afterTraversal = process.memoryUsage().heapUsed - baseline;
 
+  // V1: computeTotalHitCount triggers children getters on every node,
+  // creating JS wrapper objects for a second full tree traversal.
+  computeTotalHitCount(profile.topDownRoot);
+  const afterHitCount = process.memoryUsage().heapUsed - baseline;
+
   profiler.dispose();
-  return {initial, afterTraversal};
+  return {initial, afterTraversal, afterHitCount};
 }
 
 function measureV2(): MemoryResult {
@@ -129,10 +132,14 @@ function measureV2(): MemoryResult {
       const initial = process.memoryUsage().heapUsed - baseline;
 
       traverseTree(profile.topDownRoot);
-      gc!();
       const afterTraversal = process.memoryUsage().heapUsed - baseline;
 
-      return {initial, afterTraversal};
+      // V2: totalHitCount is pre-computed in C++ — just a property read,
+      // no JS tree traversal, no wrapper objects created.
+      void profile.totalHitCount;
+      const afterHitCount = process.memoryUsage().heapUsed - baseline;
+
+      return {initial, afterTraversal, afterHitCount};
     },
   );
 

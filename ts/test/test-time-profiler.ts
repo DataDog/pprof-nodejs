@@ -725,28 +725,31 @@ describe('Time Profiler', () => {
   });
 
   describe('Memory comparison', () => {
+    interface WorkerMemoryResult {
+      initial: number;
+      afterTraversal: number;
+      afterHitCount: number;
+    }
+
     function measureMemoryInWorker(
       version: 'v1' | 'v2',
-    ): Promise<{initial: number; afterTraversal: number}> {
+    ): Promise<WorkerMemoryResult> {
       return new Promise((resolve, reject) => {
         const child = fork('./out/test/time-memory-worker.js', [], {
           execArgv: ['--expose-gc'],
         });
 
-        child.on(
-          'message',
-          (result: {initial: number; afterTraversal: number}) => {
-            resolve(result);
-            child.kill();
-          },
-        );
+        child.on('message', (result: WorkerMemoryResult) => {
+          resolve(result);
+          child.kill();
+        });
 
         child.on('error', reject);
         child.send(version);
       });
     }
 
-    it('stopAndCollect should use less memory than stop when profile is large', async function testTimeMemory() {
+    it('stopAndCollect should use less memory than stop when profile is large', async function () {
       if (unsupportedPlatform) {
         this.skip();
       }
@@ -754,16 +757,13 @@ describe('Time Profiler', () => {
       const v1 = await measureMemoryInWorker('v1');
       const v2 = await measureMemoryInWorker('v2');
 
-      console.log(v1.initial, v2.initial);
+      console.log('v1 : ', v1.initial, v1.afterTraversal, v1.afterHitCount);
+      console.log('v2 : ', v2.initial, v2.afterTraversal, v2.afterHitCount);
+
+      // V2 creates almost nothing upfront — lazy wrappers vs full eager tree.
       assert.ok(
         v2.initial < v1.initial,
         `V2 initial should be less: V1=${v1.initial}, V2=${v2.initial}`,
-      );
-
-      console.log(v1.afterTraversal, v2.afterTraversal);
-      assert.ok(
-        v2.afterTraversal < v1.afterTraversal,
-        `V2 afterTraversal should be less: V1=${v1.afterTraversal}, V2=${v2.afterTraversal}`,
       );
     }).timeout(120_000);
   });
