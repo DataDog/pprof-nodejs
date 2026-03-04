@@ -23,11 +23,30 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as sourceMap from 'source-map';
 import {logger} from '../logger';
-import pLimit from 'p-limit';
 
 const readFile = fs.promises.readFile;
 
 const CONCURRENCY = 10;
+
+function createLimiter(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return function limit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const run = () => {
+        active++;
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            if (queue.length > 0) queue.shift()!();
+          });
+      };
+      if (active < concurrency) run();
+      else queue.push(run);
+    });
+  };
+}
 const MAP_EXT = '.map';
 
 function error(msg: string) {
@@ -298,7 +317,7 @@ async function createFromMapFiles(
   mapFiles: string[],
   debug: boolean
 ): Promise<SourceMapper> {
-  const limit = pLimit(CONCURRENCY);
+  const limit = createLimiter(CONCURRENCY);
   const mapper = new SourceMapper(debug);
   const promises: Array<Promise<void>> = mapFiles.map(mapPath =>
     limit(() => processSourceMap(mapper.infoMap, mapPath, debug))
