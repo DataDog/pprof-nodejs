@@ -29,7 +29,7 @@
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
     "test:js-valgrind": "valgrind --leak-check=full mocha out/test/test-*.js",
     "test:js": "nyc mocha -r source-map-support/register out/test/test-*.js",
-    "test": "npm run test:js"
+    "test": "nyc mocha --require tsx/cjs 'ts/test/test-*.ts'"
   },
   "author": {
     "name": "Google Inc."
@@ -59,6 +59,7 @@
     "sinon": "^21.0.1",
     "source-map-support": "^0.5.21",
     "tmp": "0.2.5",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "files": [
@@ -74,10 +75,12 @@
     "prebuilds"
   ],
   "nyc": {
+    "extension": [".ts"],
     "exclude": [
       "proto",
       "out/test",
-      "out/system-test"
+      "out/system-test",
+      "ts/test"
     ]
   },
   "engines": {
