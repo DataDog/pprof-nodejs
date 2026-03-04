@@ -107,6 +107,7 @@ function measureV1(): MemoryResult {
   const initial = process.memoryUsage().heapUsed - baseline;
 
   traverseTree(profile.topDownRoot);
+  gc!();
   const afterTraversal = process.memoryUsage().heapUsed - baseline;
 
   profiler.dispose();
@@ -128,6 +129,7 @@ function measureV2(): MemoryResult {
       const initial = process.memoryUsage().heapUsed - baseline;
 
       traverseTree(profile.topDownRoot);
+      gc!();
       const afterTraversal = process.memoryUsage().heapUsed - baseline;
 
       return {initial, afterTraversal};
