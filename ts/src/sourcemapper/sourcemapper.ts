@@ -54,8 +54,6 @@ const MAP_EXT = '.map';
 //
 // Split on these line terminators (ECMA-262 LineTerminatorSequence):
 const LINE_SPLIT_RE = /\r\n|\n|\r|\u2028|\u2029/;
-// Any of the line-terminator code points (for fast membership test):
-const LINE_TERM_RE = /[\n\r\u2028\u2029]/;
 // Bytes to read from the end of a JS file when scanning for the annotation.
 // The annotation must be on the last non-empty line, which is always short
 // for external URLs. If no line terminator appears in the tail we fall back
@@ -116,14 +114,21 @@ async function readSourceMappingURL(
     await fd.read(buf, 0, tailSize, size - tailSize);
     const tail = buf.toString('utf8');
 
-    // If the tail contains a line terminator, the last non-empty line starts
-    // somewhere inside the tail (after its last line terminator) and runs to
-    // EOF — so it is fully captured. Run the spec algorithm on the tail.
+    // The last non-empty line is fully captured in the tail if and only if a
+    // line terminator that precedes it also falls within the tail — i.e. the
+    // last non-empty segment is not the very first element of the split result.
     //
-    // If there is no line terminator the tail is entirely inside one very long
-    // unbroken line (a large inline data: map). Fall back to a full read so
-    // extractSourceMappingURL receives the complete line.
-    if (tailSize === size || LINE_TERM_RE.test(tail)) {
+    // Counter-example: a large inline map followed by trailing empty lines.
+    // The tail might be "<end of base64>\n\n", which contains line terminators
+    // but whose last non-empty content ("<end of base64>") is the first
+    // segment — it extends before the window. Checking LINE_TERM_RE alone
+    // would incorrectly accept this tail.
+    const lines = tail.split(LINE_SPLIT_RE);
+    let lastNonEmptyIdx = lines.length - 1;
+    while (lastNonEmptyIdx > 0 && lines[lastNonEmptyIdx].trim() === '') {
+      lastNonEmptyIdx--;
+    }
+    if (tailSize === size || lastNonEmptyIdx > 0) {
       return extractSourceMappingURL(tail);
     }
 
