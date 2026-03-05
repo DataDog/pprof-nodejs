@@ -214,6 +214,17 @@ export class SourceMapper {
   infoMap: Map<string, MapInfoCompiled>;
   debug: boolean;
 
+  static async create(
+    searchDirs: string[],
+    debug = false,
+  ): Promise<SourceMapper> {
+    const mapper = new SourceMapper(debug);
+    for (const dir of searchDirs) {
+      await mapper.loadDirectory(dir);
+    }
+    return mapper;
+  }
+
   constructor(debug = false) {
     this.infoMap = new Map();
     this.debug = debug;
