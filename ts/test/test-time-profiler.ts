@@ -536,6 +536,7 @@ describe('Time Profiler', () => {
         let sawRootChildren = false;
         let sawChildWithNonRootMetadata = false;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         profiler.stopAndCollect(false, (profile: any) => {
           const root = profile.topDownRoot as {
             name: string;

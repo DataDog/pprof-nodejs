@@ -243,8 +243,8 @@ NAN_GETTER(GetChildren) {
     if (fields.as_info()->is_line_root) {
       int32_t count = fields.as_info()->node->GetChildrenCount();
       for (int32_t i = 0; i < count; i++) {
-        AppendLineChildren(fields.state, fields.as_info()->node->GetChild(i),
-                           children);
+        AppendLineChildren(
+            fields.state, fields.as_info()->node->GetChild(i), children);
       }
       auto arr = v8::Array::New(isolate, children.size());
       for (size_t i = 0; i < children.size(); i++) {
