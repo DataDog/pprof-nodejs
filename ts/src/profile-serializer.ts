@@ -259,7 +259,7 @@ function createAllocationValueType(table: StringTable): ValueType {
   });
 }
 
-function computeTotalHitCount(root: TimeProfileNode): number {
+export function computeTotalHitCount(root: TimeProfileNode): number {
   return (
     root.hitCount +
     (root.children as TimeProfileNode[]).reduce(
@@ -366,7 +366,8 @@ export function serializeTimeProfile(
   // For very short durations, computation becomes meaningless (eg. if there is only one hit),
   // therefore keep intervalMicros as a lower bound and 2 * intervalMicros as upper bound.
   if (recomputeSamplingInterval) {
-    const totalHitCount = computeTotalHitCount(prof.topDownRoot);
+    const totalHitCount =
+      prof.totalHitCount ?? computeTotalHitCount(prof.topDownRoot);
     if (totalHitCount > 0) {
       intervalMicros = Math.min(
         Math.max(

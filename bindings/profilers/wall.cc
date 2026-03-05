@@ -942,6 +942,34 @@ NAN_METHOD(WallProfiler::Stop) {
   info.GetReturnValue().Set(profile);
 }
 
+// stopAndCollect(restart, callback): callback result
+NAN_METHOD(WallProfiler::StopAndCollect) {
+  if (info.Length() != 2) {
+    return Nan::ThrowTypeError("stopAndCollect must have two arguments.");
+  }
+  if (!info[0]->IsBoolean()) {
+    return Nan::ThrowTypeError("Restart must be a boolean.");
+  }
+  if (!info[1]->IsFunction()) {
+    return Nan::ThrowTypeError("stopAndCollect requires a callback.");
+  }
+
+  bool restart = info[0].As<Boolean>()->Value();
+  auto callback = info[1].As<Function>();
+
+  WallProfiler* wallProfiler =
+      Nan::ObjectWrap::Unwrap<WallProfiler>(info.This());
+
+  v8::Local<v8::Value> result;
+  auto err = wallProfiler->StopAndCollectImpl(restart, callback, result);
+  if (!err.success) {
+    return Nan::ThrowTypeError(err.msg.c_str());
+  }
+  if (!result.IsEmpty()) {
+    info.GetReturnValue().Set(result);
+  }
+}
+
 bool WallProfiler::waitForSignal(uint64_t targetCallCount) {
   auto currentCallCount = noCollectCallCount_.load(std::memory_order_relaxed);
   std::atomic_signal_fence(std::memory_order_acquire);
@@ -1072,6 +1100,121 @@ Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   return {};
 }
 
+Result WallProfiler::StopAndCollectImpl(bool restart,
+                                        v8::Local<v8::Function> callback,
+                                        v8::Local<v8::Value>& result) {
+  if (!started_) {
+    return Result{"Stop called on not started profiler."};
+  }
+
+  uint64_t callCount = 0;
+  auto oldProfileId = profileId_;
+  if (restart && workaroundV8Bug_) {
+    std::atomic_signal_fence(std::memory_order_release);
+    collectionMode_.store(CollectionMode::kNoCollect,
+                          std::memory_order_relaxed);
+    waitForSignal();
+  } else if (withContexts_) {
+    std::atomic_signal_fence(std::memory_order_release);
+    collectionMode_.store(CollectionMode::kNoCollect,
+                          std::memory_order_relaxed);
+
+    // make sure timestamp changes to avoid having samples from previous profile
+    auto now = Now();
+    while (Now() == now) {
+    }
+  }
+
+  auto startThreadCpuTime = startThreadCpuTime_;
+  auto startProcessCpuTime = startProcessCpuTime_;
+
+  if (restart) {
+    profileId_ = StartInternal();
+    // record call count to wait for next signal at the end of function
+    callCount = noCollectCallCount_.load(std::memory_order_relaxed);
+    std::atomic_signal_fence(std::memory_order_acquire);
+  }
+
+  if (interceptSignal()) {
+    SignalHandler::DecreaseUseCount();
+  }
+
+  auto v8_profile = cpuProfiler_->Stop(oldProfileId);
+
+  ContextBuffer contexts;
+  if (withContexts_) {
+    contexts.reserve(contexts_.capacity());
+    std::swap(contexts, contexts_);
+  }
+
+  if (detectV8Bug_) {
+    v8ProfilerStuckEventLoopDetected_ = detectV8Bug(v8_profile);
+  }
+
+  if (restart && withContexts_ && !workaroundV8Bug_) {
+    // make sure timestamp changes to avoid mixing sample taken upon start and a
+    // sample from signal handler
+    // If v8 bug workaround is enabled, reactivation of sample collection is
+    // delayed until function end.
+    auto now = Now();
+    while (Now() == now) {
+    }
+    std::atomic_signal_fence(std::memory_order_release);
+    collectionMode_.store(CollectionMode::kCollectContexts,
+                          std::memory_order_relaxed);
+  }
+
+  ContextsByNode contextsByNode;
+  ContextsByNode* contextsByNodePtr = nullptr;
+  int64_t nonJSThreadsCpuTime = 0;
+  bool hasCpuTime = false;
+
+  if (withContexts_) {
+    if (isMainThread_ && collectCpuTime_) {
+      // account for non-JS threads CPU only in main thread
+      // CPU time of non-JS threads is the difference between process CPU time
+      // and sum of all worker JS thread during the profiling period of main
+      // worker thread.
+      auto totalWorkerCpu = g_profilers.GatherTotalWorkerCpuAndReset();
+      auto processCpu = ProcessCpuClock::now() - startProcessCpuTime;
+      nonJSThreadsCpuTime =
+          std::max(processCpu - totalWorkerCpu, ProcessCpuClock::duration{})
+              .count();
+    }
+    contextsByNode =
+        GetContextsByNode(v8_profile, contexts, startThreadCpuTime);
+    contextsByNodePtr = &contextsByNode;
+    hasCpuTime = collectCpuTime_;
+  }
+
+  auto* isolate = Isolate::GetCurrent();
+  TimeProfileViewState state{includeLines_, contextsByNodePtr, {}};
+  auto profile_view =
+      BuildTimeProfileView(v8_profile, hasCpuTime, nonJSThreadsCpuTime, state);
+
+  v8::Local<v8::Value> argv[] = {profile_view};
+  auto cb_result =
+      Nan::Call(callback, isolate->GetCurrentContext()->Global(), 1, argv);
+  if (!cb_result.IsEmpty()) {
+    result = cb_result.ToLocalChecked();
+  }
+
+  v8_profile->Delete();
+
+  if (!restart) {
+    Dispose(v8::Isolate::GetCurrent(), true);
+  } else if (workaroundV8Bug_) {
+    waitForSignal(callCount + 1);
+    std::atomic_signal_fence(std::memory_order_release);
+    collectionMode_.store(withContexts_ ? CollectionMode::kCollectContexts
+                                        : CollectionMode::kPassThrough,
+                          std::memory_order_relaxed);
+  }
+
+  started_ = restart;
+  return {};
+}
+
 NAN_MODULE_INIT(WallProfiler::Init) {
   Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(New);
   Local<String> className = Nan::New("TimeProfiler").ToLocalChecked();
@@ -1085,6 +1228,7 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 
   Nan::SetPrototypeMethod(tpl, "start", Start);
   Nan::SetPrototypeMethod(tpl, "stop", Stop);
+  Nan::SetPrototypeMethod(tpl, "stopAndCollect", StopAndCollect);
   Nan::SetPrototypeMethod(tpl, "dispose", Dispose);
   Nan::SetPrototypeMethod(tpl,
                           "v8ProfilerStuckEventLoopDetected",
