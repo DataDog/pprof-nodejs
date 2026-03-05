@@ -49,18 +49,41 @@ function createLimiter(concurrency: number) {
 }
 const MAP_EXT = '.map';
 
-// Matches //# sourceMappingURL=<url> or //@ sourceMappingURL=<url> (legacy)
-// Per TC39 ECMA-426: https://tc39.es/ecma426/#sec-linking-inline
-const SOURCE_MAPPING_URL_REGEX = /\/\/[#@]\s*sourceMappingURL=(\S+)/g;
+// Per TC39 ECMA-426 §11.1.2.1 JavaScriptExtractSourceMapURL (without parsing):
+// https://tc39.es/ecma426/#sec-linking-inline
+//
+// Split on these line terminators (ECMA-262 LineTerminatorSequence):
+const LINE_SPLIT_RE = /\r\n|\n|\r|\u2028|\u2029/;
+// Quote code points that invalidate the annotation (U+0022, U+0027, U+0060):
+const QUOTE_CHARS_RE = /["'`]/;
+// MatchSourceMapURL pattern applied to the comment text that follows "//":
+const MATCH_SOURCE_MAP_URL_RE = /^[@#]\s*sourceMappingURL=(\S*?)\s*$/;
 
+/**
+ * Extracts a sourceMappingURL from JS source per ECMA-426 §11.1.2.1
+ * (without-parsing variant).
+ *
+ * Scans lines from the end, skipping empty/whitespace-only lines.
+ * Returns null as soon as the first non-empty line is found that does not
+ * carry a valid annotation — the URL must be on the last non-empty line.
+ */
 function extractSourceMappingURL(content: string): string | undefined {
-  let last: string | undefined;
-  let match: RegExpExecArray | null;
-  SOURCE_MAPPING_URL_REGEX.lastIndex = 0;
-  while ((match = SOURCE_MAPPING_URL_REGEX.exec(content)) !== null) {
-    last = match[1];
+  const lines = content.split(LINE_SPLIT_RE);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.trim() === '') continue; // skip empty / whitespace-only lines
+
+    // This is the last non-empty line; it must carry the annotation or we stop.
+    const commentStart = line.indexOf('//');
+    if (commentStart === -1) return undefined;
+
+    const comment = line.slice(commentStart + 2);
+    if (QUOTE_CHARS_RE.test(comment)) return undefined;
+
+    const match = MATCH_SOURCE_MAP_URL_RE.exec(comment);
+    return match ? match[1] || undefined : undefined;
   }
-  return last;
+  return undefined;
 }
 
 function error(msg: string) {
