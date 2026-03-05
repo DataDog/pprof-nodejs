@@ -49,6 +49,20 @@ function createLimiter(concurrency: number) {
 }
 const MAP_EXT = '.map';
 
+// Matches //# sourceMappingURL=<url> or //@ sourceMappingURL=<url> (legacy)
+// Per TC39 ECMA-426: https://tc39.es/ecma426/#sec-linking-inline
+const SOURCE_MAPPING_URL_REGEX = /\/\/[#@]\s*sourceMappingURL=(\S+)/g;
+
+function extractSourceMappingURL(content: string): string | undefined {
+  let last: string | undefined;
+  let match: RegExpExecArray | null;
+  SOURCE_MAPPING_URL_REGEX.lastIndex = 0;
+  while ((match = SOURCE_MAPPING_URL_REGEX.exec(content)) !== null) {
+    last = match[1];
+  }
+  return last;
+}
+
 function error(msg: string) {
   logger.debug(`Error: ${msg}`);
   return new Error(msg);
@@ -99,6 +113,76 @@ async function processSourceMap(
     throw error('Could not read source map file ' + mapPath + ': ' + e);
   }
 
+  /* If the source map file defines a "file" attribute, use it as
+   * the output file where the path is relative to the directory
+   * containing the map file.  Otherwise, use the name of the output
+   * file (with the .map extension removed) as the output file.
+
+   * With nextjs/webpack, when there are subdirectories in `pages` directory,
+   * the generated source maps do not reference correctly the generated files
+   * in their `file` property.
+   * For example if the generated file / source maps have paths:
+   * <root>/pages/sub/foo.js(.map)
+   * foo.js.map will have ../pages/sub/foo.js as `file` property instead of
+   * ../../pages/sub/foo.js
+   * To workaround this, check first if file referenced in `file` property
+   * exists and if it does not, check if generated file exists alongside the
+   * source map file.
+   */
+  const dir = path.dirname(mapPath);
+
+  // Parse the JSON lightly to get the `file` property before creating the
+  // full SourceMapConsumer, so we can bail out early if the generated file
+  // is already loaded (e.g. via a sourceMappingURL annotation).
+  let rawFile: string | undefined;
+  try {
+    rawFile = (JSON.parse(contents) as {file?: string}).file;
+  } catch {
+    // Will fail again below when creating SourceMapConsumer; let that throw.
+  }
+
+  const generatedPathCandidates: string[] = [];
+  if (rawFile) {
+    generatedPathCandidates.push(path.resolve(dir, rawFile));
+  }
+  const samePath = path.resolve(dir, path.basename(mapPath, MAP_EXT));
+  if (
+    generatedPathCandidates.length === 0 ||
+    generatedPathCandidates[0] !== samePath
+  ) {
+    generatedPathCandidates.push(samePath);
+  }
+
+  // Find the first candidate that exists and hasn't been loaded already.
+  let targetPath: string | undefined;
+  for (const candidate of generatedPathCandidates) {
+    if (infoMap.has(candidate)) {
+      // Already loaded via sourceMappingURL annotation; skip this map file.
+      if (debug) {
+        logger.debug(
+          `Skipping ${mapPath}: ${candidate} already loaded via sourceMappingURL`,
+        );
+      }
+      return;
+    }
+    try {
+      await fs.promises.access(candidate, fs.constants.F_OK);
+      targetPath = candidate;
+      break;
+    } catch {
+      if (debug) {
+        logger.debug(`Generated path ${candidate} does not exist`);
+      }
+    }
+  }
+
+  if (!targetPath) {
+    if (debug) {
+      logger.debug(`Unable to find generated file for ${mapPath}`);
+    }
+    return;
+  }
+
   let consumer: sourceMap.RawSourceMap;
   try {
     // TODO: Determine how to reconsile the type conflict where `consumer`
@@ -120,51 +204,9 @@ async function processSourceMap(
     );
   }
 
-  /* If the source map file defines a "file" attribute, use it as
-   * the output file where the path is relative to the directory
-   * containing the map file.  Otherwise, use the name of the output
-   * file (with the .map extension removed) as the output file.
-
-   * With nextjs/webpack, when there are subdirectories in `pages` directory,
-   * the generated source maps do not reference correctly the generated files
-   * in their `file` property.
-   * For example if the generated file / source maps have paths:
-   * <root>/pages/sub/foo.js(.map)
-   * foo.js.map will have ../pages/sub/foo.js as `file` property instead of
-   * ../../pages/sub/foo.js
-   * To workaround this, check first if file referenced in `file` property
-   * exists and if it does not, check if generated file exists alongside the
-   * source map file.
-   */
-  const dir = path.dirname(mapPath);
-  const generatedPathCandidates = [];
-  if (consumer.file) {
-    generatedPathCandidates.push(path.resolve(dir, consumer.file));
-  }
-  const samePath = path.resolve(dir, path.basename(mapPath, MAP_EXT));
-  if (
-    generatedPathCandidates.length === 0 ||
-    generatedPathCandidates[0] !== samePath
-  ) {
-    generatedPathCandidates.push(samePath);
-  }
-
-  for (const generatedPath of generatedPathCandidates) {
-    try {
-      await fs.promises.access(generatedPath, fs.constants.F_OK);
-      infoMap.set(generatedPath, {mapFileDir: dir, mapConsumer: consumer});
-      if (debug) {
-        logger.debug(`Loaded source map for ${generatedPath} => ${mapPath}`);
-      }
-      return;
-    } catch {
-      if (debug) {
-        logger.debug(`Generated path ${generatedPath} does not exist`);
-      }
-    }
-  }
+  infoMap.set(targetPath, {mapFileDir: dir, mapConsumer: consumer});
   if (debug) {
-    logger.debug(`Unable to find generated file for ${mapPath}`);
+    logger.debug(`Loaded source map for ${targetPath} => ${mapPath}`);
   }
 }
 
@@ -172,43 +214,117 @@ export class SourceMapper {
   infoMap: Map<string, MapInfoCompiled>;
   debug: boolean;
 
-  static async create(
-    searchDirs: string[],
-    debug = false,
-  ): Promise<SourceMapper> {
-    if (debug) {
-      logger.debug(
-        `Looking for source map files in dirs: [${searchDirs.join(', ')}]`,
-      );
-    }
-    const mapFiles: string[] = [];
-    for (const dir of searchDirs) {
-      try {
-        const mf = await getMapFiles(dir);
-        mf.forEach(mapFile => {
-          mapFiles.push(path.resolve(dir, mapFile));
-        });
-      } catch (e) {
-        throw error(`failed to get source maps from ${dir}: ${e}`);
-      }
-    }
-    if (debug) {
-      logger.debug(`Found source map files: [${mapFiles.join(', ')}]`);
-    }
-    return createFromMapFiles(mapFiles, debug);
-  }
-
-  /**
-   * @param {Array.<string>} sourceMapPaths An array of paths to .map source map
-   *  files that should be processed.  The paths should be relative to the
-   *  current process's current working directory
-   * @param {Logger} logger A logger that reports errors that occurred while
-   *  processing the given source map files
-   * @constructor
-   */
   constructor(debug = false) {
     this.infoMap = new Map();
     this.debug = debug;
+  }
+
+  /**
+   * Scans `searchDir` recursively for JS files and source map files, loading
+   * source maps for all JS files found.
+   *
+   * Priority for each JS file:
+   *  1. A map pointed to by a `sourceMappingURL` annotation in the JS file
+   *     (inline `data:` URL or external file path, only if the file exists).
+   *  2. A `.map` file found in the directory scan that claims to belong to
+   *     that JS file (via its `file` property or naming convention).
+   *
+   * Safe to call multiple times; already-loaded files are skipped.
+   */
+  async loadDirectory(searchDir: string): Promise<void> {
+    if (this.debug) {
+      logger.debug(`Loading source maps from directory: ${searchDir}`);
+    }
+
+    const jsFiles: string[] = [];
+    const mapFiles: string[] = [];
+
+    for await (const entry of walk(
+      searchDir,
+      filename =>
+        /\.[cm]?js$/.test(filename) || /\.[cm]?js\.map$/.test(filename),
+      (root, dirname) =>
+        root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules',
+    )) {
+      if (entry.endsWith(MAP_EXT)) {
+        mapFiles.push(entry);
+      } else {
+        jsFiles.push(entry);
+      }
+    }
+
+    if (this.debug) {
+      logger.debug(
+        `Found ${jsFiles.length} JS files and ${mapFiles.length} map files in ${searchDir}`,
+      );
+    }
+
+    const limit = createLimiter(CONCURRENCY);
+
+    // Phase 1: Check sourceMappingURL annotations in JS files (higher priority).
+    await Promise.all(
+      jsFiles.map(jsPath =>
+        limit(async () => {
+          if (this.infoMap.has(jsPath)) return;
+
+          let content: string;
+          try {
+            content = await readFile(jsPath, 'utf8');
+          } catch {
+            return;
+          }
+
+          const url = extractSourceMappingURL(content);
+          if (!url) return;
+
+          const INLINE_PREFIX = 'data:application/json;base64,';
+          if (url.startsWith(INLINE_PREFIX)) {
+            const mapContent = Buffer.from(
+              url.slice(INLINE_PREFIX.length),
+              'base64',
+            ).toString();
+            await this.loadMapContent(jsPath, mapContent, path.dirname(jsPath));
+          } else {
+            const mapPath = path.resolve(path.dirname(jsPath), url);
+            try {
+              const mapContent = await readFile(mapPath, 'utf8');
+              await this.loadMapContent(
+                jsPath,
+                mapContent,
+                path.dirname(mapPath),
+              );
+            } catch {
+              // Map file doesn't exist or is unreadable; fall through to Phase 2.
+            }
+          }
+        }),
+      ),
+    );
+
+    // Phase 2: Process .map files for any JS files not yet resolved.
+    await Promise.all(
+      mapFiles.map(mapPath =>
+        limit(() => processSourceMap(this.infoMap, mapPath, this.debug)),
+      ),
+    );
+  }
+
+  private async loadMapContent(
+    jsPath: string,
+    mapContent: string,
+    mapDir: string,
+  ): Promise<void> {
+    try {
+      const consumer = (await new sourceMap.SourceMapConsumer(
+        mapContent as {} as sourceMap.RawSourceMap,
+      )) as {} as sourceMap.RawSourceMap;
+      this.infoMap.set(jsPath, {mapFileDir: mapDir, mapConsumer: consumer});
+      if (this.debug) {
+        logger.debug(`Loaded source map for ${jsPath} via sourceMappingURL`);
+      }
+    } catch (e) {
+      logger.debug(`Failed to parse source map for ${jsPath}: ${e}`);
+    }
   }
 
   /**
@@ -321,25 +437,6 @@ export class SourceMapper {
   }
 }
 
-async function createFromMapFiles(
-  mapFiles: string[],
-  debug: boolean,
-): Promise<SourceMapper> {
-  const limit = createLimiter(CONCURRENCY);
-  const mapper = new SourceMapper(debug);
-  const promises: Array<Promise<void>> = mapFiles.map(mapPath =>
-    limit(() => processSourceMap(mapper.infoMap, mapPath, debug)),
-  );
-  try {
-    await Promise.all(promises);
-  } catch (err) {
-    throw error(
-      'An error occurred while processing the source map files' + err,
-    );
-  }
-  return mapper;
-}
-
 function isErrnoException(e: unknown): e is NodeJS.ErrnoException {
   return e instanceof Error && 'code' in e;
 }
@@ -381,17 +478,4 @@ async function* walk(
   }
 
   yield* walkRecursive(dir);
-}
-
-async function getMapFiles(baseDir: string): Promise<string[]> {
-  const mapFiles: string[] = [];
-  for await (const entry of walk(
-    baseDir,
-    filename => /\.[cm]?js\.map$/.test(filename),
-    (root, dirname) =>
-      root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules',
-  )) {
-    mapFiles.push(path.relative(baseDir, entry));
-  }
-  return mapFiles;
 }
