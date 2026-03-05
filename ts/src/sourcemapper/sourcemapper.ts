@@ -58,7 +58,7 @@ const LINE_SPLIT_RE = /\r\n|\n|\r|\u2028|\u2029/;
 // The annotation must be on the last non-empty line, which is always short
 // for external URLs. If no line terminator appears in the tail we fall back
 // to a full file read (handles very large inline data: maps).
-const ANNOTATION_TAIL_BYTES = 4 * 1024;
+export const ANNOTATION_TAIL_BYTES = 4 * 1024;
 // Quote code points that invalidate the annotation (U+0022, U+0027, U+0060):
 const QUOTE_CHARS_RE = /["'`]/;
 // MatchSourceMapURL pattern applied to the comment text that follows "//":
@@ -72,7 +72,7 @@ const MATCH_SOURCE_MAP_URL_RE = /^[@#]\s*sourceMappingURL=(\S*?)\s*$/;
  * Returns null as soon as the first non-empty line is found that does not
  * carry a valid annotation — the URL must be on the last non-empty line.
  */
-function extractSourceMappingURL(content: string): string | undefined {
+export function extractSourceMappingURL(content: string): string | undefined {
   const lines = content.split(LINE_SPLIT_RE);
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
@@ -101,7 +101,7 @@ function extractSourceMappingURL(content: string): string | undefined {
  * of one very long inline data: line; we fall back to a full file read in
  * that case.
  */
-async function readSourceMappingURL(
+export async function readSourceMappingURL(
   filePath: string,
 ): Promise<string | undefined> {
   const fd = await fs.promises.open(filePath, 'r');
