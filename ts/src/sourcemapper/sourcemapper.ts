@@ -54,6 +54,13 @@ const MAP_EXT = '.map';
 //
 // Split on these line terminators (ECMA-262 LineTerminatorSequence):
 const LINE_SPLIT_RE = /\r\n|\n|\r|\u2028|\u2029/;
+// Any of the line-terminator code points (for fast membership test):
+const LINE_TERM_RE = /[\n\r\u2028\u2029]/;
+// Bytes to read from the end of a JS file when scanning for the annotation.
+// The annotation must be on the last non-empty line, which is always short
+// for external URLs. If no line terminator appears in the tail we fall back
+// to a full file read (handles very large inline data: maps).
+const ANNOTATION_TAIL_BYTES = 4 * 1024;
 // Quote code points that invalidate the annotation (U+0022, U+0027, U+0060):
 const QUOTE_CHARS_RE = /["'`]/;
 // MatchSourceMapURL pattern applied to the comment text that follows "//":
@@ -84,6 +91,47 @@ function extractSourceMappingURL(content: string): string | undefined {
     return match ? match[1] || undefined : undefined;
   }
   return undefined;
+}
+
+/**
+ * Reads the sourceMappingURL from a JS file efficiently by only reading a
+ * small tail of the file.
+ *
+ * The annotation must be on the last non-empty line (ECMA-426), so as long as
+ * the tail contains at least one line terminator the last line is fully
+ * captured. If no line terminator appears in the tail the entire tail is part
+ * of one very long inline data: line; we fall back to a full file read in
+ * that case.
+ */
+async function readSourceMappingURL(
+  filePath: string,
+): Promise<string | undefined> {
+  const fd = await fs.promises.open(filePath, 'r');
+  try {
+    const {size} = await fd.stat();
+    if (size === 0) return undefined;
+
+    const tailSize = Math.min(ANNOTATION_TAIL_BYTES, size);
+    const buf = Buffer.allocUnsafe(tailSize);
+    await fd.read(buf, 0, tailSize, size - tailSize);
+    const tail = buf.toString('utf8');
+
+    // If the tail contains a line terminator, the last non-empty line starts
+    // somewhere inside the tail (after its last line terminator) and runs to
+    // EOF — so it is fully captured. Run the spec algorithm on the tail.
+    //
+    // If there is no line terminator the tail is entirely inside one very long
+    // unbroken line (a large inline data: map). Fall back to a full read so
+    // extractSourceMappingURL receives the complete line.
+    if (tailSize === size || LINE_TERM_RE.test(tail)) {
+      return extractSourceMappingURL(tail);
+    }
+
+    const fullContent = await readFile(filePath, 'utf8');
+    return extractSourceMappingURL(fullContent);
+  } finally {
+    await fd.close();
+  }
 }
 
 function error(msg: string) {
@@ -301,14 +349,12 @@ export class SourceMapper {
         limit(async () => {
           if (this.infoMap.has(jsPath)) return;
 
-          let content: string;
+          let url: string | undefined;
           try {
-            content = await readFile(jsPath, 'utf8');
+            url = await readSourceMappingURL(jsPath);
           } catch {
             return;
           }
-
-          const url = extractSourceMappingURL(content);
           if (!url) return;
 
           const INLINE_PREFIX = 'data:application/json;base64,';
