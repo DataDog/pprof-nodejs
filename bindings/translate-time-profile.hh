@@ -47,6 +47,7 @@ struct TimeProfileNodeInfo {
   int line_number;
   int column_number;
   int hit_count;
+  bool is_line_root;
   TimeProfileViewState* state;
 };
 

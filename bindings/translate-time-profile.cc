@@ -28,13 +28,15 @@ TimeProfileNodeInfo* AllocNode(TimeProfileViewState* state,
                                const v8::CpuProfileNode* metadata_node,
                                int line_number,
                                int column_number,
-                               int hit_count) {
+                               int hit_count,
+                               bool is_line_root = false) {
   auto info = std::make_unique<TimeProfileNodeInfo>();
   info->node = node;
   info->metadata_node = metadata_node;
   info->line_number = line_number;
   info->column_number = column_number;
   info->hit_count = hit_count;
+  info->is_line_root = is_line_root;
   info->state = state;
   auto* raw = info.get();
   state->owned_nodes.push_back(std::move(info));
@@ -234,13 +236,30 @@ NAN_GETTER(GetChildren) {
   auto ctx = isolate->GetCurrentContext();
 
   if (fields.is_line_info()) {
+    std::vector<TimeProfileNodeInfo*> children;
+
+    // Root in line-info mode is flattened from each direct child to preserve
+    // eager v1 top-level shape.
+    if (fields.as_info()->is_line_root) {
+      int32_t count = fields.as_info()->node->GetChildrenCount();
+      for (int32_t i = 0; i < count; i++) {
+        AppendLineChildren(fields.state, fields.as_info()->node->GetChild(i),
+                           children);
+      }
+      auto arr = v8::Array::New(isolate, children.size());
+      for (size_t i = 0; i < children.size(); i++) {
+        arr->Set(ctx, i, WrapNode(children[i])).Check();
+      }
+      info.GetReturnValue().Set(arr);
+      return;
+    }
+
     // In line-info mode, leaf nodes (hitCount > 0) have no children.
     if (fields.as_info()->hit_count > 0) {
       info.GetReturnValue().Set(v8::Array::New(isolate, 0));
       return;
     }
 
-    std::vector<TimeProfileNodeInfo*> children;
     AppendLineChildren(fields.state, fields.as_info()->node, children);
     auto arr = v8::Array::New(isolate, children.size());
     for (size_t i = 0; i < children.size(); i++) {
@@ -510,27 +529,14 @@ v8::Local<v8::Value> BuildTimeProfileView(const v8::CpuProfile* profile,
   auto* root_node = profile->GetTopDownRoot();
 
   if (state.include_line_info) {
-    std::vector<TimeProfileNodeInfo*> children;
-    int32_t count = root_node->GetChildrenCount();
-    for (int32_t i = 0; i < count; i++) {
-      AppendLineChildren(&state, root_node->GetChild(i), children);
-    }
-
-    auto ctx = isolate->GetCurrentContext();
-    v8::Local<v8::Array> children_arr =
-        v8::Array::New(isolate, children.size());
-    for (size_t i = 0; i < children.size(); i++) {
-      children_arr->Set(ctx, i, WrapNode(children[i])).Check();
-    }
-
     auto* root_info = AllocNode(&state,
                                 root_node,
                                 root_node,
                                 root_node->GetLineNumber(),
                                 root_node->GetColumnNumber(),
-                                0);
+                                0,
+                                true);
     auto root = WrapNode(root_info);
-    Nan::Set(root, Nan::New("children").ToLocalChecked(), children_arr);
 
     Nan::Set(js_profile, Nan::New("topDownRoot").ToLocalChecked(), root);
   } else {

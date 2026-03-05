@@ -503,6 +503,71 @@ describe('Time Profiler', () => {
       assert.ok(profile.stringTable);
       assert.equal(profile.stringTable.strings!.indexOf('(program)'), -1);
     });
+
+    it('should preserve line-number root children metadata in lazy view', function () {
+      if (unsupportedPlatform) {
+        this.skip();
+      }
+
+      function hotPath() {
+        const end = hrtime.bigint() + 2_000_000n;
+        while (hrtime.bigint() < end);
+      }
+
+      const profiler = new v8TimeProfiler.TimeProfiler({
+        intervalMicros: 100,
+        durationMillis: 200,
+        lineNumbers: true,
+        withContexts: false,
+        workaroundV8Bug: false,
+        collectCpuTime: false,
+        collectAsyncId: false,
+        useCPED: false,
+        isMainThread: true,
+      });
+
+      profiler.start();
+      try {
+        const deadline = Date.now() + 200;
+        while (Date.now() < deadline) {
+          hotPath();
+        }
+
+        let sawRootChildren = false;
+        let sawChildWithNonRootMetadata = false;
+
+        profiler.stopAndCollect(false, (profile: any) => {
+          const root = profile.topDownRoot as {
+            name: string;
+            scriptName: string;
+            scriptId: number;
+            children: Array<{
+              name: string;
+              scriptName: string;
+              scriptId: number;
+            }>;
+          };
+          const children = root.children;
+
+          sawRootChildren = children.length > 0;
+          sawChildWithNonRootMetadata = children.some(
+            child =>
+              child.name !== root.name ||
+              child.scriptName !== root.scriptName ||
+              child.scriptId !== root.scriptId,
+          );
+          return undefined;
+        });
+
+        assert(sawRootChildren, 'Expected root to have children');
+        assert(
+          sawChildWithNonRootMetadata,
+          'Line-number lazy root children should not collapse to root metadata',
+        );
+      } finally {
+        profiler.dispose();
+      }
+    });
   });
 
   describe('profileV2 (w/ stubs)', () => {
