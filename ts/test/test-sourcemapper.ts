@@ -20,6 +20,7 @@ import * as tmp from 'tmp';
 
 import {
   ANNOTATION_TAIL_BYTES,
+  SourceMapper,
   extractSourceMappingURL,
   readSourceMappingURL,
 } from '../src/sourcemapper/sourcemapper';
@@ -217,5 +218,57 @@ describe('readSourceMappingURL', () => {
   it('returns undefined for an empty file', async () => {
     const p = write('empty.js', '');
     assert.strictEqual(await readSourceMappingURL(p), undefined);
+  });
+});
+
+describe('SourceMapper.loadDirectory', () => {
+  let tmpDir: string;
+
+  before(() => {
+    tmp.setGracefulCleanup();
+    tmpDir = tmp.dirSync().name;
+  });
+
+  function write(name: string, content: string): string {
+    const p = path.join(tmpDir, name);
+    fs.writeFileSync(p, content, 'utf8');
+    return p;
+  }
+
+  // A minimal valid source map for test.js -> test.ts
+  const MAP_CONTENT = JSON.stringify({
+    version: 3,
+    file: 'test.js',
+    sources: ['test.ts'],
+    names: [],
+    mappings: 'AAAA',
+  });
+
+  it('falls back to .map file when sourceMappingURL points to a non-existent file', async () => {
+    // The annotation references a file that doesn't exist; Phase 2 should
+    // find and load the conventional test.js.map instead.
+    write('test.js', '//# sourceMappingURL=nonexistent.js.map\n');
+    write('test.js.map', MAP_CONTENT);
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    assert.ok(
+      sm.hasMappingInfo(path.join(tmpDir, 'test.js')),
+      'expected mapping to be loaded via .map file fallback',
+    );
+  });
+
+  it('loads no mapping when sourceMappingURL points to a non-existent file and there is no .map fallback', async () => {
+    write('orphan.js', '//# sourceMappingURL=nonexistent.js.map\n');
+    // No orphan.js.map written — nothing to fall back to.
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    assert.ok(
+      !sm.hasMappingInfo(path.join(tmpDir, 'orphan.js')),
+      'expected no mapping to be loaded',
+    );
   });
 });
