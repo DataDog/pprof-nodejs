@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "5.13.5",
+  "version": "5.14.0",
   "description": "pprof support for Node.js",
   "repository": {
     "type": "git",
@@ -50,7 +50,7 @@
     "codecov": "^3.8.3",
     "deep-copy": "^1.4.2",
     "eslint-plugin-n": "^17.24.0",
-    "gts": "^4.0.1",
+    "gts": "^7.0.0",
     "js-green-licenses": "^4.0.0",
     "mocha": "^11.7.5",
     "nan": "^2.23.1",

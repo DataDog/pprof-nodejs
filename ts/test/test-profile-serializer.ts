@@ -42,18 +42,18 @@ import {
 
 const assert = require('assert');
 
-function getNonJSThreadsSample(profile: Profile): Number[] | null {
+function getNonJSThreadsSample(profile: Profile): number[] | null {
   for (const sample of profile.sample!) {
     const locationId = sample.locationId[0];
     const location = getAndVerifyPresence(
       profile.location!,
-      locationId as number
+      locationId as number,
     );
     const functionId = location.line![0].functionId;
     const fn = getAndVerifyPresence(profile.function!, functionId as number);
     const fn_name = profile.stringTable.strings[fn.name as number];
     if (fn_name === NON_JS_THREADS_FUNCTION_NAME) {
-      return sample.value as Number[];
+      return sample.value as number[];
     }
   }
 
@@ -101,7 +101,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       assert.equal(getNonJSThreadsSample(timeProfileOutWithLabels), null);
     });
@@ -131,7 +131,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       assert.equal(getNonJSThreadsSample(timeProfileOutWithLabels), null);
     });
@@ -165,7 +165,7 @@ describe('profile-serializer', () => {
         false,
         () => {
           return {foo: 'bar'};
-        }
+        },
       );
       const valuesWithLabels = getNonJSThreadsSample(timeProfileOutWithLabels);
       assert.notEqual(valuesWithLabels, null);
@@ -196,7 +196,7 @@ describe('profile-serializer', () => {
       const heapProfileOut = serializeHeapProfile(
         v8AnonymousFunctionHeapProfile,
         0,
-        512 * 1024
+        512 * 1024,
       );
       assert.deepEqual(heapProfileOut, anonymousFunctionHeapProfile);
     });
@@ -216,7 +216,7 @@ describe('profile-serializer', () => {
           0,
           512 * 1024,
           undefined,
-          sourceMapper
+          sourceMapper,
         );
         assert.deepEqual(heapProfileOut, heapSourceProfile);
       });
@@ -227,7 +227,7 @@ describe('profile-serializer', () => {
         const timeProfileOut = serializeTimeProfile(
           v8TimeGeneratedProfile,
           1000,
-          sourceMapper
+          sourceMapper,
         );
         assert.deepEqual(timeProfileOut, timeSourceProfile);
       });

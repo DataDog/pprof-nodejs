@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Datadog, Inc
+ * Copyright 2026 Datadog, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,27 +16,29 @@
 
 #pragma once
 
+#include <nan.h>
 #include <v8-profiler.h>
-#include <v8.h>
-#include <memory>
-#include <string>
-#include <vector>
 
 namespace dd {
 
-struct Node {
-  using Allocation = v8::AllocationProfile::Allocation;
-  std::string name;
-  std::string script_name;
-  int line_number;
-  int column_number;
-  int script_id;
-  std::vector<std::shared_ptr<Node>> children;
-  std::vector<Allocation> allocations;
+class AllocationProfileNodeView {
+ public:
+  static NAN_MODULE_INIT(Init);
+
+  static v8::Local<v8::Object> New(v8::AllocationProfile::Node* node);
+
+ private:
+  template <typename F>
+  static void mapAllocationProfileNode(
+      const Nan::PropertyCallbackInfo<v8::Value>& info, F&& mapper);
+
+  static NAN_GETTER(GetName);
+  static NAN_GETTER(GetScriptName);
+  static NAN_GETTER(GetScriptId);
+  static NAN_GETTER(GetLineNumber);
+  static NAN_GETTER(GetColumnNumber);
+  static NAN_GETTER(GetAllocations);
+  static NAN_GETTER(GetChildren);
 };
 
-std::shared_ptr<Node> TranslateAllocationProfileToCpp(
-    v8::AllocationProfile::Node* node);
-
-v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 }  // namespace dd

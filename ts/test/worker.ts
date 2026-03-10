@@ -6,7 +6,6 @@ import {getAndVerifyPresence, getAndVerifyString} from './profiles-for-tests';
 import {satisfies} from 'semver';
 
 import assert from 'assert';
-import {AsyncLocalStorage} from 'async_hooks';
 
 const DURATION_MILLIS = 1000;
 const intervalMicros = 10000;
@@ -27,19 +26,22 @@ function createWorker(durationMs: number): Promise<Profile[]> {
     new Worker(__filename, {workerData: {durationMs}})
       .on('exit', exitCode => {
         if (exitCode !== 0) reject();
-        setTimeout(() => {
-          // Run a second worker after the first one exited to test for proper
-          // cleanup after first worker. This used to segfault.
-          new Worker(__filename, {workerData: {durationMs}})
-            .on('exit', exitCode => {
-              if (exitCode !== 0) reject();
-              resolve(profiles);
-            })
-            .on('error', reject)
-            .on('message', profile => {
-              profiles.push(profile);
-            });
-        }, Math.floor(Math.random() * durationMs));
+        setTimeout(
+          () => {
+            // Run a second worker after the first one exited to test for proper
+            // cleanup after first worker. This used to segfault.
+            new Worker(__filename, {workerData: {durationMs}})
+              .on('exit', exitCode => {
+                if (exitCode !== 0) reject();
+                resolve(profiles);
+              })
+              .on('error', reject)
+              .on('message', profile => {
+                profiles.push(profile);
+              });
+          },
+          Math.floor(Math.random() * durationMs),
+        );
       })
       .on('error', reject)
       .on('message', profile => {
@@ -62,7 +64,6 @@ function getCpuUsage() {
 }
 
 async function main(durationMs: number) {
-  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs * 3,
     intervalMicros,
@@ -107,7 +108,6 @@ async function main(durationMs: number) {
 }
 
 async function worker(durationMs: number) {
-  if (useCPED) new AsyncLocalStorage().enterWith(1);
   time.start({
     durationMillis: durationMs,
     intervalMicros,
@@ -128,9 +128,9 @@ async function worker(durationMs: number) {
 }
 
 if (isMainThread) {
-  main(DURATION_MILLIS);
+  void main(DURATION_MILLIS);
 } else {
-  worker(workerData.durationMs);
+  void worker(workerData.durationMs);
 }
 
 function valueName(profile: Profile, vt: ValueType) {
@@ -151,7 +151,7 @@ function getCpuTime(profile: Profile) {
     const locationId = sample.locationId[0];
     const location = getAndVerifyPresence(
       profile.location!,
-      locationId as number
+      locationId as number,
     );
     const functionId = location.line![0].functionId;
     const fn = getAndVerifyPresence(profile.function!, functionId as number);
@@ -172,7 +172,7 @@ function checkCpuTime(
   profile: Profile,
   processCpuTimeMicros: number,
   workerProfiles: Profile[] = [],
-  maxRelativeError = 0.1
+  maxRelativeError = 0.1,
 ) {
   let workersJsCpuTime = 0;
   let workersNonJsCpuTime = 0;
@@ -190,7 +190,7 @@ function checkCpuTime(
   assert.strictEqual(
     workersNonJsCpuTime,
     0,
-    'worker non-JS CPU time should be null'
+    'worker non-JS CPU time should be null',
   );
 
   const totalCpuTimeMicros =
@@ -206,7 +206,7 @@ function checkCpuTime(
   }\nnon-JS cpu time: ${mainNonJsCpuTime / 1000000}ms\nerror: ${err}`;
   assert.ok(
     err <= maxRelativeError,
-    `total profile CPU time should be close to process cpu time:\n${msg}`
+    `total profile CPU time should be close to process cpu time:\n${msg}`,
   );
 }
 
@@ -221,7 +221,7 @@ function checkProfile(profile: Profile) {
   assert.strictEqual(typeof profile.period, 'number');
   assert.strictEqual(
     valueName(profile, profile.periodType!),
-    'wall/nanoseconds'
+    'wall/nanoseconds',
   );
 
   assert.ok(profile.sample.length > 0, 'No samples');
@@ -236,13 +236,13 @@ function checkProfile(profile: Profile) {
     for (const locationId of sample.locationId!) {
       const location = getAndVerifyPresence(
         profile.location!,
-        locationId as number
+        locationId as number,
       );
 
       for (const {functionId, line} of location.line!) {
         const fn = getAndVerifyPresence(
           profile.function!,
-          functionId as number
+          functionId as number,
         );
 
         getAndVerifyString(profile.stringTable!, fn, 'name');

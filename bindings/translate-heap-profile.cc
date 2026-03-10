@@ -15,6 +15,7 @@
  */
 
 #include "translate-heap-profile.hh"
+#include <nan.h>
 #include "profile-translator.hh"
 
 namespace dd {
@@ -40,11 +41,10 @@ class HeapProfileTranslator : ProfileTranslator {
 #undef X
 
  public:
-  v8::Local<v8::Value> TranslateAllocationProfile(
-      v8::AllocationProfile::Node* node) {
+  v8::Local<v8::Value> TranslateAllocationProfile(Node* node) {
     v8::Local<v8::Array> children = NewArray(node->children.size());
     for (size_t i = 0; i < node->children.size(); i++) {
-      Set(children, i, TranslateAllocationProfile(node->children[i]));
+      Set(children, i, TranslateAllocationProfile(node->children[i].get()));
     }
 
     v8::Local<v8::Array> allocations = NewArray(node->allocations.size());
@@ -55,8 +55,8 @@ class HeapProfileTranslator : ProfileTranslator {
           CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
     }
 
-    return CreateNode(node->name,
-                      node->script_name,
+    return CreateNode(NewString(node->name.c_str()),
+                      NewString(node->script_name.c_str()),
                       NewInteger(node->script_id),
                       NewInteger(node->line_number),
                       NewInteger(node->column_number),
@@ -95,8 +95,30 @@ class HeapProfileTranslator : ProfileTranslator {
 };
 }  // namespace
 
-v8::Local<v8::Value> TranslateAllocationProfile(
+std::shared_ptr<Node> TranslateAllocationProfileToCpp(
     v8::AllocationProfile::Node* node) {
+  auto new_node = std::make_shared<Node>();
+  new_node->line_number = node->line_number;
+  new_node->column_number = node->column_number;
+  new_node->script_id = node->script_id;
+  Nan::Utf8String name(node->name);
+  new_node->name.assign(*name, name.length());
+  Nan::Utf8String script_name(node->script_name);
+  new_node->script_name.assign(*script_name, script_name.length());
+
+  new_node->children.reserve(node->children.size());
+  for (auto& child : node->children) {
+    new_node->children.push_back(TranslateAllocationProfileToCpp(child));
+  }
+
+  new_node->allocations.reserve(node->allocations.size());
+  for (auto& allocation : node->allocations) {
+    new_node->allocations.push_back(allocation);
+  }
+  return new_node;
+}
+
+v8::Local<v8::Value> TranslateAllocationProfile(Node* node) {
   return HeapProfileTranslator().TranslateAllocationProfile(node);
 }
 
