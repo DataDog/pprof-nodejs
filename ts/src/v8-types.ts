@@ -25,6 +25,8 @@ export interface TimeProfile {
   hasCpuTime?: boolean;
   /** CPU time of non-JS threads, only reported for the main worker thread */
   nonJSThreadsCpuTime?: number;
+  /** Computed in C++ to avoid a full JS tree traversal. */
+  totalHitCount?: number;
 }
 
 export interface ProfileNode {
