@@ -55,6 +55,32 @@ let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
 
+function handleStopRestart() {
+  if (!gProfiler) {
+    return;
+  }
+  gV8ProfilerStuckEventLoopDetected =
+    gProfiler.v8ProfilerStuckEventLoopDetected();
+  // Workaround for v8 bug, where profiler event processor thread is stuck in
+  // a loop eating 100% CPU, leading to empty profiles.
+  // Fully stop and restart the profiler to reset the profile to a valid state.
+  if (gV8ProfilerStuckEventLoopDetected > 0) {
+    gProfiler.stop(false);
+    gProfiler.start();
+  }
+}
+
+function handleStopNoRestart() {
+  gV8ProfilerStuckEventLoopDetected = 0;
+  gProfiler?.dispose();
+  gProfiler = undefined;
+  gSourceMapper = undefined;
+  if (gStore !== undefined) {
+    gStore.disable();
+    gStore = undefined;
+  }
+}
+
 /** Make sure to stop profiler before node shuts down, otherwise profiling
  * signal might cause a crash if it occurs during shutdown */
 process.once('exit', () => {
@@ -140,17 +166,9 @@ export function stop(
 
   const profile = gProfiler.stop(restart);
   if (restart) {
-    gV8ProfilerStuckEventLoopDetected =
-      gProfiler.v8ProfilerStuckEventLoopDetected();
-    // Workaround for v8 bug, where profiler event processor thread is stuck in
-    // a loop eating 100% CPU, leading to empty profiles.
-    // Fully stop and restart the profiler to reset the profile to a valid state.
-    if (gV8ProfilerStuckEventLoopDetected > 0) {
-      gProfiler.stop(false);
-      gProfiler.start();
-    }
+    handleStopRestart();
   } else {
-    gV8ProfilerStuckEventLoopDetected = 0;
+    handleStopNoRestart();
   }
 
   const serializedProfile = serializeTimeProfile(
@@ -161,15 +179,6 @@ export function stop(
     generateLabels,
     lowCardinalityLabels,
   );
-  if (!restart) {
-    gProfiler.dispose();
-    gProfiler = undefined;
-    gSourceMapper = undefined;
-    if (gStore !== undefined) {
-      gStore.disable();
-      gStore = undefined;
-    }
-  }
   return serializedProfile;
 }
 
@@ -200,21 +209,9 @@ export function stopV2(
       ),
   );
   if (restart) {
-    gV8ProfilerStuckEventLoopDetected =
-      gProfiler.v8ProfilerStuckEventLoopDetected();
-    if (gV8ProfilerStuckEventLoopDetected > 0) {
-      gProfiler.stop(false);
-      gProfiler.start();
-    }
+    handleStopRestart();
   } else {
-    gV8ProfilerStuckEventLoopDetected = 0;
-    gProfiler.dispose();
-    gProfiler = undefined;
-    gSourceMapper = undefined;
-    if (gStore !== undefined) {
-      gStore.disable();
-      gStore = undefined;
-    }
+    handleStopNoRestart();
   }
   return serializedProfile;
 }
