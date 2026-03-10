@@ -27,7 +27,11 @@ import {
   getNativeThreadId,
   constants as profilerConstants,
 } from './time-profiler-bindings';
-import {GenerateTimeLabelsFunction, TimeProfilerMetrics} from './v8-types';
+import {
+  GenerateTimeLabelsFunction,
+  TimeProfile,
+  TimeProfilerMetrics,
+} from './v8-types';
 import {isMainThread} from 'worker_threads';
 import {AsyncLocalStorage} from 'async_hooks';
 const {kSampleCount} = profilerConstants;
@@ -38,11 +42,44 @@ const DEFAULT_DURATION_MILLIS: Milliseconds = 60000;
 type Microseconds = number;
 type Milliseconds = number;
 
-let gProfiler: InstanceType<typeof TimeProfiler> | undefined;
+type NativeTimeProfiler = InstanceType<typeof TimeProfiler> & {
+  stopAndCollect?: <T>(
+    restart: boolean,
+    callback: (profile: TimeProfile) => T,
+  ) => T;
+};
+
+let gProfiler: NativeTimeProfiler | undefined;
 let gStore: AsyncLocalStorage<unknown> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
 let gV8ProfilerStuckEventLoopDetected = 0;
+
+function handleStopRestart() {
+  if (!gProfiler) {
+    return;
+  }
+  gV8ProfilerStuckEventLoopDetected =
+    gProfiler.v8ProfilerStuckEventLoopDetected();
+  // Workaround for v8 bug, where profiler event processor thread is stuck in
+  // a loop eating 100% CPU, leading to empty profiles.
+  // Fully stop and restart the profiler to reset the profile to a valid state.
+  if (gV8ProfilerStuckEventLoopDetected > 0) {
+    gProfiler.stop(false);
+    gProfiler.start();
+  }
+}
+
+function handleStopNoRestart() {
+  gV8ProfilerStuckEventLoopDetected = 0;
+  gProfiler?.dispose();
+  gProfiler = undefined;
+  gSourceMapper = undefined;
+  if (gStore !== undefined) {
+    gStore.disable();
+    gStore = undefined;
+  }
+}
 
 /** Make sure to stop profiler before node shuts down, otherwise profiling
  * signal might cause a crash if it occurs during shutdown */
@@ -89,6 +126,13 @@ export async function profile(options: TimeProfilerOptions = {}) {
   return stop();
 }
 
+export async function profileV2(options: TimeProfilerOptions = {}) {
+  options = {...DEFAULT_OPTIONS, ...options};
+  start(options);
+  await setTimeout(options.durationMillis!);
+  return stopV2();
+}
+
 // Temporarily retained for backwards compatibility with older tracer
 export function start(options: TimeProfilerOptions = {}) {
   options = {...DEFAULT_OPTIONS, ...options};
@@ -122,17 +166,9 @@ export function stop(
 
   const profile = gProfiler.stop(restart);
   if (restart) {
-    gV8ProfilerStuckEventLoopDetected =
-      gProfiler.v8ProfilerStuckEventLoopDetected();
-    // Workaround for v8 bug, where profiler event processor thread is stuck in
-    // a loop eating 100% CPU, leading to empty profiles.
-    // Fully stop and restart the profiler to reset the profile to a valid state.
-    if (gV8ProfilerStuckEventLoopDetected > 0) {
-      gProfiler.stop(false);
-      gProfiler.start();
-    }
+    handleStopRestart();
   } else {
-    gV8ProfilerStuckEventLoopDetected = 0;
+    handleStopNoRestart();
   }
 
   const serializedProfile = serializeTimeProfile(
@@ -143,14 +179,39 @@ export function stop(
     generateLabels,
     lowCardinalityLabels,
   );
-  if (!restart) {
-    gProfiler.dispose();
-    gProfiler = undefined;
-    gSourceMapper = undefined;
-    if (gStore !== undefined) {
-      gStore.disable();
-      gStore = undefined;
-    }
+  return serializedProfile;
+}
+
+/**
+ * Same as stop() but uses the lazy callback path: serialization happens inside
+ * a native callback while the V8 profile is still alive.
+ * This reduces memory overhead.
+ */
+export function stopV2(
+  restart = false,
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels?: string[],
+) {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  }
+
+  const serializedProfile = gProfiler.stopAndCollect(
+    restart,
+    (profile: TimeProfile) =>
+      serializeTimeProfile(
+        profile,
+        gIntervalMicros,
+        gSourceMapper,
+        true,
+        generateLabels,
+        lowCardinalityLabels,
+      ),
+  );
+  if (restart) {
+    handleStopRestart();
+  } else {
+    handleStopNoRestart();
   }
   return serializedProfile;
 }

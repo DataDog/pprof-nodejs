@@ -21,6 +21,7 @@
 #include "allocation-profile-node.hh"
 #include "profilers/heap.hh"
 #include "profilers/wall.hh"
+#include "translate-time-profile.hh"
 
 #ifdef __linux__
 #include <sys/syscall.h>
@@ -49,6 +50,7 @@ NODE_MODULE_INIT(/* exports, module, context */) {
 #endif
 
   dd::AllocationProfileNodeView::Init(exports);
+  dd::TimeProfileNodeView::Init(exports);
   dd::HeapProfiler::Init(exports);
   dd::WallProfiler::Init(exports);
   Nan::SetMethod(exports, "getNativeThreadId", GetNativeThreadId);
