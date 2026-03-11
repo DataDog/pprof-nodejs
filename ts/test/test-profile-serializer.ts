@@ -238,6 +238,181 @@ describe('profile-serializer', () => {
     });
   });
 
+  describe('missing source map file reporting', () => {
+    let sourceMapper: SourceMapper;
+    let missingJsPath: string;
+
+    before(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const testDir = tmp.dirSync().name;
+      missingJsPath = path.join(testDir, 'missing-map.js');
+      // JS file that declares a sourceMappingURL but the map file doesn't exist.
+      fs.writeFileSync(
+        missingJsPath,
+        '//# sourceMappingURL=nonexistent.js.map\n',
+      );
+      sourceMapper = await SourceMapper.create([testDir]);
+    });
+
+    function makeSingleNodeTimeProfile(scriptName: string) {
+      return {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [
+            {
+              name: 'foo',
+              scriptName,
+              scriptId: 1,
+              lineNumber: 1,
+              columnNumber: 1,
+              hitCount: 1,
+              children: [],
+            },
+          ],
+        },
+      };
+    }
+
+    it('serializeTimeProfile emits comment pairs for missing map files', () => {
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        sourceMapper,
+      );
+      const st = profile.stringTable;
+      const missingMapFileForId = st.dedup('dd:missing-map-file-for');
+      const pathId = st.dedup(missingJsPath);
+
+      assert.ok(
+        Array.isArray(profile.comment) && profile.comment.length > 0,
+        'expected comment to be non-empty',
+      );
+      // Comments should contain the sentinel + path pair.
+      const comments = profile.comment as number[];
+      const idx = comments.indexOf(missingMapFileForId);
+      assert.notStrictEqual(idx, -1, 'expected dd:missing-map-file-for in comments');
+      assert.strictEqual(
+        comments[idx + 1],
+        pathId,
+        'expected path ID to follow the sentinel',
+      );
+    });
+
+    it('serializeHeapProfile emits comment pairs for missing map files', () => {
+      // serialize() iterates root.children, so the node with allocations must
+      // be a child of the root passed to serializeHeapProfile.
+      const heapNode = {
+        name: '(root)',
+        scriptName: '',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [],
+        children: [
+          {
+            name: 'foo',
+            scriptName: missingJsPath,
+            scriptId: 1,
+            lineNumber: 1,
+            columnNumber: 1,
+            allocations: [{sizeBytes: 100, count: 1}],
+            children: [],
+          },
+        ],
+      };
+      const profile = serializeHeapProfile(heapNode, 0, 512 * 1024, undefined, sourceMapper);
+      const st = profile.stringTable;
+      const missingMapFileForId = st.dedup('dd:missing-map-file-for');
+      const pathId = st.dedup(missingJsPath);
+
+      assert.ok(
+        Array.isArray(profile.comment) && profile.comment.length > 0,
+        'expected comment to be non-empty',
+      );
+      const comments = profile.comment as number[];
+      const idx = comments.indexOf(missingMapFileForId);
+      assert.notStrictEqual(idx, -1, 'expected dd:missing-map-file-for in comments');
+      assert.strictEqual(comments[idx + 1], pathId);
+    });
+
+    it('does not emit comments when no source mapper is used', () => {
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+      );
+      assert.ok(
+        !profile.comment || profile.comment.length === 0,
+        'expected no comments when no source mapper is provided',
+      );
+    });
+
+    it('does not emit comments when all maps are found', () => {
+      const {mapDirPath, v8TimeGeneratedProfile} = require('./profiles-for-tests');
+      return SourceMapper.create([mapDirPath]).then(sm => {
+        const profile = serializeTimeProfile(v8TimeGeneratedProfile, 1000, sm);
+        assert.ok(
+          !profile.comment || profile.comment.length === 0,
+          'expected no comments when all maps are resolved',
+        );
+      });
+    });
+
+    it('each missing file appears exactly once in comments', () => {
+      // Profile with two nodes in the same missing-map file.
+      const v8Profile = {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [
+            {
+              name: 'foo',
+              scriptName: missingJsPath,
+              scriptId: 1,
+              lineNumber: 1,
+              columnNumber: 1,
+              hitCount: 1,
+              children: [
+                {
+                  name: 'bar',
+                  scriptName: missingJsPath,
+                  scriptId: 1,
+                  lineNumber: 2,
+                  columnNumber: 1,
+                  hitCount: 1,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const profile = serializeTimeProfile(v8Profile, 1000, sourceMapper);
+      const st = profile.stringTable;
+      const missingMapFileForId = st.dedup('dd:missing-map-file-for');
+      const comments = profile.comment as number[];
+      const occurrences = comments.filter(c => c === missingMapFileForId).length;
+      assert.strictEqual(occurrences, 1, 'each missing file should appear only once');
+    });
+
+    after(() => {
+      tmp.setGracefulCleanup();
+    });
+  });
+
   describe('source map with column 0 (LineTick simulation)', () => {
     // This tests the LEAST_UPPER_BOUND fallback for when V8's LineTick
     // doesn't provide column information (column=0)
