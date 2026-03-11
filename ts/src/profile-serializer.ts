@@ -101,7 +101,7 @@ function serialize<T extends ProfileNode>(
   const functionIdMap = new Map<string, number>();
   const locationIdMap = new Map<string, number>();
 
-  const missingMapFiles = new Set<string>();
+  let hasMissingMapFiles = false;
 
   const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
     node: n,
@@ -120,7 +120,7 @@ function serialize<T extends ProfileNode>(
       continue;
     }
     const stack = entry.stack;
-    const location = getLocation(node, scriptName, sourceMapper, missingMapFiles);
+    const location = getLocation(node, scriptName, sourceMapper);
     stack.unshift(location.id as number);
     appendToSamples(entry, samples);
     for (const child of node.children as T[]) {
@@ -133,20 +133,14 @@ function serialize<T extends ProfileNode>(
   profile.function = functions;
   profile.stringTable = stringTable;
 
-  if (missingMapFiles.size > 0) {
-    const missingMapFileForId = stringTable.dedup('dd:missing-map-file-for');
-    const comments: number[] = [];
-    for (const filePath of missingMapFiles) {
-      comments.push(missingMapFileForId, stringTable.dedup(filePath));
-    }
-    profile.comment = comments;
+  if (hasMissingMapFiles) {
+    profile.comment = [stringTable.dedup('dd:has-missing-map-files')];
   }
 
   function getLocation(
     node: ProfileNode,
     scriptName: string,
     sourceMapper?: SourceMapper,
-    missingMapFiles?: Set<string>,
   ): Location {
     let profLoc: SourceLocation = {
       file: scriptName || '',
@@ -158,8 +152,8 @@ function serialize<T extends ProfileNode>(
     if (profLoc.line) {
       if (sourceMapper && isGeneratedLocation(profLoc)) {
         profLoc = sourceMapper.mappingInfo(profLoc);
-        if (profLoc.missingMapFile && missingMapFiles && scriptName) {
-          missingMapFiles.add(scriptName);
+        if (profLoc.missingMapFile) {
+          hasMissingMapFiles = true;
         }
       }
     }
