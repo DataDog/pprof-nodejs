@@ -322,7 +322,13 @@ describe('profile-serializer', () => {
           },
         ],
       };
-      const profile = serializeHeapProfile(heapNode, 0, 512 * 1024, undefined, sourceMapper);
+      const profile = serializeHeapProfile(
+        heapNode,
+        0,
+        512 * 1024,
+        undefined,
+        sourceMapper,
+      );
       assertHasMissingMapToken(profile);
     });
 
@@ -338,7 +344,10 @@ describe('profile-serializer', () => {
     });
 
     it('does not emit missing-map token when all maps are found', () => {
-      const {mapDirPath, v8TimeGeneratedProfile} = require('./profiles-for-tests');
+      const {
+        mapDirPath,
+        v8TimeGeneratedProfile,
+      } = require('./profiles-for-tests');
       return SourceMapper.create([mapDirPath]).then(sm => {
         const profile = serializeTimeProfile(v8TimeGeneratedProfile, 1000, sm);
         assert.ok(
