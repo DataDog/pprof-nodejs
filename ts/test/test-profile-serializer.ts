@@ -206,8 +206,7 @@ describe('profile-serializer', () => {
   describe('source map specified', () => {
     let sourceMapper: SourceMapper;
     before(async () => {
-      sourceMapper = new SourceMapper();
-      await sourceMapper.loadDirectory(mapDirPath);
+      sourceMapper = await SourceMapper.create([mapDirPath]);
     });
 
     describe('serializeHeapProfile', () => {
@@ -282,8 +281,7 @@ describe('profile-serializer', () => {
       );
       fs.writeFileSync(path.join(testMapDir, 'generated.js'), '');
 
-      sourceMapper = new SourceMapper();
-      await sourceMapper.loadDirectory(testMapDir);
+      sourceMapper = await SourceMapper.create([testMapDir]);
     });
 
     it('should map column 0 to first mapping on line (LEAST_UPPER_BOUND fallback)', () => {
