@@ -206,8 +206,7 @@ describe('profile-serializer', () => {
   describe('source map specified', () => {
     let sourceMapper: SourceMapper;
     before(async () => {
-      const sourceMapFiles = [mapDirPath];
-      sourceMapper = await SourceMapper.create(sourceMapFiles);
+      sourceMapper = await SourceMapper.create([mapDirPath]);
     });
 
     describe('serializeHeapProfile', () => {
