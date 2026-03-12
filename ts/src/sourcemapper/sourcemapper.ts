@@ -207,12 +207,14 @@ async function processSourceMap(
    */
   const dir = path.dirname(mapPath);
 
-  // Parse the JSON lightly to get the `file` property before creating the
-  // full SourceMapConsumer, so we can bail out early if the generated file
-  // is already loaded (e.g. via a sourceMappingURL annotation).
+  // Parse JSON once: extract the `file` property for early-exit checks and
+  // reuse the parsed object when constructing SourceMapConsumer (avoids a
+  // second parse inside the library).
+  let parsedMap: sourceMap.RawSourceMap | undefined;
   let rawFile: string | undefined;
   try {
-    rawFile = (JSON.parse(contents) as {file?: string}).file;
+    parsedMap = JSON.parse(contents) as sourceMap.RawSourceMap;
+    rawFile = parsedMap.file;
   } catch {
     // Will fail again below when creating SourceMapConsumer; let that throw.
   }
@@ -264,11 +266,8 @@ async function processSourceMap(
     // TODO: Determine how to reconsile the type conflict where `consumer`
     //       is constructed as a SourceMapConsumer but is used as a
     //       RawSourceMap.
-    // TODO: Resolve the cast of `contents as any` (This is needed because the
-    //       type is expected to be of `RawSourceMap` but the existing
-    //       working code uses a string.)
     consumer = (await new sourceMap.SourceMapConsumer(
-      contents as {} as sourceMap.RawSourceMap,
+      (parsedMap ?? contents) as {} as sourceMap.RawSourceMap,
     )) as {} as sourceMap.RawSourceMap;
   } catch (e) {
     throw error(
@@ -319,6 +318,10 @@ export class SourceMapper {
    * Safe to call multiple times; already-loaded files are skipped.
    */
   async loadDirectory(searchDir: string): Promise<void> {
+    // Resolve to absolute so all paths in infoMap are consistent regardless of
+    // whether the caller passed a relative or absolute directory.
+    searchDir = path.resolve(searchDir);
+
     if (this.debug) {
       logger.debug(`Loading source maps from directory: ${searchDir}`);
     }
@@ -400,8 +403,9 @@ export class SourceMapper {
     mapDir: string,
   ): Promise<void> {
     try {
+      const parsedMap = JSON.parse(mapContent) as sourceMap.RawSourceMap;
       const consumer = (await new sourceMap.SourceMapConsumer(
-        mapContent as {} as sourceMap.RawSourceMap,
+        parsedMap,
       )) as {} as sourceMap.RawSourceMap;
       this.infoMap.set(jsPath, {mapFileDir: mapDir, mapConsumer: consumer});
       if (this.debug) {
