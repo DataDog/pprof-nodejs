@@ -49,6 +49,96 @@ function createLimiter(concurrency: number) {
 }
 const MAP_EXT = '.map';
 
+// Per TC39 ECMA-426 §11.1.2.1 JavaScriptExtractSourceMapURL (without parsing):
+// https://tc39.es/ecma426/#sec-linking-inline
+//
+// Split on these line terminators (ECMA-262 LineTerminatorSequence):
+const LINE_SPLIT_RE = /\r\n|\n|\r|\u2028|\u2029/;
+// Bytes to read from the end of a JS file when scanning for the annotation.
+// The annotation must be on the last non-empty line, which is always short
+// for external URLs. If no line terminator appears in the tail we fall back
+// to a full file read (handles very large inline data: maps).
+export const ANNOTATION_TAIL_BYTES = 4 * 1024;
+// Quote code points that invalidate the annotation (U+0022, U+0027, U+0060):
+const QUOTE_CHARS_RE = /["'`]/;
+// MatchSourceMapURL pattern applied to the comment text that follows "//":
+const MATCH_SOURCE_MAP_URL_RE = /^[@#]\s*sourceMappingURL=(\S*?)\s*$/;
+
+/**
+ * Extracts a sourceMappingURL from JS source per ECMA-426 §11.1.2.1
+ * (without-parsing variant).
+ *
+ * Scans lines from the end, skipping empty/whitespace-only lines.
+ * Returns null as soon as the first non-empty line is found that does not
+ * carry a valid annotation — the URL must be on the last non-empty line.
+ */
+export function extractSourceMappingURL(content: string): string | undefined {
+  const lines = content.split(LINE_SPLIT_RE);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.trim() === '') continue; // skip empty / whitespace-only lines
+
+    // This is the last non-empty line; it must carry the annotation or we stop.
+    const commentStart = line.indexOf('//');
+    if (commentStart === -1) return undefined;
+
+    const comment = line.slice(commentStart + 2);
+    if (QUOTE_CHARS_RE.test(comment)) return undefined;
+
+    const match = MATCH_SOURCE_MAP_URL_RE.exec(comment);
+    return match ? match[1] || undefined : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Reads the sourceMappingURL from a JS file efficiently by only reading a
+ * small tail of the file.
+ *
+ * The annotation must be on the last non-empty line (ECMA-426), so as long as
+ * the tail contains at least one line terminator the last line is fully
+ * captured. If no line terminator appears in the tail the entire tail is part
+ * of one very long inline data: line; we fall back to a full file read in
+ * that case.
+ */
+export async function readSourceMappingURL(
+  filePath: string,
+): Promise<string | undefined> {
+  const fd = await fs.promises.open(filePath, 'r');
+  try {
+    const {size} = await fd.stat();
+    if (size === 0) return undefined;
+
+    const tailSize = Math.min(ANNOTATION_TAIL_BYTES, size);
+    const buf = Buffer.allocUnsafe(tailSize);
+    await fd.read(buf, 0, tailSize, size - tailSize);
+    const tail = buf.toString('utf8');
+
+    // The last non-empty line is fully captured in the tail if and only if a
+    // line terminator that precedes it also falls within the tail — i.e. the
+    // last non-empty segment is not the very first element of the split result.
+    //
+    // Counter-example: a large inline map followed by trailing empty lines.
+    // The tail might be "<end of base64>\n\n", which contains line terminators
+    // but whose last non-empty content ("<end of base64>") is the first
+    // segment — it extends before the window. Checking LINE_TERM_RE alone
+    // would incorrectly accept this tail.
+    const lines = tail.split(LINE_SPLIT_RE);
+    let lastNonEmptyIdx = lines.length - 1;
+    while (lastNonEmptyIdx > 0 && lines[lastNonEmptyIdx].trim() === '') {
+      lastNonEmptyIdx--;
+    }
+    if (tailSize === size || lastNonEmptyIdx > 0) {
+      return extractSourceMappingURL(tail);
+    }
+
+    const fullContent = await readFile(filePath, 'utf8');
+    return extractSourceMappingURL(fullContent);
+  } finally {
+    await fd.close();
+  }
+}
+
 function error(msg: string) {
   logger.debug(`Error: ${msg}`);
   return new Error(msg);
@@ -99,27 +189,6 @@ async function processSourceMap(
     throw error('Could not read source map file ' + mapPath + ': ' + e);
   }
 
-  let consumer: sourceMap.RawSourceMap;
-  try {
-    // TODO: Determine how to reconsile the type conflict where `consumer`
-    //       is constructed as a SourceMapConsumer but is used as a
-    //       RawSourceMap.
-    // TODO: Resolve the cast of `contents as any` (This is needed because the
-    //       type is expected to be of `RawSourceMap` but the existing
-    //       working code uses a string.)
-    consumer = (await new sourceMap.SourceMapConsumer(
-      contents as {} as sourceMap.RawSourceMap,
-    )) as {} as sourceMap.RawSourceMap;
-  } catch (e) {
-    throw error(
-      'An error occurred while reading the ' +
-        'sourceMap file ' +
-        mapPath +
-        ': ' +
-        e,
-    );
-  }
-
   /* If the source map file defines a "file" attribute, use it as
    * the output file where the path is relative to the directory
    * containing the map file.  Otherwise, use the name of the output
@@ -137,9 +206,22 @@ async function processSourceMap(
    * source map file.
    */
   const dir = path.dirname(mapPath);
-  const generatedPathCandidates = [];
-  if (consumer.file) {
-    generatedPathCandidates.push(path.resolve(dir, consumer.file));
+
+  // Parse JSON once: extract the `file` property for early-exit checks and
+  // reuse the parsed object when constructing SourceMapConsumer (avoids a
+  // second parse inside the library).
+  let parsedMap: sourceMap.RawSourceMap | undefined;
+  let rawFile: string | undefined;
+  try {
+    parsedMap = JSON.parse(contents) as sourceMap.RawSourceMap;
+    rawFile = parsedMap.file;
+  } catch {
+    // Will fail again below when creating SourceMapConsumer; let that throw.
+  }
+
+  const generatedPathCandidates: string[] = [];
+  if (rawFile) {
+    generatedPathCandidates.push(path.resolve(dir, rawFile));
   }
   const samePath = path.resolve(dir, path.basename(mapPath, MAP_EXT));
   if (
@@ -149,22 +231,57 @@ async function processSourceMap(
     generatedPathCandidates.push(samePath);
   }
 
-  for (const generatedPath of generatedPathCandidates) {
-    try {
-      await fs.promises.access(generatedPath, fs.constants.F_OK);
-      infoMap.set(generatedPath, {mapFileDir: dir, mapConsumer: consumer});
+  // Find the first candidate that exists and hasn't been loaded already.
+  let targetPath: string | undefined;
+  for (const candidate of generatedPathCandidates) {
+    if (infoMap.has(candidate)) {
+      // Already loaded via sourceMappingURL annotation; skip this map file.
       if (debug) {
-        logger.debug(`Loaded source map for ${generatedPath} => ${mapPath}`);
+        logger.debug(
+          `Skipping ${mapPath}: ${candidate} already loaded via sourceMappingURL`,
+        );
       }
       return;
+    }
+    try {
+      await fs.promises.access(candidate, fs.constants.F_OK);
+      targetPath = candidate;
+      break;
     } catch {
       if (debug) {
-        logger.debug(`Generated path ${generatedPath} does not exist`);
+        logger.debug(`Generated path ${candidate} does not exist`);
       }
     }
   }
+
+  if (!targetPath) {
+    if (debug) {
+      logger.debug(`Unable to find generated file for ${mapPath}`);
+    }
+    return;
+  }
+
+  let consumer: sourceMap.RawSourceMap;
+  try {
+    // TODO: Determine how to reconsile the type conflict where `consumer`
+    //       is constructed as a SourceMapConsumer but is used as a
+    //       RawSourceMap.
+    consumer = (await new sourceMap.SourceMapConsumer(
+      (parsedMap ?? contents) as {} as sourceMap.RawSourceMap,
+    )) as {} as sourceMap.RawSourceMap;
+  } catch (e) {
+    throw error(
+      'An error occurred while reading the ' +
+        'sourceMap file ' +
+        mapPath +
+        ': ' +
+        e,
+    );
+  }
+
+  infoMap.set(targetPath, {mapFileDir: dir, mapConsumer: consumer});
   if (debug) {
-    logger.debug(`Unable to find generated file for ${mapPath}`);
+    logger.debug(`Loaded source map for ${targetPath} => ${mapPath}`);
   }
 }
 
@@ -176,39 +293,127 @@ export class SourceMapper {
     searchDirs: string[],
     debug = false,
   ): Promise<SourceMapper> {
-    if (debug) {
-      logger.debug(
-        `Looking for source map files in dirs: [${searchDirs.join(', ')}]`,
-      );
-    }
-    const mapFiles: string[] = [];
+    const mapper = new SourceMapper(debug);
     for (const dir of searchDirs) {
-      try {
-        const mf = await getMapFiles(dir);
-        mf.forEach(mapFile => {
-          mapFiles.push(path.resolve(dir, mapFile));
-        });
-      } catch (e) {
-        throw error(`failed to get source maps from ${dir}: ${e}`);
-      }
+      await mapper.loadDirectory(dir);
     }
-    if (debug) {
-      logger.debug(`Found source map files: [${mapFiles.join(', ')}]`);
-    }
-    return createFromMapFiles(mapFiles, debug);
+    return mapper;
   }
 
-  /**
-   * @param {Array.<string>} sourceMapPaths An array of paths to .map source map
-   *  files that should be processed.  The paths should be relative to the
-   *  current process's current working directory
-   * @param {Logger} logger A logger that reports errors that occurred while
-   *  processing the given source map files
-   * @constructor
-   */
   constructor(debug = false) {
     this.infoMap = new Map();
     this.debug = debug;
+  }
+
+  /**
+   * Scans `searchDir` recursively for JS files and source map files, loading
+   * source maps for all JS files found.
+   *
+   * Priority for each JS file:
+   *  1. A map pointed to by a `sourceMappingURL` annotation in the JS file
+   *     (inline `data:` URL or external file path, only if the file exists).
+   *  2. A `.map` file found in the directory scan that claims to belong to
+   *     that JS file (via its `file` property or naming convention).
+   *
+   * Safe to call multiple times; already-loaded files are skipped.
+   */
+  async loadDirectory(searchDir: string): Promise<void> {
+    // Resolve to absolute so all paths in infoMap are consistent regardless of
+    // whether the caller passed a relative or absolute directory.
+    searchDir = path.resolve(searchDir);
+
+    if (this.debug) {
+      logger.debug(`Loading source maps from directory: ${searchDir}`);
+    }
+
+    const jsFiles: string[] = [];
+    const mapFiles: string[] = [];
+
+    for await (const entry of walk(
+      searchDir,
+      filename =>
+        /\.[cm]?js$/.test(filename) || /\.[cm]?js\.map$/.test(filename),
+      (root, dirname) =>
+        root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules',
+    )) {
+      if (entry.endsWith(MAP_EXT)) {
+        mapFiles.push(entry);
+      } else {
+        jsFiles.push(entry);
+      }
+    }
+
+    if (this.debug) {
+      logger.debug(
+        `Found ${jsFiles.length} JS files and ${mapFiles.length} map files in ${searchDir}`,
+      );
+    }
+
+    const limit = createLimiter(CONCURRENCY);
+
+    // Phase 1: Check sourceMappingURL annotations in JS files (higher priority).
+    await Promise.all(
+      jsFiles.map(jsPath =>
+        limit(async () => {
+          if (this.infoMap.has(jsPath)) return;
+
+          let url: string | undefined;
+          try {
+            url = await readSourceMappingURL(jsPath);
+          } catch {
+            return;
+          }
+          if (!url) return;
+
+          const INLINE_PREFIX = 'data:application/json;base64,';
+          if (url.startsWith(INLINE_PREFIX)) {
+            const mapContent = Buffer.from(
+              url.slice(INLINE_PREFIX.length),
+              'base64',
+            ).toString();
+            await this.loadMapContent(jsPath, mapContent, path.dirname(jsPath));
+          } else {
+            const mapPath = path.resolve(path.dirname(jsPath), url);
+            try {
+              const mapContent = await readFile(mapPath, 'utf8');
+              await this.loadMapContent(
+                jsPath,
+                mapContent,
+                path.dirname(mapPath),
+              );
+            } catch {
+              // Map file doesn't exist or is unreadable; fall through to Phase 2.
+            }
+          }
+        }),
+      ),
+    );
+
+    // Phase 2: Process .map files for any JS files not yet resolved.
+    await Promise.all(
+      mapFiles.map(mapPath =>
+        limit(() => processSourceMap(this.infoMap, mapPath, this.debug)),
+      ),
+    );
+  }
+
+  private async loadMapContent(
+    jsPath: string,
+    mapContent: string,
+    mapDir: string,
+  ): Promise<void> {
+    try {
+      const parsedMap = JSON.parse(mapContent) as sourceMap.RawSourceMap;
+      const consumer = (await new sourceMap.SourceMapConsumer(
+        parsedMap,
+      )) as {} as sourceMap.RawSourceMap;
+      this.infoMap.set(jsPath, {mapFileDir: mapDir, mapConsumer: consumer});
+      if (this.debug) {
+        logger.debug(`Loaded source map for ${jsPath} via sourceMappingURL`);
+      }
+    } catch (e) {
+      logger.debug(`Failed to parse source map for ${jsPath}: ${e}`);
+    }
   }
 
   /**
@@ -321,25 +526,6 @@ export class SourceMapper {
   }
 }
 
-async function createFromMapFiles(
-  mapFiles: string[],
-  debug: boolean,
-): Promise<SourceMapper> {
-  const limit = createLimiter(CONCURRENCY);
-  const mapper = new SourceMapper(debug);
-  const promises: Array<Promise<void>> = mapFiles.map(mapPath =>
-    limit(() => processSourceMap(mapper.infoMap, mapPath, debug)),
-  );
-  try {
-    await Promise.all(promises);
-  } catch (err) {
-    throw error(
-      'An error occurred while processing the source map files' + err,
-    );
-  }
-  return mapper;
-}
-
 function isErrnoException(e: unknown): e is NodeJS.ErrnoException {
   return e instanceof Error && 'code' in e;
 }
@@ -381,17 +567,4 @@ async function* walk(
   }
 
   yield* walkRecursive(dir);
-}
-
-async function getMapFiles(baseDir: string): Promise<string[]> {
-  const mapFiles: string[] = [];
-  for await (const entry of walk(
-    baseDir,
-    filename => /\.[cm]?js\.map$/.test(filename),
-    (root, dirname) =>
-      root !== '/proc' && dirname !== '.git' && dirname !== 'node_modules',
-  )) {
-    mapFiles.push(path.relative(baseDir, entry));
-  }
-  return mapFiles;
 }
