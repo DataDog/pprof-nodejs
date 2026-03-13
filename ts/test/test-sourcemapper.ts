@@ -325,17 +325,21 @@ describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => 
     )) as unknown as sourceMap.RawSourceMap;
 
     const mapper = new SourceMapper();
-    mapper.infoMap.set(BUNDLE_PATH, {mapFileDir: MAP_DIR, mapConsumer: consumer});
+    mapper.infoMap.set(BUNDLE_PATH, {
+      mapFileDir: MAP_DIR,
+      mapConsumer: consumer,
+    });
     return mapper;
   }
 
   // Helper: look up a location in bundle.js.
-  function lookup(
-    mapper: SourceMapper,
-    line: number,
-    column: number,
-  ) {
-    return mapper.mappingInfo({file: BUNDLE_PATH, line, column, name: 'unknown'});
+  function lookup(mapper: SourceMapper, line: number, column: number) {
+    return mapper.mappingInfo({
+      file: BUNDLE_PATH,
+      line,
+      column,
+      name: 'unknown',
+    });
   }
 
   it('resolves functions correctly when real column numbers are available (Node.js ≥ 25 behaviour)', async () => {
@@ -343,15 +347,15 @@ describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => 
     // GREATEST_LOWER_BOUND is used and each function maps to its own source.
     const mapper = await buildMapper();
 
-    const a = lookup(mapper, 1, 11);  // col 11 → adjusted 10 → funcA
+    const a = lookup(mapper, 1, 11); // col 11 → adjusted 10 → funcA
     assert.strictEqual(a.name, 'funcA', 'funcA column');
     assert.ok(a.file!.endsWith('a.ts'), `funcA file: ${a.file}`);
 
-    const b = lookup(mapper, 1, 31);  // col 31 → adjusted 30 → funcB
+    const b = lookup(mapper, 1, 31); // col 31 → adjusted 30 → funcB
     assert.strictEqual(b.name, 'funcB', 'funcB column');
     assert.ok(b.file!.endsWith('b.ts'), `funcB file: ${b.file}`);
 
-    const c = lookup(mapper, 1, 51);  // col 51 → adjusted 50 → funcC
+    const c = lookup(mapper, 1, 51); // col 51 → adjusted 50 → funcC
     assert.strictEqual(c.name, 'funcC', 'funcC column');
     assert.ok(c.file!.endsWith('c.ts'), `funcC file: ${c.file}`);
   });
@@ -371,7 +375,15 @@ describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => 
 
     // They all resolve to the first mapped function on the line.
     assert.strictEqual(a.name, 'funcA', 'funcA with column=0');
-    assert.strictEqual(b.name, 'funcA', 'funcB with column=0 maps to funcA — known limitation');
-    assert.strictEqual(c.name, 'funcA', 'funcC with column=0 maps to funcA — known limitation');
+    assert.strictEqual(
+      b.name,
+      'funcA',
+      'funcB with column=0 maps to funcA — known limitation',
+    );
+    assert.strictEqual(
+      c.name,
+      'funcA',
+      'funcC with column=0 maps to funcA — known limitation',
+    );
   });
 });
