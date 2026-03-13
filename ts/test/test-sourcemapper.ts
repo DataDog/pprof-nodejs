@@ -17,6 +17,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as tmp from 'tmp';
+import * as sourceMap from 'source-map';
 
 import {
   ANNOTATION_TAIL_BYTES,
@@ -269,6 +270,120 @@ describe('SourceMapper.loadDirectory', () => {
     assert.ok(
       !sm.hasMappingInfo(path.join(tmpDir, 'orphan.js')),
       'expected no mapping to be loaded',
+    );
+  });
+});
+
+// Regression test for the webpack source map issue originally surfaced in #81
+// and relevant to #248.
+//
+// Webpack minifies output into a single line, placing multiple functions at
+// different columns.  On Node.js < 25, V8's LineTick struct has no column
+// field, so the C++ layer always emits column=0 for every sample.  The
+// sourcemapper's LEAST_UPPER_BOUND path (triggered when column===0) then finds
+// the first mapping on the line for every lookup — attributing all functions in
+// the bundle to whichever source function appears first.
+//
+// On Node.js >= 25, V8 fills in real column numbers, so each function is
+// looked up with GREATEST_LOWER_BOUND and resolves correctly.
+//
+// This test documents both behaviours so a regression would be immediately
+// visible.
+describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => {
+  const MAP_DIR = path.resolve('app', 'dist');
+  const BUNDLE_PATH = path.join(MAP_DIR, 'bundle.js');
+
+  // Build a source map that places three functions on line 1 of bundle.js at
+  // columns 10, 30 and 50, each originating from a different source file.
+  async function buildMapper(): Promise<SourceMapper> {
+    const gen = new sourceMap.SourceMapGenerator({file: 'bundle.js'});
+
+    // funcA  — bundle.js line 1, col 10  →  a.ts line 1, col 0
+    gen.addMapping({
+      generated: {line: 1, column: 10},
+      source: 'a.ts',
+      original: {line: 1, column: 0},
+      name: 'funcA',
+    });
+    // funcB  — bundle.js line 1, col 30  →  b.ts line 1, col 0
+    gen.addMapping({
+      generated: {line: 1, column: 30},
+      source: 'b.ts',
+      original: {line: 1, column: 0},
+      name: 'funcB',
+    });
+    // funcC  — bundle.js line 1, col 50  →  c.ts line 1, col 0
+    gen.addMapping({
+      generated: {line: 1, column: 50},
+      source: 'c.ts',
+      original: {line: 1, column: 0},
+      name: 'funcC',
+    });
+
+    const consumer = (await new sourceMap.SourceMapConsumer(
+      gen.toJSON() as unknown as sourceMap.RawSourceMap,
+    )) as unknown as sourceMap.RawSourceMap;
+
+    const mapper = new SourceMapper();
+    mapper.infoMap.set(BUNDLE_PATH, {
+      mapFileDir: MAP_DIR,
+      mapConsumer: consumer,
+    });
+    return mapper;
+  }
+
+  // Helper: look up a location in bundle.js.
+  function lookup(mapper: SourceMapper, line: number, column: number) {
+    return mapper.mappingInfo({
+      file: BUNDLE_PATH,
+      line,
+      column,
+      name: 'unknown',
+    });
+  }
+
+  it('resolves functions correctly when real column numbers are available (Node.js ≥ 25 behaviour)', async () => {
+    // When V8 supplies real 1-based columns (11, 31, 51 for cols 10, 30, 50)
+    // GREATEST_LOWER_BOUND is used and each function maps to its own source.
+    const mapper = await buildMapper();
+
+    const a = lookup(mapper, 1, 11); // col 11 → adjusted 10 → funcA
+    assert.strictEqual(a.name, 'funcA', 'funcA column');
+    assert.ok(a.file!.endsWith('a.ts'), `funcA file: ${a.file}`);
+
+    const b = lookup(mapper, 1, 31); // col 31 → adjusted 30 → funcB
+    assert.strictEqual(b.name, 'funcB', 'funcB column');
+    assert.ok(b.file!.endsWith('b.ts'), `funcB file: ${b.file}`);
+
+    const c = lookup(mapper, 1, 51); // col 51 → adjusted 50 → funcC
+    assert.strictEqual(c.name, 'funcC', 'funcC column');
+    assert.ok(c.file!.endsWith('c.ts'), `funcC file: ${c.file}`);
+  });
+
+  it('resolves column=0 to the first mapping on the line (Node.js < 25 behaviour — known limitation)', async () => {
+    // On Node.js < 25, LineTick has no column field so the C++ layer emits
+    // column=0 for every sample.  LEAST_UPPER_BOUND is therefore used and all
+    // three functions resolve to the *first* mapping on the line (funcA at
+    // column 10).  This is a known limitation: distinct functions in a
+    // webpack bundle cannot be differentiated on pre-25 Node.js.
+    const mapper = await buildMapper();
+
+    // All three functions are reported with column=0 (no real column info).
+    const a = lookup(mapper, 1, 0);
+    const b = lookup(mapper, 1, 0);
+    const c = lookup(mapper, 1, 0);
+
+    // They all resolve to the first mapped function on the line.
+    assert.strictEqual(a.name, 'funcA', 'funcA with column=0');
+    assert.strictEqual(
+      b.name,
+      'funcA',
+      'funcB with column=0 maps to funcA — known limitation',
+    );
+    assert.strictEqual(
+      c.name,
+      'funcA',
+      'funcC with column=0 maps to funcA — known limitation',
     );
   });
 });
