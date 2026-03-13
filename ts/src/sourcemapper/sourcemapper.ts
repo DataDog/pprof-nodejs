@@ -161,6 +161,8 @@ export interface SourceLocation {
   name?: string;
   line?: number;
   column?: number;
+  /** True when the file declares a sourceMappingURL but the map could not be found. */
+  missingMapFile?: boolean;
 }
 
 /**
@@ -287,6 +289,8 @@ async function processSourceMap(
 
 export class SourceMapper {
   infoMap: Map<string, MapInfoCompiled>;
+  /** JS files that declared a sourceMappingURL but no map was ultimately found. */
+  private declaredMissingMap = new Set<string>();
   debug: boolean;
 
   static async create(
@@ -351,6 +355,9 @@ export class SourceMapper {
 
     const limit = createLimiter(CONCURRENCY);
 
+    // JS files that declared a sourceMappingURL but Phase 1 couldn't load the map.
+    const annotatedNotLoaded = new Set<string>();
+
     // Phase 1: Check sourceMappingURL annotations in JS files (higher priority).
     await Promise.all(
       jsFiles.map(jsPath =>
@@ -383,6 +390,7 @@ export class SourceMapper {
               );
             } catch {
               // Map file doesn't exist or is unreadable; fall through to Phase 2.
+              annotatedNotLoaded.add(jsPath);
             }
           }
         }),
@@ -395,6 +403,14 @@ export class SourceMapper {
         limit(() => processSourceMap(this.infoMap, mapPath, this.debug)),
       ),
     );
+
+    // Any file whose annotation pointed to a missing map and that still has no
+    // entry after Phase 2 is tracked as "declared but missing".
+    for (const jsPath of annotatedNotLoaded) {
+      if (!this.infoMap.has(jsPath)) {
+        this.declaredMissingMap.add(jsPath);
+      }
+    }
   }
 
   private async loadMapContent(
@@ -479,6 +495,9 @@ export class SourceMapper {
         logger.debug(
           `Source map lookup failed: no map found for ${location.file} (normalized: ${inputPath})`,
         );
+      }
+      if (this.declaredMissingMap.has(inputPath)) {
+        return {...location, missingMapFile: true};
       }
       return location;
     }
