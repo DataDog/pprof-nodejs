@@ -290,8 +290,8 @@ describe('SourceMapper.loadDirectory', () => {
 // This test documents both behaviours so a regression would be immediately
 // visible.
 describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => {
-  const BUNDLE_PATH = '/app/dist/bundle.js';
-  const MAP_DIR = '/app/dist';
+  const MAP_DIR = path.resolve('app', 'dist');
+  const BUNDLE_PATH = path.join(MAP_DIR, 'bundle.js');
 
   // Build a source map that places three functions on line 1 of bundle.js at
   // columns 10, 30 and 50, each originating from a different source file.
