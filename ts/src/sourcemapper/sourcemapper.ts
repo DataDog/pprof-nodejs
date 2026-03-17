@@ -372,13 +372,26 @@ export class SourceMapper {
           }
           if (!url) return;
 
-          const INLINE_PREFIX = 'data:application/json;base64,';
-          if (url.startsWith(INLINE_PREFIX)) {
-            const mapContent = Buffer.from(
-              url.slice(INLINE_PREFIX.length),
-              'base64',
-            ).toString();
-            await this.loadMapContent(jsPath, mapContent, path.dirname(jsPath));
+          if (url.startsWith('data:')) {
+            // Inline source map data URL. Handles both:
+            //   data:application/json;base64,<b64>
+            //   data:application/json;charset=utf-8;base64,<b64>
+            //   data:application/json,<urlencoded>  (and other non-base64 forms)
+            const commaIdx = url.indexOf(',');
+            if (commaIdx !== -1) {
+              const meta = url.slice(0, commaIdx);
+              const data = url.slice(commaIdx + 1);
+              const mapContent = meta.endsWith(';base64')
+                ? Buffer.from(data, 'base64').toString()
+                : decodeURIComponent(data);
+              await this.loadMapContent(
+                jsPath,
+                mapContent,
+                path.dirname(jsPath),
+              );
+            }
+            // If the data URL is malformed (no comma), skip silently — not a
+            // missing map file, just an unreadable inline annotation.
           } else {
             const mapPath = path.resolve(path.dirname(jsPath), url);
             try {

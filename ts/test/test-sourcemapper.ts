@@ -302,6 +302,36 @@ describe('SourceMapper.loadDirectory', () => {
     );
   });
 
+  it('does not set missingMapFile for an inline data: URL with charset parameter', async () => {
+    // data:application/json;charset=utf-8;base64,... is a valid inline form but
+    // does not match the old exact INLINE_PREFIX. It must not be treated as a
+    // file path and must not produce a false missingMapFile signal.
+    const mapJson = JSON.stringify({
+      version: 3,
+      file: 'charset.js',
+      sources: ['charset.ts'],
+      names: [],
+      mappings: 'AAAA',
+    });
+    const b64 = Buffer.from(mapJson).toString('base64');
+    const url = `data:application/json;charset=utf-8;base64,${b64}`;
+    write('charset.js', `//# sourceMappingURL=${url}\n`);
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    const jsPath = path.join(tmpDir, 'charset.js');
+    assert.ok(
+      sm.hasMappingInfo(jsPath),
+      'expected mapping to be loaded from charset data: URL',
+    );
+    assert.ok(
+      !sm.mappingInfo({file: jsPath, line: 1, column: 0, name: 'f'})
+        .missingMapFile,
+      'expected missingMapFile to be falsy for an inline charset data: URL',
+    );
+  });
+
   it('does not set missingMapFile when map was found via .map fallback', async () => {
     // JS with annotation pointing to nonexistent path, but a .map file exists
     // alongside it (Phase 2 fallback).
