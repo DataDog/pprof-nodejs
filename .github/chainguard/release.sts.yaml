@@ -1,0 +1,12 @@
+issuer: https://token.actions.githubusercontent.com
+
+subject: repo:DataDog/pprof-nodejs:environment:npm
+
+claim_pattern:
+  event_name: push
+  job_workflow_ref: DataDog/pprof-nodejs/\.github/workflows/release\.yml@refs/heads/v[0-9]+\.x
+  ref: refs/heads/v[0-9]+\.x
+  repository: DataDog/pprof-nodejs
+
+permissions:
+  contents: write

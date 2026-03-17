@@ -20,10 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     permissions:
-      id-token: write  # Required for OIDC
+      id-token: write # Required for OIDC
       contents: write
     steps:
-      - uses: actions/checkout@v2
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/pprof-nodejs
+          policy: self.github.release.push-tags
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ steps.octo-sts.outputs.token }}
       - uses: actions/download-artifact@v4
       - uses: actions/setup-node@v3
         with:
