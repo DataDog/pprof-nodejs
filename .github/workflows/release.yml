@@ -20,10 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     permissions:
-      id-token: write  # Required for OIDC
+      id-token: write # Required for OIDC
       contents: write
     steps:
-      - uses: actions/checkout@v2
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/pprof-nodejs
+          policy: self.github.release.push-tags
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/download-artifact@v4
       - uses: actions/setup-node@v3
         with:
@@ -37,4 +42,4 @@ jobs:
           echo "json=$content" >> $GITHUB_OUTPUT
       - run: |
           git tag v${{ fromJson(steps.pkg.outputs.json).version }}
-          git push origin v${{ fromJson(steps.pkg.outputs.json).version }}
+          git push https://x-access-token:${{ steps.octo-sts.outputs.token }}@github.com/${{ github.repository }}.git v${{ fromJson(steps.pkg.outputs.json).version }}
