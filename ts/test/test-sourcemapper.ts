@@ -271,4 +271,88 @@ describe('SourceMapper.loadDirectory', () => {
       'expected no mapping to be loaded',
     );
   });
+
+  it('sets missingMapFile=true when sourceMappingURL declares a missing map', async () => {
+    write('declared-missing.js', '//# sourceMappingURL=nonexistent.js.map\n');
+    // No declared-missing.js.map written — nothing to fall back to.
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    const jsPath = path.join(tmpDir, 'declared-missing.js');
+    const loc = sm.mappingInfo({file: jsPath, line: 1, column: 0, name: 'foo'});
+    assert.strictEqual(
+      loc.missingMapFile,
+      true,
+      'expected missingMapFile to be true for a file with a declared but missing map',
+    );
+  });
+
+  it('does not set missingMapFile when file has no sourceMappingURL', async () => {
+    write('plain.js', 'console.log("hello");\n');
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    const jsPath = path.join(tmpDir, 'plain.js');
+    const loc = sm.mappingInfo({file: jsPath, line: 1, column: 0, name: 'foo'});
+    assert.ok(
+      !loc.missingMapFile,
+      'expected missingMapFile to be falsy for a file with no sourceMappingURL',
+    );
+  });
+
+  it('does not set missingMapFile for an inline data: URL with charset parameter', async () => {
+    // data:application/json;charset=utf-8;base64,... is a valid inline form but
+    // does not match the old exact INLINE_PREFIX. It must not be treated as a
+    // file path and must not produce a false missingMapFile signal.
+    const mapJson = JSON.stringify({
+      version: 3,
+      file: 'charset.js',
+      sources: ['charset.ts'],
+      names: [],
+      mappings: 'AAAA',
+    });
+    const b64 = Buffer.from(mapJson).toString('base64');
+    const url = `data:application/json;charset=utf-8;base64,${b64}`;
+    write('charset.js', `//# sourceMappingURL=${url}\n`);
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    const jsPath = path.join(tmpDir, 'charset.js');
+    assert.ok(
+      sm.hasMappingInfo(jsPath),
+      'expected mapping to be loaded from charset data: URL',
+    );
+    assert.ok(
+      !sm.mappingInfo({file: jsPath, line: 1, column: 0, name: 'f'})
+        .missingMapFile,
+      'expected missingMapFile to be falsy for an inline charset data: URL',
+    );
+  });
+
+  it('does not set missingMapFile when map was found via .map fallback', async () => {
+    // JS with annotation pointing to nonexistent path, but a .map file exists
+    // alongside it (Phase 2 fallback).
+    const {SourceMapGenerator} = await import('source-map');
+    const gen = new SourceMapGenerator({file: 'fallback.js'});
+    gen.addMapping({
+      source: path.join(tmpDir, 'source.ts'),
+      generated: {line: 1, column: 0},
+      original: {line: 10, column: 0},
+    });
+    write('fallback.js', '//# sourceMappingURL=nowhere.js.map\n');
+    write('fallback.js.map', gen.toString());
+
+    const sm = new SourceMapper();
+    await sm.loadDirectory(tmpDir);
+
+    const jsPath = path.join(tmpDir, 'fallback.js');
+    const loc = sm.mappingInfo({file: jsPath, line: 1, column: 0, name: 'foo'});
+    assert.ok(
+      !loc.missingMapFile,
+      'expected missingMapFile to be falsy when map was found via Phase 2 fallback',
+    );
+  });
 });
