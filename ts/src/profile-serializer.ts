@@ -101,6 +101,8 @@ function serialize<T extends ProfileNode>(
   const functionIdMap = new Map<string, number>();
   const locationIdMap = new Map<string, number>();
 
+  let hasMissingMapFiles = false;
+
   const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
     node: n,
     stack: [],
@@ -131,6 +133,10 @@ function serialize<T extends ProfileNode>(
   profile.function = functions;
   profile.stringTable = stringTable;
 
+  if (hasMissingMapFiles) {
+    profile.comment = [stringTable.dedup('dd:has-missing-map-files')];
+  }
+
   function getLocation(
     node: ProfileNode,
     scriptName: string,
@@ -146,6 +152,9 @@ function serialize<T extends ProfileNode>(
     if (profLoc.line) {
       if (sourceMapper && isGeneratedLocation(profLoc)) {
         profLoc = sourceMapper.mappingInfo(profLoc);
+        if (profLoc.missingMapFile) {
+          hasMissingMapFiles = true;
+        }
       }
     }
     const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.name}`;

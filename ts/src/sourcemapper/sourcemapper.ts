@@ -161,6 +161,8 @@ export interface SourceLocation {
   name?: string;
   line?: number;
   column?: number;
+  /** True when the file declares a sourceMappingURL but the map could not be found. */
+  missingMapFile?: boolean;
 }
 
 /**
@@ -287,6 +289,8 @@ async function processSourceMap(
 
 export class SourceMapper {
   infoMap: Map<string, MapInfoCompiled>;
+  /** JS files that declared a sourceMappingURL but no map was ultimately found. */
+  private declaredMissingMap = new Set<string>();
   debug: boolean;
 
   static async create(
@@ -351,6 +355,9 @@ export class SourceMapper {
 
     const limit = createLimiter(CONCURRENCY);
 
+    // JS files that declared a sourceMappingURL but Phase 1 couldn't load the map.
+    const annotatedNotLoaded = new Set<string>();
+
     // Phase 1: Check sourceMappingURL annotations in JS files (higher priority).
     await Promise.all(
       jsFiles.map(jsPath =>
@@ -365,13 +372,26 @@ export class SourceMapper {
           }
           if (!url) return;
 
-          const INLINE_PREFIX = 'data:application/json;base64,';
-          if (url.startsWith(INLINE_PREFIX)) {
-            const mapContent = Buffer.from(
-              url.slice(INLINE_PREFIX.length),
-              'base64',
-            ).toString();
-            await this.loadMapContent(jsPath, mapContent, path.dirname(jsPath));
+          if (url.startsWith('data:')) {
+            // Inline source map data URL. Handles both:
+            //   data:application/json;base64,<b64>
+            //   data:application/json;charset=utf-8;base64,<b64>
+            //   data:application/json,<urlencoded>  (and other non-base64 forms)
+            const commaIdx = url.indexOf(',');
+            if (commaIdx !== -1) {
+              const meta = url.slice(0, commaIdx);
+              const data = url.slice(commaIdx + 1);
+              const mapContent = meta.endsWith(';base64')
+                ? Buffer.from(data, 'base64').toString()
+                : decodeURIComponent(data);
+              await this.loadMapContent(
+                jsPath,
+                mapContent,
+                path.dirname(jsPath),
+              );
+            }
+            // If the data URL is malformed (no comma), skip silently — not a
+            // missing map file, just an unreadable inline annotation.
           } else {
             const mapPath = path.resolve(path.dirname(jsPath), url);
             try {
@@ -383,6 +403,7 @@ export class SourceMapper {
               );
             } catch {
               // Map file doesn't exist or is unreadable; fall through to Phase 2.
+              annotatedNotLoaded.add(jsPath);
             }
           }
         }),
@@ -395,6 +416,14 @@ export class SourceMapper {
         limit(() => processSourceMap(this.infoMap, mapPath, this.debug)),
       ),
     );
+
+    // Any file whose annotation pointed to a missing map and that still has no
+    // entry after Phase 2 is tracked as "declared but missing".
+    for (const jsPath of annotatedNotLoaded) {
+      if (!this.infoMap.has(jsPath)) {
+        this.declaredMissingMap.add(jsPath);
+      }
+    }
   }
 
   private async loadMapContent(
@@ -479,6 +508,9 @@ export class SourceMapper {
         logger.debug(
           `Source map lookup failed: no map found for ${location.file} (normalized: ${inputPath})`,
         );
+      }
+      if (this.declaredMissingMap.has(inputPath)) {
+        return {...location, missingMapFile: true};
       }
       return location;
     }

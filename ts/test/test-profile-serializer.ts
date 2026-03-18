@@ -238,6 +238,130 @@ describe('profile-serializer', () => {
     });
   });
 
+  describe('missing source map file reporting', () => {
+    let sourceMapper: SourceMapper;
+    let missingJsPath: string;
+
+    before(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const testDir = tmp.dirSync().name;
+      missingJsPath = path.join(testDir, 'missing-map.js');
+      // JS file that declares a sourceMappingURL but the map file doesn't exist.
+      fs.writeFileSync(
+        missingJsPath,
+        '//# sourceMappingURL=nonexistent.js.map\n',
+      );
+      sourceMapper = await SourceMapper.create([testDir]);
+    });
+
+    function makeSingleNodeTimeProfile(scriptName: string) {
+      return {
+        startTime: 0,
+        endTime: 1000000,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [
+            {
+              name: 'foo',
+              scriptName,
+              scriptId: 1,
+              lineNumber: 1,
+              columnNumber: 1,
+              hitCount: 1,
+              children: [],
+            },
+          ],
+        },
+      };
+    }
+
+    function assertHasMissingMapToken(profile: Profile) {
+      const st = profile.stringTable;
+      const tokenId = st.dedup('dd:has-missing-map-files');
+      const comments = profile.comment as number[];
+      assert.ok(
+        Array.isArray(comments) && comments.includes(tokenId),
+        'expected dd:has-missing-map-files token in profile comments',
+      );
+    }
+
+    it('serializeTimeProfile emits missing-map token when a map is declared but absent', () => {
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        sourceMapper,
+      );
+      assertHasMissingMapToken(profile);
+    });
+
+    it('serializeHeapProfile emits missing-map token when a map is declared but absent', () => {
+      // serialize() iterates root.children, so the node with allocations must
+      // be a child of the root passed to serializeHeapProfile.
+      const heapNode = {
+        name: '(root)',
+        scriptName: '',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [],
+        children: [
+          {
+            name: 'foo',
+            scriptName: missingJsPath,
+            scriptId: 1,
+            lineNumber: 1,
+            columnNumber: 1,
+            allocations: [{sizeBytes: 100, count: 1}],
+            children: [],
+          },
+        ],
+      };
+      const profile = serializeHeapProfile(
+        heapNode,
+        0,
+        512 * 1024,
+        undefined,
+        sourceMapper,
+      );
+      assertHasMissingMapToken(profile);
+    });
+
+    it('does not emit missing-map token when no source mapper is used', () => {
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+      );
+      assert.ok(
+        !profile.comment || profile.comment.length === 0,
+        'expected no comments when no source mapper is provided',
+      );
+    });
+
+    it('does not emit missing-map token when all maps are found', () => {
+      const {
+        mapDirPath,
+        v8TimeGeneratedProfile,
+      } = require('./profiles-for-tests');
+      return SourceMapper.create([mapDirPath]).then(sm => {
+        const profile = serializeTimeProfile(v8TimeGeneratedProfile, 1000, sm);
+        assert.ok(
+          !profile.comment || profile.comment.length === 0,
+          'expected no comments when all maps are resolved',
+        );
+      });
+    });
+
+    after(() => {
+      tmp.setGracefulCleanup();
+    });
+  });
+
   describe('source map with column 0 (LineTick simulation)', () => {
     // This tests the LEAST_UPPER_BOUND fallback for when V8's LineTick
     // doesn't provide column information (column=0)
