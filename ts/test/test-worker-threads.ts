@@ -1,4 +1,3 @@
-// eslint-disable-next-line n/no-unsupported-features/node-builtins
 import {execFile} from 'child_process';
 import {promisify} from 'util';
 import {Worker} from 'worker_threads';
