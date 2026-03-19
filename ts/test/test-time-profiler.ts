@@ -16,7 +16,7 @@
 
 import * as sinon from 'sinon';
 import {time, getNativeThreadId} from '../src';
-import {profileV2, stopV2} from '../src/time-profiler';
+import {stop} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
@@ -25,7 +25,6 @@ import {AssertionError} from 'assert';
 import {GenerateTimeLabelsArgs, LabelSet} from '../src/v8-types';
 import {satisfies} from 'semver';
 import {setTimeout as setTimeoutPromise} from 'timers/promises';
-import {fork} from 'child_process';
 
 import assert from 'assert';
 
@@ -440,7 +439,12 @@ describe('Time Profiler', () => {
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
     const timeProfilerStub = {
       start: sinon.stub(),
-      stop: sinon.stub().returns(v8TimeProfile),
+      stopAndCollect: sinon
+        .stub()
+        .callsFake(
+          (_restart: boolean, cb: (p: typeof v8TimeProfile) => unknown) =>
+            cb(v8TimeProfile),
+        ),
       dispose: sinon.stub(),
       v8ProfilerStuckEventLoopDetected: sinon.stub().returns(0),
     };
@@ -475,7 +479,7 @@ describe('Time Profiler', () => {
     it('should be able to restart when stopping', async () => {
       time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
       timeProfilerStub.start.resetHistory();
-      timeProfilerStub.stop.resetHistory();
+      timeProfilerStub.stopAndCollect.resetHistory();
 
       assert.deepEqual(timeProfile, time.stop(true));
       assert.equal(
@@ -485,93 +489,19 @@ describe('Time Profiler', () => {
       );
 
       sinon.assert.notCalled(timeProfilerStub.start);
-      sinon.assert.calledOnce(timeProfilerStub.stop);
+      sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
 
       timeProfilerStub.start.resetHistory();
-      timeProfilerStub.stop.resetHistory();
+      timeProfilerStub.stopAndCollect.resetHistory();
 
       assert.deepEqual(timeProfile, time.stop());
 
       sinon.assert.notCalled(timeProfilerStub.start);
-      sinon.assert.calledOnce(timeProfilerStub.stop);
+      sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
     });
   });
 
-  describe('profileV2', () => {
-    it('should exclude program and idle time', async () => {
-      const profile = await time.profileV2(PROFILE_OPTIONS);
-      assert.ok(profile.stringTable);
-      assert.equal(profile.stringTable.strings!.indexOf('(program)'), -1);
-    });
-
-    it('should preserve line-number root children metadata in lazy view', function () {
-      if (unsupportedPlatform) {
-        this.skip();
-      }
-
-      function hotPath() {
-        const end = hrtime.bigint() + 2_000_000n;
-        while (hrtime.bigint() < end);
-      }
-
-      const profiler = new v8TimeProfiler.TimeProfiler({
-        intervalMicros: 100,
-        durationMillis: 200,
-        lineNumbers: true,
-        withContexts: false,
-        workaroundV8Bug: false,
-        collectCpuTime: false,
-        collectAsyncId: false,
-        useCPED: false,
-        isMainThread: true,
-      });
-
-      profiler.start();
-      try {
-        const deadline = Date.now() + 200;
-        while (Date.now() < deadline) {
-          hotPath();
-        }
-
-        let sawRootChildren = false;
-        let sawChildWithNonRootMetadata = false;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        profiler.stopAndCollect(false, (profile: any) => {
-          const root = profile.topDownRoot as {
-            name: string;
-            scriptName: string;
-            scriptId: number;
-            children: Array<{
-              name: string;
-              scriptName: string;
-              scriptId: number;
-            }>;
-          };
-          const children = root.children;
-
-          sawRootChildren = children.length > 0;
-          sawChildWithNonRootMetadata = children.some(
-            child =>
-              child.name !== root.name ||
-              child.scriptName !== root.scriptName ||
-              child.scriptId !== root.scriptId,
-          );
-          return undefined;
-        });
-
-        assert(sawRootChildren, 'Expected root to have children');
-        assert(
-          sawChildWithNonRootMetadata,
-          'Line-number lazy root children should not collapse to root metadata',
-        );
-      } finally {
-        profiler.dispose();
-      }
-    });
-  });
-
-  describe('profileV2 (w/ stubs)', () => {
+  describe('stop`', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
     const timeProfilerStub = {
@@ -601,7 +531,7 @@ describe('Time Profiler', () => {
 
     it('should profile during duration and finish profiling after duration', async () => {
       let isProfiling = true;
-      void profileV2(PROFILE_OPTIONS).then(() => {
+      void time.profile(PROFILE_OPTIONS).then(() => {
         isProfiling = false;
       });
       await setTimeoutPromise(2 * PROFILE_OPTIONS.durationMillis);
@@ -609,7 +539,7 @@ describe('Time Profiler', () => {
     });
 
     it('should return a profile equal to the expected profile', async () => {
-      const profile = await profileV2(PROFILE_OPTIONS);
+      const profile = await time.profile(PROFILE_OPTIONS);
       assert.deepEqual(timeProfile, profile);
     });
 
@@ -618,7 +548,7 @@ describe('Time Profiler', () => {
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stopAndCollect.resetHistory();
 
-      assert.deepEqual(timeProfile, stopV2(true));
+      assert.deepEqual(timeProfile, stop(true));
       assert.equal(
         time.v8ProfilerStuckEventLoopDetected(),
         0,
@@ -630,7 +560,7 @@ describe('Time Profiler', () => {
       timeProfilerStub.start.resetHistory();
       timeProfilerStub.stopAndCollect.resetHistory();
 
-      assert.deepEqual(timeProfile, stopV2());
+      assert.deepEqual(timeProfile, stop());
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
     });
@@ -641,7 +571,12 @@ describe('Time Profiler', () => {
     const sinonStubs: Array<sinon.SinonStub<any, any>> = [];
     const timeProfilerStub = {
       start: sinon.stub(),
-      stop: sinon.stub().returns(v8TimeProfile),
+      stopAndCollect: sinon
+        .stub()
+        .callsFake(
+          (_restart: boolean, cb: (p: typeof v8TimeProfile) => unknown) =>
+            cb(v8TimeProfile),
+        ),
       dispose: sinon.stub(),
       v8ProfilerStuckEventLoopDetected: sinon.stub().returns(2),
     };
@@ -663,7 +598,7 @@ describe('Time Profiler', () => {
       time.start(PROFILE_OPTIONS);
       time.stop(true);
       sinon.assert.calledTwice(timeProfilerStub.start);
-      sinon.assert.calledTwice(timeProfilerStub.stop);
+      sinon.assert.calledTwice(timeProfilerStub.stopAndCollect);
 
       assert.equal(
         time.v8ProfilerStuckEventLoopDetected(),
@@ -671,16 +606,16 @@ describe('Time Profiler', () => {
         'v8 bug not detected',
       );
       timeProfilerStub.start.resetHistory();
-      timeProfilerStub.stop.resetHistory();
+      timeProfilerStub.stopAndCollect.resetHistory();
 
       time.stop(false);
       sinon.assert.notCalled(timeProfilerStub.start);
-      sinon.assert.calledOnce(timeProfilerStub.stop);
+      sinon.assert.calledOnce(timeProfilerStub.stopAndCollect);
     });
   });
 
   describe('lowCardinalityLabels', () => {
-    it('should handle lowCardinalityLabels parameter in stop function', async function testLowCardinalityLabels() {
+    it('should handle lowCardinalityLabels parameter in stop', async function testLowCardinalityLabels() {
       if (unsupportedPlatform) {
         this.skip();
       }
@@ -762,9 +697,9 @@ describe('Time Profiler', () => {
       let foundHighCardLabel = false;
       const lowCardinalityLabels: Label[] = [];
 
-      profile.sample.forEach(sample => {
+      for (const sample of profile.sample) {
         if (sample.label && sample.label.length > 0) {
-          sample.label.forEach(label => {
+          for (const label of sample.label) {
             const keyStr = profile.stringTable.strings[Number(label.key)];
             const valueStr = profile.stringTable.strings[Number(label.str)];
 
@@ -775,9 +710,9 @@ describe('Time Profiler', () => {
             if (keyStr === highCardLabel) {
               foundHighCardLabel = true;
             }
-          });
+          }
         }
-      });
+      }
 
       assert(foundLowCardLabel, 'Should find low cardinality label in samples');
       assert(
@@ -785,8 +720,7 @@ describe('Time Profiler', () => {
         'Should find high cardinality label in samples',
       );
 
-      // Verify that the lowCardinalityLabels parameter is working correctly
-      // This tests that the stop() function accepts and processes the lowCardinalityLabels parameter
+      // Verify that the lowCardinalityLabels parameter is working correctly.
 
       // Group labels by value and count them
       const labelsByValue = new Map<string, Label[]>();
@@ -862,50 +796,6 @@ describe('Time Profiler', () => {
         );
       });
     });
-  });
-
-  describe('Memory comparison', () => {
-    interface WorkerMemoryResult {
-      initial: number;
-      afterTraversal: number;
-      afterHitCount: number;
-    }
-
-    function measureMemoryInWorker(
-      version: 'v1' | 'v2',
-    ): Promise<WorkerMemoryResult> {
-      return new Promise((resolve, reject) => {
-        const child = fork('./out/test/time-memory-worker.js', [], {
-          execArgv: ['--expose-gc'],
-        });
-
-        child.on('message', (result: WorkerMemoryResult) => {
-          resolve(result);
-          child.kill();
-        });
-
-        child.on('error', reject);
-        child.send(version);
-      });
-    }
-
-    it('stopAndCollect should use less memory than stop when profile is large', async function () {
-      if (unsupportedPlatform) {
-        this.skip();
-      }
-
-      const v1 = await measureMemoryInWorker('v1');
-      const v2 = await measureMemoryInWorker('v2');
-
-      console.log('v1 : ', v1.initial, v1.afterTraversal, v1.afterHitCount);
-      console.log('v2 : ', v2.initial, v2.afterTraversal, v2.afterHitCount);
-
-      // V2 creates almost nothing upfront — lazy wrappers vs full eager tree.
-      assert.ok(
-        v2.initial < v1.initial,
-        `V2 initial should be less: V1=${v1.initial}, V2=${v2.initial}`,
-      );
-    }).timeout(120_000);
   });
 
   describe('getNativeThreadId', () => {
