@@ -157,7 +157,6 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::ProfilerId StartInternal();
   template <typename ProfileBuilder>
   Result StopCore(bool restart, ProfileBuilder&& buildProfile);
-  Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
   Result StopAndCollectImpl(bool restart,
                             v8::Local<v8::Function> callback,
                             v8::Local<v8::Value>& result);
@@ -189,7 +188,6 @@ class WallProfiler : public Nan::ObjectWrap {
 
   static NAN_METHOD(New);
   static NAN_METHOD(Start);
-  static NAN_METHOD(Stop);
   static NAN_METHOD(StopAndCollect);
   static NAN_METHOD(V8ProfilerStuckEventLoopDetected);
   static NAN_METHOD(Dispose);
