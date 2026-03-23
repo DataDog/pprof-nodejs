@@ -34,7 +34,6 @@ export const time = {
   profile: timeProfiler.profile,
   start: timeProfiler.start,
   stop: timeProfiler.stop,
-  profileV2: timeProfiler.profileV2,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
   runWithContext: timeProfiler.runWithContext,
