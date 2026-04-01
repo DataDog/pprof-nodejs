@@ -43,29 +43,6 @@ jobs:
       min-node-version: 18
       skip: 'linux-arm,linux-ia32' # skip building for these platforms
 
-  dev_publish:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    environment: npm
-    permissions:
-      id-token: write # Required for OIDC
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/download-artifact@v4
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm install
-      - id: pkg
-        run: |
-          content=`cat ./package.json | tr '\n' ' '`
-          echo "json=$content" >> $GITHUB_OUTPUT
-      - run: npm version --no-git-tag-version ${{ fromJson(steps.pkg.outputs.json).version }}-$(git rev-parse --short HEAD)+${{ github.run_id }}.${{ github.run_attempt }}
-      - run: npm publish --tag dev
-
   build-successful:
     if: always()
     needs: [build]
