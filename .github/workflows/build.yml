@@ -49,7 +49,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: npm
     permissions:
-      id-token: write
+      id-token: write # Required for OIDC
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/download-artifact@v4
