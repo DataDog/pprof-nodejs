@@ -44,7 +44,7 @@
     "@types/mocha": "^10.0.1",
     "@types/node": "25.5.0",
     "@types/semver": "^7.5.8",
-    "@types/sinon": "^21.0.0",
+    "@types/sinon": "^21.0.1",
     "@types/tmp": "^0.2.3",
     "clang-format": "^1.8.0",
     "codecov": "^3.8.3",
