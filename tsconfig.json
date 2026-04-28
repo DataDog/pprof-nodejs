@@ -5,6 +5,7 @@
     "outDir": "out",
     "target": "es2020",
     "esModuleInterop": true,
+    "types": ["node", "mocha"],
   },
   "include": [
     "ts/**/*.ts"
