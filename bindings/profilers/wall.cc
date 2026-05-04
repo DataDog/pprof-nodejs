@@ -342,7 +342,13 @@ class SignalHandler {
       sigaction(SIGPROF, &sa, nullptr);
     } else {
       installed_ = (sigaction(SIGPROF, &sa, &old_handler_) == 0);
-      old_handler_func_.store(old_handler_.sa_sigaction,
+      auto prev = old_handler_.sa_sigaction;
+      // Refuse to chain to ourselves. If SIGPROF was already pointing at
+      // HandleProfilerSignal when we ran the install (e.g. because another
+      // SIGPROF user restored its own saved disposition — which it had
+      // captured while we were the active handler — after we Restore()'d),
+      // calling prev would loop forever on the next signal.
+      old_handler_func_.store(prev == &HandleProfilerSignal ? nullptr : prev,
                               std::memory_order_relaxed);
     }
   }
