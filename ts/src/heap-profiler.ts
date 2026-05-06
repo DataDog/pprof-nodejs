@@ -33,6 +33,7 @@ import {isMainThread} from 'worker_threads';
 let enabled = false;
 let heapIntervalBytes = 0;
 let heapStackDepth = 0;
+let heapAllocations = false;
 /**
  * Collects a heap profile when heapProfiler is enabled. Otherwise throws
  * an error.
@@ -48,7 +49,7 @@ export function v8Profile<T>(callback: (root: AllocationProfileNode) => T): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
-  return mapAllocationProfile(callback);
+  return mapAllocationProfile(callback, heapAllocations, heapIntervalBytes);
 }
 
 export function convertProfile(
@@ -56,6 +57,7 @@ export function convertProfile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  allocations = heapAllocations,
 ): Profile {
   const startTimeNanos = Date.now() * 1000 * 1000;
   // Add node for external memory usage.
@@ -82,6 +84,7 @@ export function convertProfile(
     ignoreSamplePath,
     sourceMapper,
     generateLabels,
+    allocations,
   );
 }
 
@@ -110,8 +113,13 @@ export function profile(
  *
  * @param intervalBytes - average number of bytes between samples.
  * @param stackDepth - maximum stack depth for samples collected.
+ * @param allocations - include allocation samples collected by major GC.
  */
-export function start(intervalBytes: number, stackDepth: number) {
+export function start(
+  intervalBytes: number,
+  stackDepth: number,
+  allocations = false,
+) {
   if (enabled) {
     throw new Error(
       `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`,
@@ -119,7 +127,8 @@ export function start(intervalBytes: number, stackDepth: number) {
   }
   heapIntervalBytes = intervalBytes;
   heapStackDepth = stackDepth;
-  startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth);
+  heapAllocations = allocations;
+  startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, heapAllocations);
   enabled = true;
 }
 
@@ -128,6 +137,7 @@ export function stop() {
   if (enabled) {
     enabled = false;
     stopSamplingHeapProfiler();
+    heapAllocations = false;
   }
 }
 

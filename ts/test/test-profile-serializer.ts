@@ -23,7 +23,11 @@ import {
 } from '../src/profile-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
-import {TimeProfile, TimeProfileNode} from '../src/v8-types';
+import {
+  AllocationProfileNode,
+  TimeProfile,
+  TimeProfileNode,
+} from '../src/v8-types';
 import {
   anonymousFunctionHeapProfile,
   getAndVerifyPresence,
@@ -200,6 +204,56 @@ describe('profile-serializer', () => {
         512 * 1024,
       );
       assert.deepEqual(heapProfileOut, anonymousFunctionHeapProfile);
+    });
+    it('should emit allocation and in-use values when allocations are enabled', () => {
+      const prof: AllocationProfileNode = {
+        name: '(root)',
+        scriptName: '(root)',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [],
+        children: [
+          {
+            name: 'allocatingFunction',
+            scriptName: 'script1',
+            scriptId: 1,
+            lineNumber: 1,
+            columnNumber: 1,
+            allocations: [
+              {
+                count: 10,
+                sizeBytes: 1000,
+                liveCount: 4,
+                totalCount: 10,
+                liveSizeBytes: 400,
+                totalSizeBytes: 1000,
+              },
+            ],
+            children: [],
+          },
+        ],
+      };
+      const heapProfileOut = serializeHeapProfile(
+        prof,
+        0,
+        512 * 1024,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      const sampleTypeNames = heapProfileOut.sampleType.map(
+        sampleType =>
+          heapProfileOut.stringTable.strings[Number(sampleType.type)],
+      );
+      assert.deepEqual(sampleTypeNames, [
+        'inuse_objects',
+        'alloc_objects',
+        'inuse_space',
+        'alloc_space',
+      ]);
+      assert.deepEqual(heapProfileOut.sample[0].value, [4, 10, 400, 1000]);
     });
   });
 

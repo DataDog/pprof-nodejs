@@ -18,6 +18,7 @@
 #include <node.h>
 #include <v8-internal.h>
 #include <v8-profiler.h>
+#include <v8-version.h>
 #include <cinttypes>
 #include <cstdint>
 #include <limits>
@@ -1274,7 +1275,12 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
           auto wrapObj = reinterpret_cast<Object*>(wrapValue);
           if (wrapObj->InternalFieldCount() > 0) {
             return static_cast<PersistentContextPtr*>(
+#if V8_MAJOR_VERSION >= 14
+                       wrapObj->GetAlignedPointerFromInternalField(
+                           0, v8::kEmbedderDataTypeTagDefault))
+#else
                        wrapObj->GetAlignedPointerFromInternalField(0))
+#endif
                 ->Get();
           }
         }

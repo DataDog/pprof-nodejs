@@ -59,6 +59,10 @@ export interface AllocationProfileNode extends ProfileNode {
 export interface Allocation {
   sizeBytes: number;
   count: number;
+  liveSizeBytes?: number;
+  liveCount?: number;
+  totalSizeBytes?: number;
+  totalCount?: number;
 }
 export interface LabelSet {
   [key: string]: string | number;

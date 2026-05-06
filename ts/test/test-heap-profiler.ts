@@ -53,10 +53,10 @@ function mapToGetterNode(node: AllocationProfileNode): AllocationProfileNode {
 }
 
 describe('HeapProfiler', () => {
-  let startStub: sinon.SinonStub<[number, number], void>;
+  let startStub: sinon.SinonStub<[number, number, boolean?], void>;
   let stopStub: sinon.SinonStub<[], void>;
   let profileStub: sinon.SinonStub<
-    [(root: AllocationProfileNode) => unknown],
+    [(root: AllocationProfileNode) => unknown, boolean?, number?],
     unknown
   >;
   let dateStub: sinon.SinonStub<[], number>;
@@ -190,8 +190,17 @@ describe('HeapProfiler', () => {
       const stackDepth1 = 32;
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
-        startStub.calledWith(intervalBytes1, stackDepth1),
+        startStub.calledWith(intervalBytes1, stackDepth1, false),
         'expected startSamplingHeapProfiler to be called',
+      );
+    });
+    it('should pass allocations to startSamplingHeapProfiler', () => {
+      const intervalBytes1 = 1024 * 512;
+      const stackDepth1 = 32;
+      heapProfiler.start(intervalBytes1, stackDepth1, true);
+      assert.ok(
+        startStub.calledWith(intervalBytes1, stackDepth1, true),
+        'expected startSamplingHeapProfiler to be called with allocations',
       );
     });
     it('should throw error when enabled and started with different parameters', () => {
@@ -199,7 +208,7 @@ describe('HeapProfiler', () => {
       const stackDepth1 = 32;
       heapProfiler.start(intervalBytes1, stackDepth1);
       assert.ok(
-        startStub.calledWith(intervalBytes1, stackDepth1),
+        startStub.calledWith(intervalBytes1, stackDepth1, false),
         'expected startSamplingHeapProfiler to be called',
       );
       startStub.resetHistory();

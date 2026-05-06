@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 // eslint-disable-next-line node/no-missing-require
-const pprof = require('pprof');
+const pprof = require('../../../out/src');
 
 const writeFilePromise = fs.promises.writeFile;
 
@@ -69,14 +69,14 @@ async function collectAndSaveHeapProfile(sourceMapper) {
 async function collectAndSaveProfiles(collectLineNumberTimeProfile) {
   const sourceMapper = await pprof.SourceMapper.create([process.cwd()]);
   collectAndSaveHeapProfile(sourceMapper);
-  collectAndSaveTimeProfile(
-    durationSeconds / 2,
-    sourceMapper,
-    collectLineNumberTimeProfile
-  );
+  // collectAndSaveTimeProfile(
+  //   durationSeconds / 2,
+  //   sourceMapper,
+  //   collectLineNumberTimeProfile
+  // );
 }
 
-const durationSeconds = Number(process.argv.length > 2 ? process.argv[2] : 30);
+const durationSeconds = Number(process.argv.length > 2 ? process.argv[2] : 2);
 const collectLineNumberTimeProfile = Boolean(
   process.argv.length > 3 ? process.argv[3] : false
 );

@@ -18,14 +18,30 @@
 
 #include <nan.h>
 #include <v8-profiler.h>
+#include <cstdint>
+#include <unordered_map>
 
 namespace dd {
+
+struct AllocationProfileNodeStats {
+  uint64_t live_count = 0;
+  uint64_t total_count = 0;
+  uint64_t live_size = 0;
+  uint64_t total_size = 0;
+};
+
+using AllocationProfileSizeStatsMap =
+    std::unordered_map<size_t, AllocationProfileNodeStats>;
+using AllocationProfileNodeStatsMap =
+    std::unordered_map<uint32_t, AllocationProfileSizeStatsMap>;
 
 class AllocationProfileNodeView {
  public:
   static NAN_MODULE_INIT(Init);
 
-  static v8::Local<v8::Object> New(v8::AllocationProfile::Node* node);
+  static v8::Local<v8::Object> New(
+      v8::AllocationProfile::Node* node,
+      const AllocationProfileNodeStatsMap* allocation_stats = nullptr);
 
  private:
   template <typename F>

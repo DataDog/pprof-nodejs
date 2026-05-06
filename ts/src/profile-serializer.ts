@@ -268,6 +268,34 @@ function createAllocationValueType(table: StringTable): ValueType {
   });
 }
 
+function createInUseObjectCountValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('inuse_objects'),
+    unit: table.dedup('count'),
+  });
+}
+
+function createAllocatedObjectCountValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('alloc_objects'),
+    unit: table.dedup('count'),
+  });
+}
+
+function createInUseSpaceValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('inuse_space'),
+    unit: table.dedup('bytes'),
+  });
+}
+
+function createAllocatedSpaceValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('alloc_space'),
+    unit: table.dedup('bytes'),
+  });
+}
+
 export function computeTotalHitCount(root: TimeProfileNode): number {
   return (
     root.hitCount +
@@ -536,6 +564,7 @@ export function serializeHeapProfile(
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  allocations = false,
 ): Profile {
   const appendHeapEntryToSamples: AppendEntryToSamples<
     AllocationProfileNode
@@ -545,9 +574,16 @@ export function serializeHeapProfile(
         ? buildLabels(generateLabels({node: entry.node}), stringTable)
         : [];
       for (const alloc of entry.node.allocations) {
+        const totalCount = alloc.totalCount ?? alloc.count;
+        const totalSizeBytes =
+          alloc.totalSizeBytes ?? alloc.sizeBytes * alloc.count;
+        const liveCount = alloc.liveCount ?? totalCount;
+        const liveSizeBytes = alloc.liveSizeBytes ?? totalSizeBytes;
         const sample = new Sample({
           locationId: entry.stack,
-          value: [alloc.count, alloc.sizeBytes * alloc.count],
+          value: allocations
+            ? [liveCount, totalCount, liveSizeBytes, totalSizeBytes]
+            : [totalCount, totalSizeBytes],
           label: labels,
           // TODO: add tag for allocation size
         });
@@ -557,13 +593,22 @@ export function serializeHeapProfile(
   };
 
   const stringTable = new StringTable();
-  const sampleValueType = createObjectCountValueType(stringTable);
-  const allocationValueType = createAllocationValueType(stringTable);
+  const sampleTypes = allocations
+    ? [
+        createInUseObjectCountValueType(stringTable),
+        createAllocatedObjectCountValueType(stringTable),
+        createInUseSpaceValueType(stringTable),
+        createAllocatedSpaceValueType(stringTable),
+      ]
+    : [
+        createObjectCountValueType(stringTable),
+        createAllocationValueType(stringTable),
+      ];
 
   const profile = {
-    sampleType: [sampleValueType, allocationValueType],
+    sampleType: sampleTypes,
     timeNanos: startTimeNanos,
-    periodType: allocationValueType,
+    periodType: sampleTypes[sampleTypes.length - 1],
     period: intervalBytes,
   };
 

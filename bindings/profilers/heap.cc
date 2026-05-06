@@ -21,6 +21,7 @@
 #include "translate-heap-profile.hh"
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <mutex>
 #include <unordered_set>
@@ -28,9 +29,16 @@
 
 #include <node.h>
 #include <v8-profiler.h>
+#include <v8-version.h>
 #include "allocation-profile-node.hh"
 
 namespace dd {
+
+#if V8_MAJOR_VERSION >= 14
+#define DD_ALLOCATION_SAMPLE_HAS_LIVENESS 1
+#else
+#define DD_ALLOCATION_SAMPLE_HAS_LIVENESS 0
+#endif
 
 // Track which isolates have cleanup hooks registered for heap profiler
 static std::unordered_set<v8::Isolate*> g_heap_profiler_isolates;
@@ -55,6 +63,44 @@ static size_t NearHeapLimit(void* data,
                             size_t initial_heap_limit);
 static void InterruptCallback(v8::Isolate* isolate, void* data);
 static void AsyncCallback(uv_async_t* handle);
+
+static AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
+    const std::vector<v8::AllocationProfile::Sample>& samples,
+    uint64_t sample_interval) {
+  AllocationProfileNodeStatsMap stats_by_node_id;
+  for (const auto& sample : samples) {
+    auto& stats = stats_by_node_id[sample.node_id][sample.size];
+    stats.total_count += 1;
+
+#if DD_ALLOCATION_SAMPLE_HAS_LIVENESS
+    if (sample.is_live) {
+      stats.live_count += 1;
+    }
+#else
+    stats.live_count += 1;
+#endif
+  }
+
+  for (auto& node_stats : stats_by_node_id) {
+    for (auto& size_stats : node_stats.second) {
+      const auto size = size_stats.first;
+      auto& stats = size_stats.second;
+      const auto scale =
+          sample_interval == 0
+              ? 1.0
+              : 1.0 / (1.0 - std::exp(-static_cast<double>(size) /
+                                      static_cast<double>(sample_interval)));
+      stats.live_count = static_cast<uint64_t>(
+          static_cast<double>(stats.live_count) * scale + 0.5);
+      stats.total_count = static_cast<uint64_t>(
+          static_cast<double>(stats.total_count) * scale + 0.5);
+      stats.live_size = stats.live_count * static_cast<uint64_t>(size);
+      stats.total_size = stats.total_count * static_cast<uint64_t>(size);
+    }
+  }
+
+  return stats_by_node_id;
+}
 
 enum CallbackMode {
   kNoCallback = 0,
@@ -453,19 +499,31 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
     }
   }
 
-  if (info.Length() == 2) {
+  if (info.Length() == 2 || info.Length() == 3) {
     if (!info[0]->IsUint32()) {
       return Nan::ThrowTypeError("First argument type must be uint32.");
     }
     if (!info[1]->IsNumber()) {
       return Nan::ThrowTypeError("First argument type must be Integer.");
     }
+    if (info.Length() == 3 && !info[2]->IsBoolean()) {
+      return Nan::ThrowTypeError("Third argument type must be boolean.");
+    }
 
     uint64_t sample_interval = info[0].As<v8::Integer>()->Value();
     int stack_depth = info[1].As<v8::Integer>()->Value();
+    const bool allocations =
+        info.Length() == 3 && info[2].As<v8::Boolean>()->Value();
+    auto flags = v8::HeapProfiler::kSamplingNoFlags;
+    if (allocations) {
+      flags = static_cast<v8::HeapProfiler::SamplingFlags>(
+          v8::HeapProfiler::kSamplingForceGC |
+          v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMinorGC |
+          v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMajorGC);
+    }
 
-    isolate->GetHeapProfiler()->StartSamplingHeapProfiler(sample_interval,
-                                                          stack_depth);
+    isolate->GetHeapProfiler()->StartSamplingHeapProfiler(
+        sample_interval, stack_depth, flags);
   } else {
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler();
   }
@@ -495,6 +553,11 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
   }
   auto isolate = info.GetIsolate();
   auto callback = info[0].As<v8::Function>();
+  const bool allocations = info.Length() >= 2 && info[1]->IsBoolean() &&
+                           info[1].As<v8::Boolean>()->Value();
+  const uint64_t sample_interval = info.Length() >= 3 && info[2]->IsNumber()
+                                       ? info[2].As<v8::Integer>()->Value()
+                                       : 0;
 
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
@@ -503,12 +566,19 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
 
+  AllocationProfileNodeStatsMap allocation_stats;
+  if (allocations) {
+    allocation_stats =
+        BuildAllocationStatsByNodeId(profile->GetSamples(), sample_interval);
+  }
+
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state) {
     state->OnNewProfile();
   }
 
-  auto root = AllocationProfileNodeView::New(profile->GetRootNode());
+  auto root = AllocationProfileNodeView::New(
+      profile->GetRootNode(), allocations ? &allocation_stats : nullptr);
   v8::Local<v8::Value> argv[] = {root};
   auto result =
       Nan::Call(callback, isolate->GetCurrentContext()->Global(), 1, argv);

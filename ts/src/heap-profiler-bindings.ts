@@ -26,10 +26,12 @@ const profiler = findBinding(path.join(__dirname, '..', '..'));
 export function startSamplingHeapProfiler(
   heapIntervalBytes: number,
   heapStackDepth: number,
+  allocations = false,
 ) {
   profiler.heapProfiler.startSamplingHeapProfiler(
     heapIntervalBytes,
     heapStackDepth,
+    allocations,
   );
 }
 
@@ -39,8 +41,14 @@ export function stopSamplingHeapProfiler() {
 
 export function mapAllocationProfile<T>(
   callback: (root: AllocationProfileNode) => T,
+  allocations = false,
+  heapIntervalBytes = 0,
 ): T {
-  return profiler.heapProfiler.mapAllocationProfile(callback);
+  return profiler.heapProfiler.mapAllocationProfile(
+    callback,
+    allocations,
+    heapIntervalBytes,
+  );
 }
 
 export type NearHeapLimitCallback = (profile: AllocationProfileNode) => void;
