@@ -313,15 +313,19 @@ namespace {
 #if DD_WALL_USE_SIGPROF
 class SignalHandler {
  public:
-  // Returns true on success; false if the previous SIGPROF disposition was
-  // already &HandleProfilerSignal, in which case we cannot chain to v8's
+  // Returns true on success; false if Install() failed, either because
+  // sigaction itself failed or because the previous SIGPROF disposition was
+  // already &HandleProfilerSignal (in which case we cannot chain to v8's
   // sampler and the caller should surface the failure rather than silently
-  // produce empty profiles.
+  // produce empty profiles). On failure use_count_ is left unchanged, so
+  // the caller must NOT balance with DecreaseUseCount().
   static bool IncreaseUseCount() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!Install()) {
+      return false;
+    }
     ++use_count_;
-    // Always reinstall the signal handler
-    return Install();
+    return true;
   }
 
   static void DecreaseUseCount() {
@@ -346,19 +350,22 @@ class SignalHandler {
       sigaction(SIGPROF, &sa, nullptr);
       return true;
     }
-    installed_ = (sigaction(SIGPROF, &sa, &old_handler_) == 0);
-    auto prev = old_handler_.sa_sigaction;
-    if (prev == &HandleProfilerSignal) {
+    struct sigaction prev;
+    if (sigaction(SIGPROF, &sa, &prev) != 0) {
+      return false;
+    }
+    if (prev.sa_sigaction == &HandleProfilerSignal) {
       // SIGPROF was already pointing at HandleProfilerSignal when we ran
       // the install (e.g. another SIGPROF user restored its own saved
       // disposition — which it had captured while we were the active
       // handler — after we Restore()'d). Chaining to prev would loop
       // forever on the next signal, so refuse. Sampling won't work in
       // this state because we can't reach v8's SIGPROF sampler.
-      old_handler_func_.store(nullptr, std::memory_order_relaxed);
       return false;
     }
-    old_handler_func_.store(prev, std::memory_order_relaxed);
+    old_handler_ = prev;
+    old_handler_func_.store(prev.sa_sigaction, std::memory_order_relaxed);
+    installed_ = true;
     return true;
   }
 
@@ -874,6 +881,11 @@ Result WallProfiler::StartImpl() {
   }
 
   if (auto res = StartInternal(); !res.success) {
+    // StartInternal may have left v8 cpu profiling running and (if
+    // CreateV8CpuProfiler succeeded) we hold a cpuProfiler_, a g_profilers
+    // entry, and possibly GC pro/epilogue callbacks. Tear them all down so
+    // the caller doesn't observe a half-initialized profiler.
+    Dispose(isolate, true);
     return res;
   }
 
@@ -907,15 +919,17 @@ Result WallProfiler::StartInternal() {
   // reinstall sighandler on each new upload period
   if (withContexts_ || workaroundV8Bug_) {
     if (!SignalHandler::IncreaseUseCount()) {
-      // SIGPROF was already pointing at HandleProfilerSignal at the moment we
-      // installed (with installed_ == false), so chaining would loop. Without
-      // a working chain, v8's sampler can't fire and we'd silently produce
-      // empty profiles — surface a startup error instead.
-      cpuProfiler_->Stop(profileId_);
+      // SIGPROF was already pointing at HandleProfilerSignal at install
+      // time (with installed_ == false), so chaining would loop, or
+      // sigaction itself failed. Without a working chain, v8's sampler
+      // can't fire and we'd silently produce empty profiles — surface a
+      // startup error so the caller can roll back. The just-started v8
+      // cpu profile is left running; the caller is expected to Dispose
+      // the cpuProfiler_, which stops all running profiles.
       return Result{
-          "Cannot start wall profiler: SIGPROF disposition was already "
-          "&HandleProfilerSignal at install time. This typically means "
-          "more than one copy of @datadog/pprof is loaded in the process."};
+          "Cannot start wall profiler: failed to install SIGPROF handler. "
+          "This typically means more than one copy of @datadog/pprof is "
+          "loaded in the process."};
     }
     fields_[kSampleCount] = 0;
   }
