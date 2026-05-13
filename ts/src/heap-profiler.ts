@@ -60,7 +60,7 @@ export function v8Profile(): AllocationProfileNode {
  * @returns <T> converted profile
  */
 export function v8ProfileV2<T>(
-  callback: (root: AllocationProfileNode) => T
+  callback: (root: AllocationProfileNode) => T,
 ): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
@@ -78,13 +78,13 @@ export function v8ProfileV2<T>(
 export function profile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction
+  generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
   return convertProfile(
     v8Profile(),
     ignoreSamplePath,
     sourceMapper,
-    generateLabels
+    generateLabels,
   );
 }
 

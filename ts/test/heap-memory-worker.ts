@@ -10,8 +10,8 @@ if (!gc) {
 const keepAlive: object[] = [];
 
 // Create many unique functions via new Function() to produce a large profile tree.
-function createAllocatorFunctions(count: number): Function[] {
-  const fns: Function[] = [];
+function createAllocatorFunctions(count: number): Array<() => void> {
+  const fns: Array<() => void> = [];
   for (let i = 0; i < count; i++) {
     const fn = new Function(
       'keepAlive',
@@ -22,15 +22,15 @@ function createAllocatorFunctions(count: number): Function[] {
           data${i}: new Array(64).fill('${'x'.repeat(16)}'),
         });
       }
-    `
-    );
+    `,
+    ) as (arr: object[]) => void;
     fns.push(() => fn(keepAlive));
   }
   return fns;
 }
 
-function createDeepChain(depth: number): Function[] {
-  const fns: Function[] = [];
+function createDeepChain(depth: number): Array<(arr: object[]) => void> {
+  const fns: Array<(arr: object[]) => void> = [];
   for (let i = depth - 1; i >= 0; i--) {
     const next = i < depth - 1 ? fns[fns.length - 1] : null;
     const fn = new Function(
@@ -41,7 +41,7 @@ function createDeepChain(depth: number): Function[] {
         keepAlive.push({ arr${i}: new Array(32).fill(j) });
       }
       if (next) next(keepAlive, null);
-    `
+    `,
     ) as (arr: object[], next: unknown) => void;
     fns.push((arr: object[]) => fn(arr, next));
   }

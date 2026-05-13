@@ -16,6 +16,7 @@
 
 import {setTimeout} from 'timers/promises';
 
+import {Profile} from 'pprof-format';
 import {
   serializeTimeProfile,
   GARBAGE_COLLECTION_FUNCTION_NAME,
@@ -119,7 +120,9 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   useCPED: false,
 };
 
-export async function profile(options: TimeProfilerOptions = {}) {
+export async function profile(
+  options: TimeProfilerOptions = {},
+): Promise<Profile> {
   options = {...DEFAULT_OPTIONS, ...options};
   start(options);
   await setTimeout(options.durationMillis!);
@@ -159,7 +162,7 @@ export function stop(
   restart = false,
   generateLabels?: GenerateTimeLabelsFunction,
   lowCardinalityLabels?: string[],
-) {
+): Profile {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
   }
