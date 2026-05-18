@@ -322,11 +322,19 @@ namespace {
 #if DD_WALL_USE_SIGPROF
 class SignalHandler {
  public:
-  static void IncreaseUseCount() {
+  // Returns true on success; false if Install() failed, either because
+  // sigaction itself failed or because the previous SIGPROF disposition was
+  // already &HandleProfilerSignal (in which case we cannot chain to v8's
+  // sampler and the caller should surface the failure rather than silently
+  // produce empty profiles). On failure use_count_ is left unchanged, so
+  // the caller must NOT balance with DecreaseUseCount().
+  static bool IncreaseUseCount() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!Install()) {
+      return false;
+    }
     ++use_count_;
-    // Always reinstall the signal handler
-    Install();
+    return true;
   }
 
   static void DecreaseUseCount() {
@@ -342,18 +350,32 @@ class SignalHandler {
   }
 
  private:
-  static void Install() {
+  static bool Install() {
     struct sigaction sa;
     sa.sa_sigaction = &HandleProfilerSignal;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
     if (installed_) {
       sigaction(SIGPROF, &sa, nullptr);
-    } else {
-      installed_ = (sigaction(SIGPROF, &sa, &old_handler_) == 0);
-      old_handler_func_.store(old_handler_.sa_sigaction,
-                              std::memory_order_relaxed);
+      return true;
     }
+    struct sigaction prev;
+    if (sigaction(SIGPROF, &sa, &prev) != 0) {
+      return false;
+    }
+    if (prev.sa_sigaction == &HandleProfilerSignal) {
+      // SIGPROF was already pointing at HandleProfilerSignal when we ran
+      // the install (e.g. another SIGPROF user restored its own saved
+      // disposition — which it had captured while we were the active
+      // handler — after we Restore()'d). Chaining to prev would loop
+      // forever on the next signal, so refuse. Sampling won't work in
+      // this state because we can't reach v8's SIGPROF sampler.
+      return false;
+    }
+    old_handler_ = prev;
+    old_handler_func_.store(prev.sa_sigaction, std::memory_order_relaxed);
+    installed_ = true;
+    return true;
   }
 
   static void Restore() {
@@ -422,7 +444,7 @@ void SignalHandler::HandleProfilerSignal(int sig,
 #else
 class SignalHandler {
  public:
-  static void IncreaseUseCount() {}
+  static bool IncreaseUseCount() { return true; }
   static void DecreaseUseCount() {}
 };
 #endif
@@ -867,7 +889,14 @@ Result WallProfiler::StartImpl() {
     isolate->AddGCEpilogueCallback(&GCEpilogueCallback, this);
   }
 
-  profileId_ = StartInternal();
+  if (auto res = StartInternal(); !res.success) {
+    // StartInternal may have left v8 cpu profiling running and (if
+    // CreateV8CpuProfiler succeeded) we hold a cpuProfiler_, a g_profilers
+    // entry, and possibly GC pro/epilogue callbacks. Tear them all down so
+    // the caller doesn't observe a half-initialized profiler.
+    Dispose(isolate, true);
+    return res;
+  }
 
   auto collectionMode = withContexts_
                             ? CollectionMode::kCollectContexts
@@ -879,7 +908,7 @@ Result WallProfiler::StartImpl() {
   return {};
 }
 
-v8::ProfilerId WallProfiler::StartInternal() {
+Result WallProfiler::StartInternal() {
   // Reuse the same names for the profiles because strings used for profile
   // names are not released until v8::CpuProfiler object is destroyed.
   // https://github.com/nodejs/node/blob/b53c51995380b1f8d642297d848cab6010d2909c/deps/v8/src/profiler/profile-generator.h#L516
@@ -894,10 +923,23 @@ v8::ProfilerId WallProfiler::StartInternal() {
       // (ie. starting or deopt samples) have been processed, and therefore if
       // SamplingEventsProcessor::ProcessOneSample is stuck on vm_ticks_buffer_.
       withContexts_ || detectV8Bug_);
+  profileId_ = result.id;
 
   // reinstall sighandler on each new upload period
   if (withContexts_ || workaroundV8Bug_) {
-    SignalHandler::IncreaseUseCount();
+    if (!SignalHandler::IncreaseUseCount()) {
+      // SIGPROF was already pointing at HandleProfilerSignal at install
+      // time (with installed_ == false), so chaining would loop, or
+      // sigaction itself failed. Without a working chain, v8's sampler
+      // can't fire and we'd silently produce empty profiles — surface a
+      // startup error so the caller can roll back. The just-started v8
+      // cpu profile is left running; the caller is expected to Dispose
+      // the cpuProfiler_, which stops all running profiles.
+      return Result{
+          "Cannot start wall profiler: failed to install SIGPROF handler. "
+          "This typically means more than one copy of @datadog/pprof is "
+          "loaded in the process."};
+    }
     fields_[kSampleCount] = 0;
   }
 
@@ -926,7 +968,7 @@ v8::ProfilerId WallProfiler::StartInternal() {
     cpuProfiler_->CollectSample(v8::Isolate::GetCurrent());
   }
 
-  return result.id;
+  return {};
 }
 
 // stopAndCollect(restart, callback): callback result
@@ -1011,7 +1053,10 @@ Result WallProfiler::StopCore(bool restart, ProfileBuilder&& buildProfile) {
   auto startProcessCpuTime = startProcessCpuTime_;
 
   if (restart) {
-    profileId_ = StartInternal();
+    // In restart mode the signal handler is already installed (use_count_
+    // stayed positive across the cycle), so the install can never go through
+    // the else-branch in Install() and IncreaseUseCount() can't fail.
+    StartInternal();
     // record call count to wait for next signal at the end of function
     callCount = noCollectCallCount_.load(std::memory_order_relaxed);
     std::atomic_signal_fence(std::memory_order_acquire);

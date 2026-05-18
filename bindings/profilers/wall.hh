@@ -154,7 +154,7 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::Local<v8::Object> GetMetrics(v8::Isolate*);
 
   Result StartImpl();
-  v8::ProfilerId StartInternal();
+  Result StartInternal();
   template <typename ProfileBuilder>
   Result StopCore(bool restart, ProfileBuilder&& buildProfile);
   Result StopAndCollectImpl(bool restart,
