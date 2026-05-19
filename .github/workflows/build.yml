@@ -10,7 +10,7 @@ jobs:
   asan:
     strategy:
       matrix:
-        version: [18, 20, 22, 24, 25]
+        version: [18, 20, 22, 24, 25, 26]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -23,7 +23,7 @@ jobs:
   valgrind:
     strategy:
       matrix:
-        version: [18, 20, 22, 24, 25]
+        version: [18, 20, 22, 24, 25, 26]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -42,27 +42,7 @@ jobs:
       cache: true # enable caching of dependencies based on lockfile
       min-node-version: 18
       skip: 'linux-arm,linux-ia32' # skip building for these platforms
-
-  dev_publish:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    environment: npm
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/download-artifact@v4
-      - uses: actions/setup-node@v3
-        with:
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm install
-      - id: pkg
-        run: |
-          content=`cat ./package.json | tr '\n' ' '`
-          echo "json=$content" >> $GITHUB_OUTPUT
-      - run: npm version --no-git-tag-version ${{ fromJson(steps.pkg.outputs.json).version }}-$(git rev-parse --short HEAD)+${{ github.run_id }}.${{ github.run_attempt }}
-      - run: npm publish --tag dev
+      node-gyp-build-major: 4
 
   build-successful:
     if: always()

@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "5.14.1",
+  "version": "5.14.2",
   "description": "pprof support for Node.js",
   "repository": {
     "type": "git",
@@ -36,30 +36,30 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "node-gyp-build": "<4.0",
+    "node-gyp-build": "<5.0",
     "pprof-format": "^2.2.1",
     "source-map": "^0.7.4"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.1",
-    "@types/node": "25.5.0",
+    "@types/node": "25.7.0",
     "@types/semver": "^7.5.8",
-    "@types/sinon": "^21.0.0",
+    "@types/sinon": "^21.0.1",
     "@types/tmp": "^0.2.3",
     "clang-format": "^1.8.0",
     "codecov": "^3.8.3",
     "deep-copy": "^1.4.2",
-    "eslint-plugin-n": "^17.24.0",
+    "eslint-plugin-n": "^18.0.1",
     "gts": "^7.0.0",
     "js-green-licenses": "^4.0.0",
     "mocha": "^11.7.5",
-    "nan": "^2.26.2",
+    "nan": "^2.27.0",
     "nyc": "^18.0.0",
-    "semver": "^7.7.4",
-    "sinon": "^21.0.3",
+    "semver": "^7.8.0",
+    "sinon": "^22.0.0",
     "source-map-support": "^0.5.21",
     "tmp": "0.2.5",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   },
   "files": [
     "out/src",
