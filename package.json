@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "5.14.3",
+  "version": "5.14.4",
   "description": "pprof support for Node.js",
   "repository": {
     "type": "git",
@@ -36,13 +36,13 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "node-gyp-build": "<5.0",
+    "node-gyp-build": "^4.8.4",
     "pprof-format": "^2.2.1",
     "source-map": "^0.7.4"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.1",
-    "@types/node": "25.7.0",
+    "@types/node": "25.9.1",
     "@types/semver": "^7.5.8",
     "@types/sinon": "^21.0.1",
     "@types/tmp": "^0.2.3",
