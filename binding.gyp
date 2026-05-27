@@ -21,7 +21,8 @@
                             "bindings/binding.cc",
                             "bindings/map-get.cc",
                             "bindings/allocation-profile.cc",
-                            "bindings/allocation-profile-node.cc"
+                            "bindings/allocation-profile-node.cc",
+                            "bindings/otel-thread-ctx.cc"
                         ],
                         "include_dirs": [
                             "bindings",
@@ -46,7 +47,8 @@
                             "bindings/translate-time-profile.cc",
                             "bindings/test/binding.cc",
                             "bindings/allocation-profile.cc",
-                            "bindings/allocation-profile-node.cc"
+                            "bindings/allocation-profile-node.cc",
+                            "bindings/otel-thread-ctx.cc"
                         ],
                         "include_dirs": [
                             "bindings",
@@ -81,6 +83,15 @@
                     ["-Wno-deprecated-declarations"],
                 "cflags_cc!": ["-std=gnu++14", "-std=gnu++1y", "-std=gnu++20" ],
                 "cflags_cc": ["-std=gnu++2a"],
+                "conditions": [
+                    # -mtls-dialect=gnu2 forces TLSDESC on x86_64 so the
+                    # otel_thread_ctx_nodejs_v1 symbol is reachable per the
+                    # OTEP-4947 spec. On arm64 TLSDESC is the only dynamic
+                    # model, so no flag is needed there.
+                    ['target_arch == "x64"', {
+                        "cflags": ["-mtls-dialect=gnu2"],
+                    }],
+                ],
                 }
             ],
             ["OS == 'mac'",
