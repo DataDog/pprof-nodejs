@@ -99,7 +99,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextBuffer contexts_;
 
   ~WallProfiler();
-  void Dispose(v8::Isolate* isolate, bool removeFromMap);
+  void Dispose(v8::Isolate* isolate);
 
   // A new CPU profiler object will be created each time profiling is started
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.

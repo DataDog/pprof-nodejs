@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 #include "map-get.hh"
@@ -188,134 +189,62 @@ int detectV8Bug(const v8::CpuProfile* profile) {
   return 0;
 }
 
-class ProtectedProfilerMap {
+// Per-thread active profiler, used by the SIGPROF handler. In Node's threading
+// model each V8 isolate is pinned to a single thread, so a thread-local pointer
+// is equivalent to "the profiler for the isolate that received this signal".
+//
+// This addon is dlopen'd, which complicates async-signal-safety of TLS:
+// - On glibc, the default general-dynamic model compiles each access into a
+//   __tls_get_addr call that can take loader locks. We force initial-exec so
+//   each access is a single segment-relative load; glibc reserves a surplus
+//   DTV slot pool for dlopen'd libraries to make this work.
+// - On musl, all TLS for dlopen'd DSOs is pre-allocated at load time across
+//   every live thread, so general-dynamic access is already lock-free and
+//   signal-safe — and musl refuses initial-exec for dlopen'd objects, so we
+//   must NOT request it there.
+// - macOS and Windows use unrelated TLS mechanisms; neither needs the
+//   attribute (and on Windows SIGPROF isn't even compiled in).
+#if defined(__GLIBC__)
+__attribute__((tls_model("initial-exec")))
+#endif
+thread_local WallProfiler* t_active_profiler = nullptr;
+
+// Registry of all live profilers across threads. Used by the JS worker threads
+// to publish CPU consumed by them, and by the main thread to gather that data
+// while building a profile.
+class ActiveProfilers {
  public:
-  WallProfiler* GetProfiler(const Isolate* isolate) const {
-    // Prevent updates to profiler map by atomically setting g_profilers to null
-    auto prof_map = profilers_.exchange(nullptr, std::memory_order_acq_rel);
-    if (!prof_map) {
-      return nullptr;
-    }
-    auto prof_it = prof_map->find(isolate);
-    WallProfiler* profiler = nullptr;
-    if (prof_it != prof_map->end()) {
-      profiler = prof_it->second;
-    }
-    // Allow updates
-    profilers_.store(prof_map, std::memory_order_release);
-    return profiler;
+  void Add(WallProfiler* profiler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    profilers_.insert(profiler);
   }
 
-  WallProfiler* RemoveProfilerForIsolate(const v8::Isolate* isolate) {
-    return UpdateProfilers([isolate](auto map) {
-      auto it = map->find(isolate);
-      if (it != map->end()) {
-        auto profiler = it->second;
-        map->erase(it);
-        return profiler;
-      }
-      return static_cast<WallProfiler*>(nullptr);
-    });
-  }
-
-  bool RemoveProfiler(const v8::Isolate* isolate, WallProfiler* profiler) {
-    return UpdateProfilers([isolate, profiler, this](auto map) {
-      terminatedWorkersCpu_ += profiler->GetAndResetThreadCpu();
-
-      if (isolate != nullptr) {
-        auto it = map->find(isolate);
-        if (it != map->end() && it->second == profiler) {
-          map->erase(it);
-          return true;
-        }
-      } else {
-        auto it = std::find_if(map->begin(), map->end(), [profiler](auto& x) {
-          return x.second == profiler;
-        });
-        if (it != map->end()) {
-          map->erase(it);
-          return true;
-        }
-      }
-      return false;
-    });
-  }
-
-  bool AddProfiler(const v8::Isolate* isolate, WallProfiler* profiler) {
-    return UpdateProfilers([isolate, profiler](auto map) {
-      return map->emplace(isolate, profiler).second;
-    });
+  bool Remove(WallProfiler* profiler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = profilers_.find(profiler);
+    if (it == profilers_.end()) return false;
+    terminatedWorkersCpu_ += profiler->GetAndResetThreadCpu();
+    profilers_.erase(it);
+    return true;
   }
 
   ThreadCpuClock::duration GatherTotalWorkerCpuAndReset() {
-    std::lock_guard<std::mutex> lock(update_mutex_);
-
-    // Retrieve CPU of workers that have terminated during the last period
+    std::lock_guard<std::mutex> lock(mutex_);
     ThreadCpuClock::duration totalWorkerCpu = terminatedWorkersCpu_;
-
-    // Reset terminated workers cpu to 0
     terminatedWorkersCpu_ = ThreadCpuClock::duration::zero();
-
-    if (!init_) {
-      return totalWorkerCpu;
+    for (auto* profiler : profilers_) {
+      totalWorkerCpu += profiler->GetAndResetThreadCpu();
     }
-
-    auto currProfilers = profilers_.load(std::memory_order_acquire);
-    // Wait until sighandler is done using the map
-    while (!currProfilers) {
-      currProfilers = profilers_.load(std::memory_order_relaxed);
-    }
-
-    // Gather CPU of workers that are still running
-    for (auto& profiler : *currProfilers) {
-      totalWorkerCpu += profiler.second->GetAndResetThreadCpu();
-    }
-
     return totalWorkerCpu;
   }
 
  private:
-  using ProfilerMap = std::unordered_map<const Isolate*, WallProfiler*>;
-
-  template <typename F>
-  std::invoke_result_t<F, ProfilerMap*> UpdateProfilers(F updateFn) {
-    // use mutex to prevent two isolates of updating profilers concurrently
-    std::lock_guard<std::mutex> lock(update_mutex_);
-
-    if (!init_) {
-      profilers_.store(new ProfilerMap(), std::memory_order_release);
-      init_ = true;
-    }
-
-    auto currProfilers = profilers_.load(std::memory_order_acquire);
-    // Wait until sighandler is done using the map
-    while (!currProfilers) {
-      currProfilers = profilers_.load(std::memory_order_relaxed);
-    }
-    auto newProfilers = new ProfilerMap(*currProfilers);
-    auto res = updateFn(newProfilers);
-    // Wait until sighandler is done using the map before installing a new map.
-    // The value in profilers is either nullptr or currProfilers.
-    for (;;) {
-      ProfilerMap* currProfilers2 = currProfilers;
-      if (profilers_.compare_exchange_weak(
-              currProfilers2, newProfilers, std::memory_order_acq_rel)) {
-        break;
-      }
-    }
-    delete currProfilers;
-    return res;
-  }
-
-  mutable std::atomic<ProfilerMap*> profilers_;
-  std::mutex update_mutex_;
-  bool init_ = false;
-  std::chrono::nanoseconds terminatedWorkersCpu_{};
+  std::mutex mutex_;
+  std::unordered_set<WallProfiler*> profilers_;
+  ThreadCpuClock::duration terminatedWorkersCpu_{};
 };
 
-using ProfilerMap = std::unordered_map<Isolate*, WallProfiler*>;
-
-static ProtectedProfilerMap g_profilers;
+static ActiveProfilers g_profilers;
 
 namespace {
 
@@ -393,11 +322,10 @@ void SignalHandler::HandleProfilerSignal(int sig,
   if (!isolate) {
     return;
   }
-  WallProfiler* prof = g_profilers.GetProfiler(isolate);
+  WallProfiler* prof = t_active_profiler;
 
   if (!prof) {
-    // no profiler found for current isolate, just pass the signal to old
-    // handler
+    // no profiler active on this thread, just pass the signal to old handler
     old_handler(sig, info, context);
     return;
   }
@@ -465,9 +393,12 @@ static int64_t GetV8ToEpochOffset() {
 }
 
 void WallProfiler::CleanupHook(void* data) {
-  auto isolate = static_cast<Isolate*>(data);
-  auto prof = g_profilers.RemoveProfilerForIsolate(isolate);
+  // Environment cleanup hooks run on the isolate's own thread, so the
+  // thread-local pointer for this thread (if any) refers to the profiler that
+  // belongs to this isolate.
+  auto prof = t_active_profiler;
   if (prof) {
+    auto isolate = static_cast<Isolate*>(data);
     prof->Cleanup(isolate);
     delete prof;
   }
@@ -481,7 +412,7 @@ void WallProfiler::Cleanup(Isolate* isolate) {
     if (interceptSignal()) {
       SignalHandler::DecreaseUseCount();
     }
-    Dispose(isolate, false);
+    Dispose(isolate);
   }
 }
 
@@ -678,6 +609,14 @@ WallProfiler::WallProfiler(std::chrono::microseconds samplingPeriod,
 }
 
 WallProfiler::~WallProfiler() {
+  // Defensive: under normal use Dispose() has already cleared both of these,
+  // but if a profiler is destroyed without going through Dispose we still must
+  // not leave dangling pointers.
+  if (t_active_profiler == this) {
+    t_active_profiler = nullptr;
+  }
+  g_profilers.Remove(this);
+
   // Delete all live contexts
   for (auto ptr : liveContextPtrs_) {
     ptr->Detach();  // so it doesn't invalidate our iterator
@@ -686,13 +625,14 @@ WallProfiler::~WallProfiler() {
   liveContextPtrs_.clear();
 }
 
-void WallProfiler::Dispose(Isolate* isolate, bool removeFromMap) {
+void WallProfiler::Dispose(Isolate* isolate) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
     cpuProfiler_ = nullptr;
 
-    if (removeFromMap) {
-      g_profilers.RemoveProfiler(isolate, this);
+    g_profilers.Remove(this);
+    if (t_active_profiler == this) {
+      t_active_profiler = nullptr;
     }
 
     if (collectAsyncId_ || useCPED()) {
@@ -1096,7 +1036,7 @@ Result WallProfiler::StopCore(bool restart, ProfileBuilder&& buildProfile) {
   v8_profile->Delete();
 
   if (!restart) {
-    Dispose(v8::Isolate::GetCurrent(), true);
+    Dispose(v8::Isolate::GetCurrent());
   } else if (workaroundV8Bug_) {
     waitForSignal(callCount + 1);
     std::atomic_signal_fence(std::memory_order_release);
@@ -1197,14 +1137,13 @@ NAN_MODULE_INIT(WallProfiler::Init) {
 
 v8::CpuProfiler* WallProfiler::CreateV8CpuProfiler() {
   if (cpuProfiler_ == nullptr) {
-    v8::Isolate* isolate = v8::Isolate::GetCurrent();
-
-    bool inserted = g_profilers.AddProfiler(isolate, this);
-
-    if (!inserted) {
-      // refuse to create a new profiler if one is already active
+    if (t_active_profiler != nullptr) {
+      // refuse to create a new profiler if one is already active on this thread
       return nullptr;
     }
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    g_profilers.Add(this);
+    t_active_profiler = this;
     cpuProfiler_ = v8::CpuProfiler::New(isolate);
     cpuProfiler_->SetSamplingInterval(
         std::chrono::microseconds(samplingPeriod_).count());
