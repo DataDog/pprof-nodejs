@@ -192,10 +192,26 @@ int detectV8Bug(const v8::CpuProfile* profile) {
 // Per-thread active profiler, used by the SIGPROF handler. In Node's threading
 // model each V8 isolate is pinned to a single thread, so a thread-local pointer
 // is equivalent to "the profiler for the isolate that received this signal".
+//
+// This addon is dlopen'd, which complicates async-signal-safety of TLS:
+// - On glibc, the default general-dynamic model compiles each access into a
+//   __tls_get_addr call that can take loader locks. We force initial-exec so
+//   each access is a single segment-relative load; glibc reserves a surplus
+//   DTV slot pool for dlopen'd libraries to make this work.
+// - On musl, all TLS for dlopen'd DSOs is pre-allocated at load time across
+//   every live thread, so general-dynamic access is already lock-free and
+//   signal-safe — and musl refuses initial-exec for dlopen'd objects, so we
+//   must NOT request it there.
+// - macOS and Windows use unrelated TLS mechanisms; neither needs the
+//   attribute (and on Windows SIGPROF isn't even compiled in).
+#if defined(__GLIBC__)
+__attribute__((tls_model("initial-exec")))
+#endif
 thread_local WallProfiler* t_active_profiler = nullptr;
 
-// Registry of all live profilers across threads. Used only by the main thread
-// to gather CPU consumed by JS worker threads while building a profile.
+// Registry of all live profilers across threads. Used by the JS worker threads
+// to publish CPU consumed by them, and by the main thread to gather that data
+// while building a profile.
 class ActiveProfilers {
  public:
   void Add(WallProfiler* profiler) {
