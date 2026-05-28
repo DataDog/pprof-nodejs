@@ -302,7 +302,12 @@ void SignalHandler::HandleProfilerSignal(int sig,
   if (!old_handler) {
     return;
   }
+  auto isolate = Isolate::GetCurrent();
+  if (!isolate) {
+    return;
+  }
   WallProfiler* prof = t_active_profiler;
+
   if (!prof) {
     // no profiler active on this thread, just pass the signal to old handler
     old_handler(sig, info, context);
@@ -324,10 +329,6 @@ void SignalHandler::HandleProfilerSignal(int sig,
   auto time_from = Now();
   old_handler(sig, info, context);
   auto time_to = Now();
-  auto isolate = Isolate::GetCurrent();
-  if (!isolate) {
-    return;
-  }
   prof->PushContext(time_from, time_to, cpu_time, isolate);
 }
 #else
