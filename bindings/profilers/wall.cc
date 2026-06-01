@@ -108,22 +108,29 @@ void SetContextPtr(ContextPtr& contextPtr,
 
 class PersistentContextPtr : public node::ObjectWrap {
   ContextPtr context;
-  std::unordered_set<PersistentContextPtr*>* live;
+  // Back-pointer to the WallProfiler that created this PCP. Guaranteed to be
+  // a valid pointer whenever pprev_ != nullptr — ~WallProfiler nulls pprev_
+  // on every live PCP before any of them can outlive the profiler.
+  WallProfiler* const profiler_;
+  // Intrusive doubly-linked list, threaded through the WallProfiler's
+  // liveContextPtrHead_. pprev_ is the address of the pointer that currently
+  // references this PCP — &profiler_->liveContextPtrHead_ if we're the head,
+  // &predecessor->next_ otherwise — so by construction *pprev_ == this.
+  // Storing the address-of (rather than the predecessor itself) lets ~PCP
+  // unlink without a head/non-head branch: *pprev_ = next_ followed by
+  // next_->pprev_ = pprev_ does both ends in one shape. pprev_ == nullptr
+  // is the "detached" sentinel — set by ~WallProfiler before deleting us,
+  // so our unlink becomes a no-op and we don't poke at the dying profiler's
+  // memory.
+  PersistentContextPtr** pprev_ = nullptr;
+  PersistentContextPtr* next_ = nullptr;
+
+  friend class WallProfiler;
 
  public:
-  PersistentContextPtr(std::unordered_set<PersistentContextPtr*>* live,
-                       Local<Object> wrap)
-      : live(live) {
-    Wrap(wrap);
-  }
+  PersistentContextPtr(WallProfiler* profiler, Local<Object> wrap);
 
-  void Detach() { live = nullptr; }
-
-  ~PersistentContextPtr() {
-    if (live) {
-      live->erase(this);
-    }
-  }
+  ~PersistentContextPtr();
 
   void Set(Isolate* isolate, const Local<Value>& value) {
     SetContextPtr(context, isolate, value);
@@ -135,6 +142,32 @@ class PersistentContextPtr : public node::ObjectWrap {
     return node::ObjectWrap::Unwrap<PersistentContextPtr>(wrap);
   }
 };
+
+PersistentContextPtr::PersistentContextPtr(WallProfiler* profiler,
+                                           Local<Object> wrap)
+    : profiler_(profiler) {
+  Wrap(wrap);
+  // Splice ourselves at the head of profiler's live list.
+  auto** headSlot = profiler->liveContextPtrHeadSlot();
+  next_ = *headSlot;
+  pprev_ = headSlot;
+  if (next_ != nullptr) next_->pprev_ = &next_;
+  *headSlot = this;
+  profiler->recordContextCreate();
+}
+
+PersistentContextPtr::~PersistentContextPtr() {
+  // pprev_ != nullptr means we're still on profiler_'s live list, which means
+  // ~WallProfiler hasn't run yet and the back-pointer is still valid. Unlink
+  // and release the slot in one step. If pprev_ is null, ~WallProfiler is
+  // taking care of us so don't do anything (don't unlink us, and leave its
+  // counter alone as it's about to go away).
+  if (pprev_ != nullptr) {
+    *pprev_ = next_;
+    if (next_ != nullptr) next_->pprev_ = pprev_;
+    profiler_->recordContextRelease();
+  }
+}
 
 inline void* GetAlignedPointerFromInternalField(Object* object, int index) {
 #if NODE_MAJOR_VERSION >= 26
@@ -617,12 +650,21 @@ WallProfiler::~WallProfiler() {
   }
   g_profilers.Remove(this);
 
-  // Delete all live contexts
-  for (auto ptr : liveContextPtrs_) {
-    ptr->Detach();  // so it doesn't invalidate our iterator
-    delete ptr;
+  // Delete every PCP still live in the CPED map. ~PCP would normally unlink
+  // itself via pprev_/next_, but we're tearing down the list we point into —
+  // so null pprev_ first to signal "already detached" and let ~PCP skip the
+  // unlink. (~ObjectWrap will still clear V8's weak callback during delete,
+  // so the dangling internal-field pointer in the wrap object stays inert
+  // even if V8 later GCs the wrap.)
+  auto* p = liveContextPtrHead_;
+  while (p != nullptr) {
+    auto* next = p->next_;
+    p->pprev_ = nullptr;
+    p->next_ = nullptr;
+    delete p;
+    p = next;
   }
-  liveContextPtrs_.clear();
+  liveContextPtrHead_ = nullptr;
 }
 
 void WallProfiler::Dispose(Isolate* isolate) {
@@ -1207,8 +1249,7 @@ Local<Object> WallProfiler::CreateContextHolder(Isolate* isolate,
   // for easy access from JS when cpedKey is an ALS, it can do
   // als.getStore()?.[0];
   wrap->Set(v8Ctx, 0, value).Check();
-  auto contextPtr = new PersistentContextPtr(&liveContextPtrs_, wrap);
-  liveContextPtrs_.insert(contextPtr);
+  auto contextPtr = new PersistentContextPtr(this, wrap);
   contextPtr->Set(isolate, value);
   return wrap;
 }
@@ -1273,7 +1314,7 @@ ContextPtr WallProfiler::GetContextPtr(Isolate* isolate) {
 }
 
 Local<Object> WallProfiler::GetMetrics(Isolate* isolate) {
-  auto usedAsyncContextCount = liveContextPtrs_.size();
+  auto usedAsyncContextCount = liveContextPtrCount();
   auto context = isolate->GetCurrentContext();
   auto metrics = Object::New(isolate);
   metrics
