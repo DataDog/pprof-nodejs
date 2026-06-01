@@ -69,7 +69,11 @@ class WallProfiler : public Nan::ObjectWrap {
   // decremented in its destructor when it unlinks from the list (i.e., while
   // the profiler is still alive). PCPs cleaned up by ~WallProfiler's walk
   // skip the decrement — the counter is going away with the profiler anyway.
-  std::atomic<size_t> liveContextPtrCount_{0};
+  //
+  // Not atomic: all accesses happen on the isolate's thread (construction via
+  // SetContext from JS, destruction via V8 weak callbacks on the same thread,
+  // metric reads from JS). Signal handler does not touch this field.
+  size_t liveContextPtrCount_ = 0;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
@@ -191,15 +195,9 @@ class WallProfiler : public Nan::ObjectWrap {
     return &liveContextPtrHead_;
   }
 
-  void recordContextCreate() {
-    liveContextPtrCount_.fetch_add(1, std::memory_order_relaxed);
-  }
-  void recordContextRelease() {
-    liveContextPtrCount_.fetch_sub(1, std::memory_order_relaxed);
-  }
-  size_t liveContextPtrCount() const {
-    return liveContextPtrCount_.load(std::memory_order_relaxed);
-  }
+  void recordContextCreate() { ++liveContextPtrCount_; }
+  void recordContextRelease() { --liveContextPtrCount_; }
+  size_t liveContextPtrCount() const { return liveContextPtrCount_; }
 
   int v8ProfilerStuckEventLoopDetected() const {
     return v8ProfilerStuckEventLoopDetected_;
