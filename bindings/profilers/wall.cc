@@ -113,11 +113,15 @@ class PersistentContextPtr : public node::ObjectWrap {
   // on every live PCP before any of them can outlive the profiler.
   WallProfiler* const profiler_;
   // Intrusive doubly-linked list, threaded through the WallProfiler's
-  // liveContextPtrHead_. pprev_ points at the slot that currently holds *this
-  // (either the head field or another PCP's next_), enabling O(1) unlink in
-  // ~PCP. pprev_ == nullptr is the "detached" sentinel — set by
-  // ~WallProfiler before deleting us, so our unlink becomes a no-op and we
-  // don't poke at the dying profiler's memory.
+  // liveContextPtrHead_. pprev_ is the address of the pointer that currently
+  // references this PCP — &profiler_->liveContextPtrHead_ if we're the head,
+  // &predecessor->next_ otherwise — so by construction *pprev_ == this.
+  // Storing the address-of (rather than the predecessor itself) lets ~PCP
+  // unlink without a head/non-head branch: *pprev_ = next_ followed by
+  // next_->pprev_ = pprev_ does both ends in one shape. pprev_ == nullptr
+  // is the "detached" sentinel — set by ~WallProfiler before deleting us,
+  // so our unlink becomes a no-op and we don't poke at the dying profiler's
+  // memory.
   PersistentContextPtr** pprev_ = nullptr;
   PersistentContextPtr* next_ = nullptr;
 
