@@ -27,13 +27,14 @@ import {serializeHeapProfile} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
+  AllocationProfileNodeWithStats,
   GenerateAllocationLabelsFunction,
 } from './v8-types';
 import {isMainThread} from 'worker_threads';
 
 let enabled = false;
 let heapIntervalBytes = 0;
-let heapStackDepth = 0;
+let startedWithAllocations = false;
 
 /*
  * Collects a heap profile when heapProfiler is enabled. Otherwise throws
@@ -41,7 +42,9 @@ let heapStackDepth = 0;
  *
  * Data is returned in V8 allocation profile format.
  */
-export function v8Profile(): AllocationProfileNode {
+export function v8Profile():
+  | AllocationProfileNode
+  | AllocationProfileNodeWithStats {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
   }
@@ -56,14 +59,19 @@ export function v8Profile(): AllocationProfileNode {
  * WARNING: Nodes in the tree are only valid during the callback. Do not store
  * references to them. The memory is freed when the callback returns.
  *
- * @param callback - function to convert the heap profiler to a converted profile
- * @returns <T> converted profile
+ * @param callback - function to convert the heap profiler to a converted
+  |file
+ * @returns <T> c
+ verted profile
  */
 export function v8ProfileV2<T>(
   callback: (root: AllocationProfileNode) => T,
 ): T {
   if (!enabled) {
     throw new Error('Heap profiler is not enabled.');
+  }
+  if (startedWithAllocations) {
+    throw new Error('profileV2 does not support allocation mode.');
   }
   return mapAllocationProfile(callback);
 }
@@ -89,26 +97,49 @@ export function profile(
 }
 
 export function convertProfile(
-  rootNode: AllocationProfileNode,
+  rootNode: AllocationProfileNode | AllocationProfileNodeWithStats,
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
+  const allocations = startedWithAllocations;
   const startTimeNanos = Date.now() * 1000 * 1000;
   // Add node for external memory usage.
   // Current type definitions do not have external.
   // TODO: remove any once type definition is updated to include external.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const {external}: {external: number} = process.memoryUsage() as any;
-  let root: AllocationProfileNode;
+  let root: AllocationProfileNode | AllocationProfileNodeWithStats;
   if (external > 0) {
-    const externalNode: AllocationProfileNode = {
-      name: '(external)',
-      scriptName: '',
-      children: [],
-      allocations: [{sizeBytes: external, count: 1}],
-    };
-    root = {...rootNode, children: [...rootNode.children, externalNode]};
+    if (allocations) {
+      const externalNode: AllocationProfileNodeWithStats = {
+        name: '(external)',
+        scriptName: '',
+        children: [],
+        allocations: [
+          {
+            sizeBytes: external,
+            count: 1,
+            allocObjects: 1,
+            allocSpaceBytes: external,
+          },
+        ],
+      };
+      const allocationRoot = rootNode as AllocationProfileNodeWithStats;
+      root = {
+        ...allocationRoot,
+        children: [...allocationRoot.children, externalNode],
+      };
+    } else {
+      const externalNode: AllocationProfileNode = {
+        name: '(external)',
+        scriptName: '',
+        children: [],
+        allocations: [{sizeBytes: external, count: 1}],
+      };
+      const heapRoot = rootNode as AllocationProfileNode;
+      root = {...heapRoot, children: [...heapRoot.children, externalNode]};
+    }
   } else {
     root = rootNode;
   }
@@ -119,6 +150,7 @@ export function convertProfile(
     ignoreSamplePath,
     sourceMapper,
     generateLabels,
+    allocations,
   );
 }
 
@@ -147,16 +179,24 @@ export function profileV2(
  *
  * @param intervalBytes - average number of bytes between samples.
  * @param stackDepth - maximum stack depth for samples collected.
+ * @param allocations - include total allocation samples in the profile.
+ *   When true, each call to `profile()` forces a full GC (via
+ *   v8::HeapProfiler::kSamplingForceGC) to classify sampled objects as
+ *   live/dead, which adds a measurable pause. Requires Node.js >= 26.
  */
-export function start(intervalBytes: number, stackDepth: number) {
+export function start(
+  intervalBytes: number,
+  stackDepth: number,
+  allocations = false,
+) {
   if (enabled) {
     throw new Error(
       `Heap profiler is already started  with intervalBytes ${heapIntervalBytes} and stackDepth ${stackDepth}`,
     );
   }
   heapIntervalBytes = intervalBytes;
-  heapStackDepth = stackDepth;
-  startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth);
+  startedWithAllocations = allocations;
+  startSamplingHeapProfiler(intervalBytes, stackDepth, allocations);
   enabled = true;
 }
 
@@ -164,6 +204,7 @@ export function start(intervalBytes: number, stackDepth: number) {
 export function stop() {
   if (enabled) {
     enabled = false;
+    startedWithAllocations = false;
     stopSamplingHeapProfiler();
   }
 }

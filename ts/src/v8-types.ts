@@ -60,6 +60,16 @@ export interface Allocation {
   sizeBytes: number;
   count: number;
 }
+
+export interface AllocationWithStats extends Allocation {
+  allocObjects?: number;
+  allocSpaceBytes?: number;
+}
+
+export interface AllocationProfileNodeWithStats extends ProfileNode {
+  allocations: AllocationWithStats[];
+  children: AllocationProfileNodeWithStats[];
+}
 export interface LabelSet {
   [key: string]: string | number;
 }

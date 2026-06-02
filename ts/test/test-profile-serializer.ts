@@ -23,7 +23,11 @@ import {
 } from '../src/profile-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
-import {TimeProfile, TimeProfileNode} from '../src/v8-types';
+import {
+  AllocationProfileNodeWithStats,
+  TimeProfile,
+  TimeProfileNode,
+} from '../src/v8-types';
 import {
   anonymousFunctionHeapProfile,
   getAndVerifyPresence,
@@ -200,6 +204,91 @@ describe('profile-serializer', () => {
         512 * 1024,
       );
       assert.deepEqual(heapProfileOut, anonymousFunctionHeapProfile);
+    });
+    it('should emit in-use and allocation values when allocations are enabled', () => {
+      const prof: AllocationProfileNodeWithStats = {
+        name: '(root)',
+        scriptName: '(root)',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        allocations: [],
+        children: [
+          {
+            name: 'allocatingFunction',
+            scriptName: 'script1',
+            scriptId: 1,
+            lineNumber: 1,
+            columnNumber: 1,
+            allocations: [
+              {
+                count: 4,
+                sizeBytes: 400,
+                allocObjects: 10,
+                allocSpaceBytes: 1000,
+              },
+            ],
+            children: [],
+          },
+        ],
+      };
+      const heapProfileOut = serializeHeapProfile(
+        prof,
+        0,
+        512 * 1024,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      const sampleTypeNames = heapProfileOut.sampleType.map(
+        sampleType =>
+          heapProfileOut.stringTable.strings[Number(sampleType.type)],
+      );
+      assert.deepEqual(sampleTypeNames, [
+        'inuse_objects',
+        'alloc_objects',
+        'inuse_space',
+        'alloc_space',
+      ]);
+      assert.deepEqual(heapProfileOut.sample[0].value, [4, 10, 400, 1000]);
+    });
+
+    it('should throw when allocation values are missing in allocation mode', () => {
+      assert.throws(
+        () => {
+          serializeHeapProfile(
+            {
+              name: '(root)',
+              scriptName: '(root)',
+              scriptId: 0,
+              lineNumber: 0,
+              columnNumber: 0,
+              allocations: [],
+              children: [
+                {
+                  name: 'allocatingFunction',
+                  scriptName: 'script1',
+                  scriptId: 1,
+                  lineNumber: 1,
+                  columnNumber: 1,
+                  allocations: [{count: 4, sizeBytes: 400}],
+                  children: [],
+                },
+              ],
+            },
+            0,
+            512 * 1024,
+            undefined,
+            undefined,
+            undefined,
+            true,
+          );
+        },
+        (err: Error) => {
+          return err.message === 'Allocation profile is missing allocObjects.';
+        },
+      );
     });
   });
 
