@@ -58,8 +58,8 @@ void TestBuildAllocationStatsByNodeId(Tap& t) {
   t.equal(node1_size100.live_count, static_cast<uint64_t>(3));
   t.equal(node1_size100.live_size, static_cast<uint64_t>(300));
 #else
-  t.equal(node1_size100.live_count, static_cast<uint64_t>(0));
-  t.equal(node1_size100.live_size, static_cast<uint64_t>(0));
+  t.equal(node1_size100.live_count, static_cast<uint64_t>(5));
+  t.equal(node1_size100.live_size, static_cast<uint64_t>(500));
 #endif
 
   const auto& node1_size50 = stats_by_node_id.at(1).at(50);

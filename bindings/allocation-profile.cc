@@ -52,10 +52,13 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     stats.total_count += sample.count;
 
 #if NODE_MAJOR_VERSION >= 26
-    if (sample.is_live) {
+    const bool live = sample.is_live;
+#else
+    constexpr bool live = true;
+#endif
+    if (live) {
       stats.live_count += sample.count;
     }
-#endif
   }
 
   for (auto& node_stats : stats_by_node_id) {

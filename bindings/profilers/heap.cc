@@ -90,6 +90,9 @@ struct HeapProfilerState {
   }
 
   void InstallNearHeapLimitCallback() {
+    if (callbackInstalled) {
+      return;
+    }
     if (isolate) {
       isolate->AddNearHeapLimitCallback(&NearHeapLimit, nullptr);
       callbackInstalled = true;
@@ -109,8 +112,10 @@ struct HeapProfilerState {
 
   void OnNewProfile() {
     profile.reset();
-    if (!callbackInstalled) {
-      // Reinstall NearHeapLimit callback if it was removed before
+    // Only (re)install the NearHeapLimit callback when OOM monitoring is
+    // configured. Otherwise a plain start()+profile() flow would silently
+    // register a callback that the user never asked for.
+    if (max_heap_extension_count > 0) {
       InstallNearHeapLimitCallback();
     }
   }
@@ -489,8 +494,11 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
 
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler(
         sample_interval, stack_depth, flags);
-  } else {
+  } else if (info.Length() == 0) {
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler();
+  } else {
+    return Nan::ThrowTypeError(
+        "StartSamplingHeapProfiler must have 0, 2, or 3 arguments.");
   }
 
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
@@ -521,15 +529,15 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
 // getAllocationProfile(): AllocationProfileNode
 NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   auto isolate = info.GetIsolate();
+  // state is guaranteed non-null when GetAllocationProfile returns a profile:
+  // state is populated by StartSamplingHeapProfiler and cleared by
+  // StopSamplingHeapProfiler, mirroring the V8 profiler's own lifecycle.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
   if (!profile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
-  }
-  if (!state) {
-    state = std::make_shared<HeapProfilerState>(isolate);
   }
   const bool allocations = state->allocations;
   v8::AllocationProfile::Node* root = profile->GetRootNode();
@@ -550,6 +558,9 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
   }
   auto isolate = info.GetIsolate();
   auto callback = info[0].As<v8::Function>();
+  // state is guaranteed non-null when GetAllocationProfile returns a profile:
+  // state is populated by StartSamplingHeapProfiler and cleared by
+  // StopSamplingHeapProfiler, mirroring the V8 profiler's own lifecycle.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state && state->allocations) {
     return Nan::ThrowError(
@@ -561,9 +572,6 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
 
   if (!profile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
-  }
-  if (!state) {
-    state = std::make_shared<HeapProfilerState>(isolate);
   }
 
   state->OnNewProfile();
@@ -606,6 +614,10 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
 
   auto isolate = v8::Isolate::GetCurrent();
 
+  // Reuse existing state if present so sample_interval/allocations set by
+  // StartSamplingHeapProfiler survive. Only OOM-owned fields are reset below.
+  // callbackInstalled is intentionally left alone — InstallNearHeapLimitCallback
+  // below is idempotent.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (!state) {
     state = std::make_shared<HeapProfilerState>(isolate);
