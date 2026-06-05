@@ -27,10 +27,10 @@
 namespace dd {
 
 struct AllocationProfileNodeStats {
-  uint64_t live_count = 0;
-  uint64_t total_count = 0;
-  uint64_t live_size = 0;
-  uint64_t total_size = 0;
+  uint64_t inuse_objects = 0;
+  uint64_t alloc_objects = 0;
+  uint64_t inuse_space_bytes = 0;
+  uint64_t alloc_space_bytes = 0;
 };
 
 using AllocationProfileSizeStatsMap =
@@ -42,6 +42,7 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     const std::vector<v8::AllocationProfile::Sample>& samples);
 
 v8::Local<v8::Array> TranslateAllocationStats(
+    v8::Isolate* isolate,
     const AllocationProfileSizeStatsMap* allocation_stats);
 
 }  // namespace dd

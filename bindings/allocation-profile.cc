@@ -25,21 +25,20 @@ using namespace v8;
 namespace dd {
 namespace {
 Local<Object> CreateAllocationObject(Isolate* isolate,
-                                     size_t size,
                                      const AllocationProfileNodeStats& stats) {
   Local<Object> alloc_obj = Object::New(isolate);
   Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "sizeBytes"),
-           Number::New(isolate, static_cast<double>(stats.live_size)));
+           String::NewFromUtf8Literal(isolate, "inuseObjects"),
+           Number::New(isolate, static_cast<double>(stats.inuse_objects)));
   Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "count"),
-           Number::New(isolate, static_cast<double>(stats.live_count)));
-  Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "allocSpaceBytes"),
-           Number::New(isolate, static_cast<double>(stats.total_size)));
+           String::NewFromUtf8Literal(isolate, "inuseSpaceBytes"),
+           Number::New(isolate, static_cast<double>(stats.inuse_space_bytes)));
   Nan::Set(alloc_obj,
            String::NewFromUtf8Literal(isolate, "allocObjects"),
-           Number::New(isolate, static_cast<double>(stats.total_count)));
+           Number::New(isolate, static_cast<double>(stats.alloc_objects)));
+  Nan::Set(alloc_obj,
+           String::NewFromUtf8Literal(isolate, "allocSpaceBytes"),
+           Number::New(isolate, static_cast<double>(stats.alloc_space_bytes)));
   return alloc_obj;
 }
 }  // namespace
@@ -49,7 +48,7 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
   AllocationProfileNodeStatsMap stats_by_node_id;
   for (const auto& sample : samples) {
     auto& stats = stats_by_node_id[sample.node_id][sample.size];
-    stats.total_count += sample.count;
+    stats.alloc_objects += sample.count;
 
 #if NODE_MAJOR_VERSION >= 26
     const bool live = sample.is_live;
@@ -57,7 +56,7 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     constexpr bool live = true;
 #endif
     if (live) {
-      stats.live_count += sample.count;
+      stats.inuse_objects += sample.count;
     }
   }
 
@@ -65,8 +64,10 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     for (auto& size_stats : node_stats.second) {
       const auto size = size_stats.first;
       auto& stats = size_stats.second;
-      stats.live_size = stats.live_count * static_cast<uint64_t>(size);
-      stats.total_size = stats.total_count * static_cast<uint64_t>(size);
+      stats.inuse_space_bytes =
+          stats.inuse_objects * static_cast<uint64_t>(size);
+      stats.alloc_space_bytes =
+          stats.alloc_objects * static_cast<uint64_t>(size);
     }
   }
 
@@ -74,8 +75,8 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
 }
 
 Local<Array> TranslateAllocationStats(
+    Isolate* isolate,
     const AllocationProfileSizeStatsMap* allocation_stats) {
-  auto* isolate = Isolate::GetCurrent();
   auto context = isolate->GetCurrentContext();
 
   if (!allocation_stats || allocation_stats->empty()) {
@@ -93,7 +94,7 @@ Local<Array> TranslateAllocationStats(
   for (size_t i = 0; i < sizes.size(); i++) {
     const auto size = sizes[i];
     const auto& stats = allocation_stats->at(size);
-    arr->Set(context, i, CreateAllocationObject(isolate, size, stats)).Check();
+    arr->Set(context, i, CreateAllocationObject(isolate, stats)).Check();
   }
 
   return arr;

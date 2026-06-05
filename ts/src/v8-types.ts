@@ -61,9 +61,11 @@ export interface Allocation {
   count: number;
 }
 
-export interface AllocationWithStats extends Allocation {
-  allocObjects?: number;
-  allocSpaceBytes?: number;
+export interface AllocationWithStats {
+  inuseObjects: number;
+  inuseSpaceBytes: number;
+  allocObjects: number;
+  allocSpaceBytes: number;
 }
 
 export interface AllocationProfileNodeWithStats extends ProfileNode {

@@ -61,8 +61,7 @@ export function v8Profile():
  *
  * @param callback - function to convert the heap profiler to a converted
   |file
- * @returns <T> c
- verted profile
+ * @returns <T> converted profile
  */
 export function v8ProfileV2<T>(
   callback: (root: AllocationProfileNode) => T,
@@ -118,8 +117,8 @@ export function convertProfile(
         children: [],
         allocations: [
           {
-            sizeBytes: external,
-            count: 1,
+            inuseObjects: 1,
+            inuseSpaceBytes: external,
             allocObjects: 1,
             allocSpaceBytes: external,
           },

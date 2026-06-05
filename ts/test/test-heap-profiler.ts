@@ -45,8 +45,8 @@ function withAllocationStats(
   return {
     ...node,
     allocations: node.allocations.map(alloc => ({
-      count: alloc.count,
-      sizeBytes: alloc.sizeBytes * alloc.count,
+      inuseObjects: alloc.count,
+      inuseSpaceBytes: alloc.sizeBytes * alloc.count,
       allocObjects: alloc.count,
       allocSpaceBytes: alloc.sizeBytes * alloc.count,
     })),
@@ -70,8 +70,8 @@ const v8AllocationProfile: AllocationProfileNodeWithStats = {
       columnNumber: 1,
       allocations: [
         {
-          count: 4,
-          sizeBytes: 400,
+          inuseObjects: 4,
+          inuseSpaceBytes: 400,
           allocObjects: 10,
           allocSpaceBytes: 1000,
         },

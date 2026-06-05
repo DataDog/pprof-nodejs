@@ -529,9 +529,6 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
 // getAllocationProfile(): AllocationProfileNode
 NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   auto isolate = info.GetIsolate();
-  // state is guaranteed non-null when GetAllocationProfile returns a profile:
-  // state is populated by StartSamplingHeapProfiler and cleared by
-  // StopSamplingHeapProfiler, mirroring the V8 profiler's own lifecycle.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
   std::unique_ptr<v8::AllocationProfile> profile(
@@ -558,9 +555,6 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
   }
   auto isolate = info.GetIsolate();
   auto callback = info[0].As<v8::Function>();
-  // state is guaranteed non-null when GetAllocationProfile returns a profile:
-  // state is populated by StartSamplingHeapProfiler and cleared by
-  // StopSamplingHeapProfiler, mirroring the V8 profiler's own lifecycle.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (state && state->allocations) {
     return Nan::ThrowError(

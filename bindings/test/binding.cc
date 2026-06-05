@@ -52,23 +52,23 @@ void TestBuildAllocationStatsByNodeId(Tap& t) {
   t.equal(stats_by_node_id.size(), static_cast<size_t>(2));
 
   const auto& node1_size100 = stats_by_node_id.at(1).at(100);
-  t.equal(node1_size100.total_count, static_cast<uint64_t>(5));
-  t.equal(node1_size100.total_size, static_cast<uint64_t>(500));
+  t.equal(node1_size100.alloc_objects, static_cast<uint64_t>(5));
+  t.equal(node1_size100.alloc_space_bytes, static_cast<uint64_t>(500));
 #if NODE_MAJOR_VERSION >= 26
-  t.equal(node1_size100.live_count, static_cast<uint64_t>(3));
-  t.equal(node1_size100.live_size, static_cast<uint64_t>(300));
+  t.equal(node1_size100.inuse_objects, static_cast<uint64_t>(3));
+  t.equal(node1_size100.inuse_space_bytes, static_cast<uint64_t>(300));
 #else
-  t.equal(node1_size100.live_count, static_cast<uint64_t>(5));
-  t.equal(node1_size100.live_size, static_cast<uint64_t>(500));
+  t.equal(node1_size100.inuse_objects, static_cast<uint64_t>(5));
+  t.equal(node1_size100.inuse_space_bytes, static_cast<uint64_t>(500));
 #endif
 
   const auto& node1_size50 = stats_by_node_id.at(1).at(50);
-  t.equal(node1_size50.total_count, static_cast<uint64_t>(5));
-  t.equal(node1_size50.total_size, static_cast<uint64_t>(250));
+  t.equal(node1_size50.alloc_objects, static_cast<uint64_t>(5));
+  t.equal(node1_size50.alloc_space_bytes, static_cast<uint64_t>(250));
 
   const auto& node2_size100 = stats_by_node_id.at(2).at(100);
-  t.equal(node2_size100.total_count, static_cast<uint64_t>(7));
-  t.equal(node2_size100.total_size, static_cast<uint64_t>(700));
+  t.equal(node2_size100.alloc_objects, static_cast<uint64_t>(7));
+  t.equal(node2_size100.alloc_space_bytes, static_cast<uint64_t>(700));
 }
 }  // namespace
 

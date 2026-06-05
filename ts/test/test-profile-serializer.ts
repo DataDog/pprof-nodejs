@@ -25,6 +25,7 @@ import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
 import {
   AllocationProfileNodeWithStats,
+  AllocationWithStats,
   TimeProfile,
   TimeProfileNode,
 } from '../src/v8-types';
@@ -222,8 +223,8 @@ describe('profile-serializer', () => {
             columnNumber: 1,
             allocations: [
               {
-                count: 4,
-                sizeBytes: 400,
+                inuseObjects: 4,
+                inuseSpaceBytes: 400,
                 allocObjects: 10,
                 allocSpaceBytes: 1000,
               },
@@ -272,7 +273,13 @@ describe('profile-serializer', () => {
                   scriptId: 1,
                   lineNumber: 1,
                   columnNumber: 1,
-                  allocations: [{count: 4, sizeBytes: 400}],
+                  allocations: [
+                    {
+                      inuseObjects: 4,
+                      inuseSpaceBytes: 400,
+                      // allocObjects/allocSpaceBytes intentionally missing
+                    } as AllocationWithStats,
+                  ],
                   children: [],
                 },
               ],

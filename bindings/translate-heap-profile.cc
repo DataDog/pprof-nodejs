@@ -81,6 +81,7 @@ class HeapProfileTranslator : ProfileTranslator {
 
     auto node_stats = allocation_stats->find(node->node_id);
     v8::Local<v8::Array> allocations = TranslateAllocationStats(
+        isolate,
         node_stats == allocation_stats->end() ? nullptr : &node_stats->second);
 
     return CreateNode(node->name,

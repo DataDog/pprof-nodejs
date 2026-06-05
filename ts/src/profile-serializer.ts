@@ -609,25 +609,26 @@ export function serializeHeapProfile(
           continue;
         }
 
-        // Allocation mode reuses count/sizeBytes for in-use values and adds
-        // total allocation counters.
-        const allocationStats = alloc as AllocationWithStats;
+        const stats = alloc as AllocationWithStats;
+        const inuseObjects = requireAllocationStat(
+          stats.inuseObjects,
+          'inuseObjects',
+        );
+        const inuseSpaceBytes = requireAllocationStat(
+          stats.inuseSpaceBytes,
+          'inuseSpaceBytes',
+        );
         const allocObjects = requireAllocationStat(
-          allocationStats.allocObjects,
+          stats.allocObjects,
           'allocObjects',
         );
         const allocSpaceBytes = requireAllocationStat(
-          allocationStats.allocSpaceBytes,
+          stats.allocSpaceBytes,
           'allocSpaceBytes',
         );
         const sample = new Sample({
           locationId: entry.stack,
-          value: [
-            allocationStats.count,
-            allocObjects,
-            allocationStats.sizeBytes,
-            allocSpaceBytes,
-          ],
+          value: [inuseObjects, allocObjects, inuseSpaceBytes, allocSpaceBytes],
           label: labels,
           // TODO: add tag for allocation size
         });
