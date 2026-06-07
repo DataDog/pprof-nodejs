@@ -57,9 +57,23 @@ class WallProfiler : public Nan::ObjectWrap {
   int cpedKeyHash_ = 0;
   v8::Global<v8::ObjectTemplate> wrapObjectTemplate_;
 
-  // We track live context pointers in a set to avoid memory leaks. They will
-  // be deleted when the profiler is disposed.
-  std::unordered_set<PersistentContextPtr*> liveContextPtrs_;
+  // The list lets ~WallProfiler delete any PCPs V8 hasn't GC'd yet, so they
+  // don't show up as leaks under LSAN at exit.
+  // PCPs link themselves in at construction and unlink in their destructor.
+  // This used to be an unordered set, but storing two pointers in the PCP is
+  // much cheaper memorywise than the hash set's overhead of buckets and nodes.
+  PersistentContextPtr* liveContextPtrHead_ = nullptr;
+
+  // Number of PersistentContextPtr instances created by this profiler that
+  // are still alive. Incremented in PersistentContextPtr's constructor;
+  // decremented in its destructor when it unlinks from the list (i.e., while
+  // the profiler is still alive). PCPs cleaned up by ~WallProfiler's walk
+  // skip the decrement — the counter is going away with the profiler anyway.
+  //
+  // Not atomic: all accesses happen on the isolate's thread (construction via
+  // SetContext from JS, destruction via V8 weak callbacks on the same thread,
+  // metric reads from JS). Signal handler does not touch this field.
+  size_t liveContextPtrCount_ = 0;
 
   std::atomic<int> gcCount = 0;
   std::atomic<bool> setInProgress_ = false;
@@ -99,7 +113,7 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextBuffer contexts_;
 
   ~WallProfiler();
-  void Dispose(v8::Isolate* isolate, bool removeFromMap);
+  void Dispose(v8::Isolate* isolate);
 
   // A new CPU profiler object will be created each time profiling is started
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
@@ -154,7 +168,7 @@ class WallProfiler : public Nan::ObjectWrap {
   v8::Local<v8::Object> GetMetrics(v8::Isolate*);
 
   Result StartImpl();
-  v8::ProfilerId StartInternal();
+  Result StartInternal();
   template <typename ProfileBuilder>
   Result StopCore(bool restart, ProfileBuilder&& buildProfile);
   Result StopImpl(bool restart, v8::Local<v8::Value>& profile);
@@ -174,6 +188,16 @@ class WallProfiler : public Nan::ObjectWrap {
   bool collectCpuTime() const { return collectCpuTime_; }
 
   bool interceptSignal() const { return withContexts_ || workaroundV8Bug_; }
+
+  // Returns the address of the live-PCP list head so a newly constructed PCP
+  // can splice itself in. Only used by PersistentContextPtr's constructor.
+  PersistentContextPtr** liveContextPtrHeadSlot() {
+    return &liveContextPtrHead_;
+  }
+
+  void recordContextCreate() { ++liveContextPtrCount_; }
+  void recordContextRelease() { --liveContextPtrCount_; }
+  size_t liveContextPtrCount() const { return liveContextPtrCount_; }
 
   int v8ProfilerStuckEventLoopDetected() const {
     return v8ProfilerStuckEventLoopDetected_;

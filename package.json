@@ -52,13 +52,13 @@
     "eslint-plugin-n": "^18.0.1",
     "gts": "^7.0.0",
     "js-green-licenses": "^4.0.0",
-    "mocha": "^11.7.5",
+    "mocha": "^11.7.6",
     "nan": "^2.27.0",
     "nyc": "^18.0.0",
-    "semver": "^7.8.0",
+    "semver": "^7.8.1",
     "sinon": "^22.0.0",
     "source-map-support": "^0.5.21",
-    "tmp": "0.2.5",
+    "tmp": "0.2.6",
     "typescript": "^6.0.3"
   },
   "files": [
