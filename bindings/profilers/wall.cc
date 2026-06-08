@@ -876,7 +876,7 @@ Result WallProfiler::StartImpl() {
     // CreateV8CpuProfiler succeeded) we hold a cpuProfiler_, a g_profilers
     // entry, and possibly GC pro/epilogue callbacks. Tear them all down so
     // the caller doesn't observe a half-initialized profiler.
-    Dispose(isolate, true);
+    Dispose(isolate);
     return res;
   }
 
