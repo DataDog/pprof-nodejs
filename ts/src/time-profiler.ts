@@ -168,10 +168,12 @@ export function stop(
   }
 
   const profile = gProfiler.stop(restart);
+
   if (restart) {
+    // Restart the profiler *before* serializing so the cost of serialization is
+    // captured in the next profile. handleStopRestart() does not dispose of the
+    // source mapper, so the source-map resolution below is unaffected.
     handleStopRestart();
-  } else {
-    handleStopNoRestart();
   }
 
   const serializedProfile = serializeTimeProfile(
@@ -182,6 +184,15 @@ export function stop(
     generateLabels,
     lowCardinalityLabels,
   );
+
+  if (!restart) {
+    // Tear down *after* serializing: handleStopNoRestart() clears gSourceMapper
+    // (and disposes gProfiler), so serializing afterwards would drop source-map
+    // resolution and leave transpiled frames pointing at the generated files
+    // instead of the original sources.
+    handleStopNoRestart();
+  }
+
   return serializedProfile;
 }
 

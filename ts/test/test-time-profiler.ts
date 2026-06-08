@@ -18,6 +18,8 @@ import * as sinon from 'sinon';
 import {time, getNativeThreadId} from '../src';
 import {profileV2, stopV2} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
+import * as profileSerializer from '../src/profile-serializer';
+import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
@@ -494,6 +496,50 @@ describe('Time Profiler', () => {
 
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
+    });
+
+    it('should serialize with the source mapper still set when stopping', () => {
+      // Regression test: stop() used to tear down the profiler state (via
+      // handleStopNoRestart, which clears gSourceMapper) *before* serializing,
+      // so the source mapper passed to start() was dropped and transpiled
+      // frames were left pointing at the generated files instead of the
+      // original sources. The third argument to serializeTimeProfile is the
+      // source mapper; it must still be the one passed to start().
+      const sourceMapper = {} as unknown as SourceMapper;
+      const serializeStub = sinon
+        .stub(profileSerializer, 'serializeTimeProfile')
+        .returns(timeProfile);
+      try {
+        // no-restart path: handleStopNoRestart() clears gSourceMapper, so it
+        // must run after serialization.
+        time.start({
+          intervalMicros: PROFILE_OPTIONS.intervalMicros,
+          sourceMapper,
+        });
+        time.stop();
+        sinon.assert.calledOnce(serializeStub);
+        assert.strictEqual(
+          serializeStub.getCall(0).args[2],
+          sourceMapper,
+          'source mapper dropped on stop()',
+        );
+
+        // restart path: the source mapper must be preserved here too.
+        serializeStub.resetHistory();
+        time.start({
+          intervalMicros: PROFILE_OPTIONS.intervalMicros,
+          sourceMapper,
+        });
+        time.stop(true);
+        assert.strictEqual(
+          serializeStub.getCall(0).args[2],
+          sourceMapper,
+          'source mapper dropped on stop(true)',
+        );
+        time.stop(); // finalize: dispose the restarted profiler
+      } finally {
+        serializeStub.restore();
+      }
     });
   });
 
