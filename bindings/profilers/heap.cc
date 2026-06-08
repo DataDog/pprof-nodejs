@@ -16,6 +16,8 @@
 
 #include "heap.hh"
 
+#include "allocation-profile-node.hh"
+#include "allocation-profile.hh"
 #include "defer.hh"
 #include "per-isolate-data.hh"
 #include "translate-heap-profile.hh"
@@ -28,7 +30,6 @@
 
 #include <node.h>
 #include <v8-profiler.h>
-#include "allocation-profile-node.hh"
 
 namespace dd {
 
@@ -89,6 +90,9 @@ struct HeapProfilerState {
   }
 
   void InstallNearHeapLimitCallback() {
+    if (callbackInstalled) {
+      return;
+    }
     if (isolate) {
       isolate->AddNearHeapLimitCallback(&NearHeapLimit, nullptr);
       callbackInstalled = true;
@@ -108,8 +112,10 @@ struct HeapProfilerState {
 
   void OnNewProfile() {
     profile.reset();
-    if (!callbackInstalled) {
-      // Reinstall NearHeapLimit callback if it was removed before
+    // Only (re)install the NearHeapLimit callback when OOM monitoring is
+    // configured. Otherwise a plain start()+profile() flow would silently
+    // register a callback that the user never asked for.
+    if (max_heap_extension_count > 0) {
       InstallNearHeapLimitCallback();
     }
   }
@@ -121,6 +127,7 @@ struct HeapProfilerState {
   uv_async_t* async = nullptr;
   std::shared_ptr<Node> profile;
   std::vector<std::string> export_command;
+  bool allocations = false;
   bool dumpProfileOnStderr = false;
   Nan::Callback callback;
   uint32_t callbackMode = 0;
@@ -453,22 +460,52 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
     }
   }
 
-  if (info.Length() == 2) {
+  bool allocations = false;
+
+  if (info.Length() == 2 || info.Length() == 3) {
     if (!info[0]->IsUint32()) {
       return Nan::ThrowTypeError("First argument type must be uint32.");
     }
     if (!info[1]->IsNumber()) {
-      return Nan::ThrowTypeError("First argument type must be Integer.");
+      return Nan::ThrowTypeError("Second argument type must be Integer.");
+    }
+    if (info.Length() == 3 && !info[2]->IsBoolean()) {
+      return Nan::ThrowTypeError("Third argument type must be boolean.");
     }
 
     uint64_t sample_interval = info[0].As<v8::Integer>()->Value();
     int stack_depth = info[1].As<v8::Integer>()->Value();
+    allocations = info.Length() == 3 && info[2].As<v8::Boolean>()->Value();
+#if NODE_MAJOR_VERSION < 26
+    if (allocations) {
+      return Nan::ThrowError(
+          "Allocation profiling requires Node.js 26 or newer.");
+    }
+#endif
+    auto flags = v8::HeapProfiler::kSamplingNoFlags;
+#if NODE_MAJOR_VERSION >= 26
+    if (allocations) {
+      flags = static_cast<v8::HeapProfiler::SamplingFlags>(
+          v8::HeapProfiler::kSamplingForceGC |
+          v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMajorGC |
+          v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMinorGC);
+    }
+#endif
 
-    isolate->GetHeapProfiler()->StartSamplingHeapProfiler(sample_interval,
-                                                          stack_depth);
-  } else {
+    isolate->GetHeapProfiler()->StartSamplingHeapProfiler(
+        sample_interval, stack_depth, flags);
+  } else if (info.Length() == 0) {
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler();
+  } else {
+    return Nan::ThrowTypeError(
+        "StartSamplingHeapProfiler must have 0, 2, or 3 arguments.");
   }
+
+  auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (!state) {
+    state = std::make_shared<HeapProfilerState>(isolate);
+  }
+  state->allocations = allocations;
 }
 
 // Signature:
@@ -492,17 +529,23 @@ NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
 // getAllocationProfile(): AllocationProfileNode
 NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   auto isolate = info.GetIsolate();
+  auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
   if (!profile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
+  const bool allocations = state->allocations;
   v8::AllocationProfile::Node* root = profile->GetRootNode();
-  auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
-  if (state) {
-    state->OnNewProfile();
+  AllocationProfileNodeStatsMap allocation_stats;
+  if (allocations) {
+    allocation_stats = BuildAllocationStatsByNodeId(profile->GetSamples());
   }
-  info.GetReturnValue().Set(TranslateAllocationProfile(root));
+
+  state->OnNewProfile();
+  info.GetReturnValue().Set(TranslateAllocationProfile(
+      root, allocations ? &allocation_stats : nullptr));
 }
 
 // mapAllocationProfile(callback): callback result
@@ -512,6 +555,11 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
   }
   auto isolate = info.GetIsolate();
   auto callback = info[0].As<v8::Function>();
+  auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state && state->allocations) {
+    return Nan::ThrowError(
+        "mapAllocationProfile does not support allocation mode.");
+  }
 
   std::unique_ptr<v8::AllocationProfile> profile(
       isolate->GetHeapProfiler()->GetAllocationProfile());
@@ -520,10 +568,7 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
 
-  auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
-  if (state) {
-    state->OnNewProfile();
-  }
+  state->OnNewProfile();
 
   auto root = AllocationProfileNodeView::New(profile->GetRootNode());
   v8::Local<v8::Value> argv[] = {root};
@@ -563,8 +608,19 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
 
   auto isolate = v8::Isolate::GetCurrent();
 
+  // Reuse existing state if present so sample_interval/allocations set by
+  // StartSamplingHeapProfiler survive. Only OOM-owned fields are reset below.
+  // callbackInstalled is intentionally left alone —
+  // InstallNearHeapLimitCallback below is idempotent.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
-  state = std::make_shared<HeapProfilerState>(isolate);
+  if (!state) {
+    state = std::make_shared<HeapProfilerState>(isolate);
+  }
+
+  state->current_heap_extension_count = 0;
+  state->profile.reset();
+  state->export_command.clear();
+  state->callback.Reset();
 
   state->heap_extension_size = info[0].As<v8::Integer>()->Value();
   state->max_heap_extension_count = info[1].As<v8::Integer>()->Value();
