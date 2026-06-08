@@ -16,7 +16,10 @@
 
 import * as path from 'path';
 
-import {AllocationProfileNode} from './v8-types';
+import {
+  AllocationProfileNode,
+  AllocationProfileNodeWithStats,
+} from './v8-types';
 
 const findBinding = require('node-gyp-build');
 const profiler = findBinding(path.join(__dirname, '..', '..'));
@@ -26,10 +29,12 @@ const profiler = findBinding(path.join(__dirname, '..', '..'));
 export function startSamplingHeapProfiler(
   heapIntervalBytes: number,
   heapStackDepth: number,
+  allocations = false,
 ) {
   profiler.heapProfiler.startSamplingHeapProfiler(
     heapIntervalBytes,
     heapStackDepth,
+    allocations,
   );
 }
 
@@ -37,7 +42,9 @@ export function stopSamplingHeapProfiler() {
   profiler.heapProfiler.stopSamplingHeapProfiler();
 }
 
-export function getAllocationProfile(): AllocationProfileNode {
+export function getAllocationProfile():
+  | AllocationProfileNode
+  | AllocationProfileNodeWithStats {
   return profiler.heapProfiler.getAllocationProfile();
 }
 

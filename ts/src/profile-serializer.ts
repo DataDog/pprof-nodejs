@@ -32,7 +32,10 @@ import {
   SourceMapper,
 } from './sourcemapper/sourcemapper';
 import {
+  Allocation,
+  AllocationWithStats,
   AllocationProfileNode,
+  AllocationProfileNodeWithStats,
   GenerateAllocationLabelsFunction,
   GenerateTimeLabelsFunction,
   ProfileNode,
@@ -73,6 +76,16 @@ function isGeneratedLocation(
     location.line !== undefined &&
     location.line > 0
   );
+}
+
+function requireAllocationStat(
+  value: number | undefined,
+  field: string,
+): number {
+  if (value === undefined) {
+    throw new Error(`Allocation profile is missing ${field}.`);
+  }
+  return value;
 }
 
 /**
@@ -264,6 +277,34 @@ function createObjectCountValueType(table: StringTable): ValueType {
 function createAllocationValueType(table: StringTable): ValueType {
   return new ValueType({
     type: table.dedup('space'),
+    unit: table.dedup('bytes'),
+  });
+}
+
+function createInUseObjectCountValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('inuse_objects'),
+    unit: table.dedup('count'),
+  });
+}
+
+function createAllocatedObjectCountValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('alloc_objects'),
+    unit: table.dedup('count'),
+  });
+}
+
+function createInUseSpaceValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('inuse_space'),
+    unit: table.dedup('bytes'),
+  });
+}
+
+function createAllocatedSpaceValueType(table: StringTable): ValueType {
+  return new ValueType({
+    type: table.dedup('alloc_space'),
     unit: table.dedup('bytes'),
   });
 }
@@ -530,24 +571,64 @@ function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
  * @param intervalBytes - bytes allocated between samples.
  */
 export function serializeHeapProfile(
-  prof: AllocationProfileNode,
+  prof: AllocationProfileNode | AllocationProfileNodeWithStats,
   startTimeNanos: number,
   intervalBytes: number,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  allocations = false,
 ): Profile {
   const appendHeapEntryToSamples: AppendEntryToSamples<
-    AllocationProfileNode
-  > = (entry: Entry<AllocationProfileNode>, samples: Sample[]) => {
+    AllocationProfileNode | AllocationProfileNodeWithStats
+  > = (
+    entry: Entry<AllocationProfileNode | AllocationProfileNodeWithStats>,
+    samples: Sample[],
+  ) => {
     if (entry.node.allocations.length > 0) {
       const labels = generateLabels
-        ? buildLabels(generateLabels({node: entry.node}), stringTable)
+        ? buildLabels(
+            generateLabels({node: entry.node as AllocationProfileNode}),
+            stringTable,
+          )
         : [];
       for (const alloc of entry.node.allocations) {
+        // Live heap only
+        if (!allocations) {
+          const heapAllocation = alloc as Allocation;
+          const sample = new Sample({
+            locationId: entry.stack,
+            value: [
+              heapAllocation.count,
+              heapAllocation.sizeBytes * heapAllocation.count,
+            ],
+            label: labels,
+            // TODO: add tag for allocation size
+          });
+          samples.push(sample);
+          continue;
+        }
+
+        const stats = alloc as AllocationWithStats;
+        const inuseObjects = requireAllocationStat(
+          stats.inuseObjects,
+          'inuseObjects',
+        );
+        const inuseSpaceBytes = requireAllocationStat(
+          stats.inuseSpaceBytes,
+          'inuseSpaceBytes',
+        );
+        const allocObjects = requireAllocationStat(
+          stats.allocObjects,
+          'allocObjects',
+        );
+        const allocSpaceBytes = requireAllocationStat(
+          stats.allocSpaceBytes,
+          'allocSpaceBytes',
+        );
         const sample = new Sample({
           locationId: entry.stack,
-          value: [alloc.count, alloc.sizeBytes * alloc.count],
+          value: [inuseObjects, allocObjects, inuseSpaceBytes, allocSpaceBytes],
           label: labels,
           // TODO: add tag for allocation size
         });
@@ -557,13 +638,22 @@ export function serializeHeapProfile(
   };
 
   const stringTable = new StringTable();
-  const sampleValueType = createObjectCountValueType(stringTable);
-  const allocationValueType = createAllocationValueType(stringTable);
+  const sampleTypes = allocations
+    ? [
+        createInUseObjectCountValueType(stringTable),
+        createAllocatedObjectCountValueType(stringTable),
+        createInUseSpaceValueType(stringTable),
+        createAllocatedSpaceValueType(stringTable),
+      ]
+    : [
+        createObjectCountValueType(stringTable),
+        createAllocationValueType(stringTable),
+      ];
 
   const profile = {
-    sampleType: [sampleValueType, allocationValueType],
+    sampleType: sampleTypes,
     timeNanos: startTimeNanos,
-    periodType: allocationValueType,
+    periodType: sampleTypes[sampleTypes.length - 1],
     period: intervalBytes,
   };
 

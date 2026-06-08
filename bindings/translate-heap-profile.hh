@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "allocation-profile.hh"
+
 #include <v8-profiler.h>
 #include <v8.h>
 #include <memory>
@@ -41,5 +43,8 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
 v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node);
+v8::Local<v8::Value> TranslateAllocationProfile(
+    v8::AllocationProfile::Node* node,
+    const AllocationProfileNodeStatsMap* allocation_stats);
 
 }  // namespace dd
