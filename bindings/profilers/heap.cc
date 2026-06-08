@@ -610,8 +610,8 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
 
   // Reuse existing state if present so sample_interval/allocations set by
   // StartSamplingHeapProfiler survive. Only OOM-owned fields are reset below.
-  // callbackInstalled is intentionally left alone — InstallNearHeapLimitCallback
-  // below is idempotent.
+  // callbackInstalled is intentionally left alone —
+  // InstallNearHeapLimitCallback below is idempotent.
   auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
   if (!state) {
     state = std::make_shared<HeapProfilerState>(isolate);

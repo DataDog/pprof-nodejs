@@ -77,7 +77,8 @@ function measureV1(): {initial: number; afterTraversal: number} {
   gc!();
   const baseline = process.memoryUsage().heapUsed;
 
-  const profile = v8HeapProfiler.getAllocationProfile() as AllocationProfileNode;
+  const profile =
+    v8HeapProfiler.getAllocationProfile() as AllocationProfileNode;
   const initial = process.memoryUsage().heapUsed - baseline;
   traverseTree(profile);
   const afterTraversal = process.memoryUsage().heapUsed - baseline;

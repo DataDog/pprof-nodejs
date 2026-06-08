@@ -75,8 +75,7 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
 }
 
 Local<Array> TranslateAllocationStats(
-    Isolate* isolate,
-    const AllocationProfileSizeStatsMap* allocation_stats) {
+    Isolate* isolate, const AllocationProfileSizeStatsMap* allocation_stats) {
   auto context = isolate->GetCurrentContext();
 
   if (!allocation_stats || allocation_stats->empty()) {
