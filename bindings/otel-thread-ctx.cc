@@ -176,12 +176,44 @@ class CtxWrap : public ObjectWrap {
                           Local<Value> attrs_val, size_t existing_size,
                           std::vector<uint8_t> *out, bool *out_truncated);
 
-  OtelThreadCtxRecord *record_;
-  size_t capacity_;
-  bool truncated_;
-
   CtxWrap(OtelThreadCtxRecord *record, size_t capacity, bool truncated);
+
+  // The three fields are kept in one access section because C++ leaves
+  // the relative layout of fields in different access controls
+  // implementation-defined. `record_` must come first — its offset
+  // within CtxWrap is part of the reader contract (see the
+  // static_assert below) — and is therefore `public`. The bookkeeping
+  // fields after it would normally be private, but the access change
+  // would let a conforming compiler reorder them in front of `record_`;
+  // exposing them publicly keeps everything in one ordering-stable
+  // block. Readers never touch them.
+ public:
+  OtelThreadCtxRecord *record_;
+  // attrs_data capacity in bytes of the record_ allocation. The total
+  // allocation is `sizeof(OtelThreadCtxRecord) + capacity_`. Always
+  // `record_->attrs_data_size <= capacity_ <= MAX_ATTRS_DATA_SIZE`.
+  size_t capacity_;
+  // Set to true (once, never cleared) if at any point in this record's
+  // lifetime — during New() or any subsequent Append() — at least one
+  // attribute had to be dropped because it would have pushed attrs_data
+  // past MAX_ATTRS_DATA_SIZE.
+  bool truncated_;
 };
+
+// Pin the offset of `record_` — the field the reader walks to from the
+// JSObject's internal field 0. We document it as "the first field after
+// the node::ObjectWrap base subobject", so equality with
+// sizeof(node::ObjectWrap) is the invariant. `offsetof` on a non-
+// standard-layout type (CtxWrap has private fields and inherits from
+// ObjectWrap) is conditionally supported per the standard but accepted
+// by every compiler this addon targets; suppress -Winvalid-offsetof so
+// the static_assert compiles cleanly under strict warning flags.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+static_assert(offsetof(CtxWrap, record_) == sizeof(node::ObjectWrap),
+              "record_ must be the first field after the ObjectWrap base "
+              "subobject");
+#pragma GCC diagnostic pop
 
 CtxWrap::~CtxWrap() { free(record_); }
 
@@ -254,7 +286,7 @@ void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
   Isolate *isolate = args.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
 
-  if (!args.IsConstructCall()) {
+  if (!args.IsConstructCall()) [[unlikely]] {
     isolate->ThrowError("OtelThreadCtxWrap must be called with `new`");
     return;
   }
@@ -281,9 +313,7 @@ void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
     return;
   }
 
-  size_t capacity = attrs_buf.size() < MIN_INITIAL_CAPACITY
-                        ? MIN_INITIAL_CAPACITY
-                        : attrs_buf.size();
+  size_t capacity = std::max(attrs_buf.size(), MIN_INITIAL_CAPACITY);
   const size_t total = sizeof(OtelThreadCtxRecord) + capacity;
   OwnedRecord record(static_cast<OtelThreadCtxRecord *>(calloc(1, total)));
   if (!record) {
@@ -353,9 +383,7 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
   }
 
   // Doesn't fit. Reallocate with geometric growth, capped.
-  size_t new_cap = self->capacity_ * 2;
-  if (new_cap < new_used) new_cap = new_used;
-  if (new_cap > MAX_ATTRS_DATA_SIZE) new_cap = MAX_ATTRS_DATA_SIZE;
+  size_t new_cap = std::min(std::max(self->capacity_ * 2, new_used), MAX_ATTRS_DATA_SIZE);
 
   const size_t total = sizeof(OtelThreadCtxRecord) + new_cap;
   OwnedRecord new_rec(static_cast<OtelThreadCtxRecord *>(calloc(1, total)));
@@ -367,12 +395,22 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
          sizeof(OtelThreadCtxRecord) + current_used);
   memcpy(&new_rec->attrs_data[current_used], appended.data(), appended.size());
   new_rec->attrs_data_size = static_cast<uint16_t>(new_used);
-  new_rec->valid = 1;
+  // The copy should've preserved valid=1 from the source record.
+  assert(new_rec->valid == 1);
 
+  // Publish: the pointer swap is the atomic boundary the reader sees. The
+  // first fence keeps the new_rec content writes ordered before the pointer
+  // store from the compiler's perspective. The second fence prevents free()
+  // from being hoisted above the pointer swap — without it, a reader stopped
+  // between a reordered free() and the not-yet-completed swap would follow
+  // self->record_ into freed memory. OTEP signal-handler semantics (the
+  // writer is stopped during reads) take care of CPU-side ordering and make
+  // immediate freeing of the old record safe.
   std::atomic_signal_fence(std::memory_order_release);
   OtelThreadCtxRecord *old_rec = self->record_;
   self->record_ = new_rec.release();
   self->capacity_ = new_cap;
+  std::atomic_signal_fence(std::memory_order_acq_rel);
   free(old_rec);
 }
 
