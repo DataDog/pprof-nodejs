@@ -259,28 +259,6 @@ function createCpuValueType(table: StringTable): ValueType {
   });
 }
 
-/**
- * @return value type for object counts (type:objects, units:count), and
- * adds strings used in this value type to the table.
- */
-function createObjectCountValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('objects'),
-    unit: table.dedup('count'),
-  });
-}
-
-/**
- * @return value type for memory allocations (type:space, units:bytes), and
- * adds strings used in this value type to the table.
- */
-function createAllocationValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('space'),
-    unit: table.dedup('bytes'),
-  });
-}
-
 function createInUseObjectCountValueType(table: StringTable): ValueType {
   return new ValueType({
     type: table.dedup('inuse_objects'),
@@ -646,8 +624,8 @@ export function serializeHeapProfile(
         createAllocatedSpaceValueType(stringTable),
       ]
     : [
-        createObjectCountValueType(stringTable),
-        createAllocationValueType(stringTable),
+        createInUseObjectCountValueType(stringTable),
+        createInUseSpaceValueType(stringTable),
       ];
 
   const profile = {
