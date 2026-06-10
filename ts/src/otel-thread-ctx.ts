@@ -89,7 +89,7 @@ export interface NamedContext {
 }
 
 interface CtxWrap {
-  bytes(): Uint8Array;
+  debugBytes(): Uint8Array;
   append(attributes: Array<string | null | undefined> | undefined): void;
   isTruncated(): boolean;
 }
@@ -227,7 +227,7 @@ if (process.platform === 'linux') {
     if (!als) return undefined;
     const wrap = als.getStore();
     if (!wrap) return undefined;
-    return wrap.bytes();
+    return wrap.debugBytes();
   };
 } else {
   runWithContext = function <T>(fn: () => T, _opts: ContextOptions): T {
