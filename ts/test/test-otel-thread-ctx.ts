@@ -21,6 +21,7 @@
 import assert from 'assert';
 import {strict as strictAssert} from 'assert';
 import {spawnSync} from 'node:child_process';
+import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
 import {
@@ -35,6 +36,21 @@ import {
 } from '../src/otel-thread-ctx';
 
 const isLinux = process.platform === 'linux';
+// AsyncContextFrame (the writer's discovery substrate) is opt-in on Node
+// 22/23 (via --experimental-async-context-frame) and on by default in
+// Node 24+ (disable-able via --no-async-context-frame). The TS layer
+// refuses to install the hook when ACF isn't available, so the entire
+// describe block is skipped in that case. Mirrors the source-side
+// asyncContextFrameError logic.
+const isAsyncContextFrameAvailable = (() => {
+  if (process.execArgv.includes('--no-async-context-frame')) return false;
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major >= 24) return true;
+  if (major >= 22) {
+    return process.execArgv.includes('--experimental-async-context-frame');
+  }
+  return false;
+})();
 
 // Returns a plain Uint8Array (not a Buffer) so assert.deepStrictEqual against
 // other Uint8Arrays — including the one the addon returns — succeeds.
@@ -107,7 +123,7 @@ function captureBytes(opts: {
   return bytes as Uint8Array;
 }
 
-(isLinux ? describe : describe.skip)(
+(isLinux && isAsyncContextFrameAvailable ? describe : describe.skip)(
   'OTEP-4947 thread context (Linux-only)',
   () => {
     describe('CtxWrap construction', () => {
@@ -914,6 +930,12 @@ function captureBytes(opts: {
           'Release',
           'dd_pprof.node',
         );
+        // The prebuild-install / node-gyp-build CI matrix runs against a
+        // prebuilt binary that lives outside build/Release; only the
+        // build-from-source path produces this exact file.
+        if (!existsSync(addon)) {
+          this.skip();
+        }
         const r = spawnSync('readelf', ['--dyn-syms', '--wide', addon], {
           encoding: 'utf8',
         });
