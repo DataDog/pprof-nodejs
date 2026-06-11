@@ -134,7 +134,6 @@ export let isContextTruncated: () => boolean;
 export let _currentRecordBytes: () => Uint8Array | undefined = () => undefined;
 
 if (process.platform === 'linux') {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const findBinding = require('node-gyp-build');
   const addon: Addon = findBinding(join(__dirname, '..', '..'));
   WRAPPED_OBJECT_OFFSET = addon.otelThreadCtxWrappedObjectOffset;
@@ -230,14 +229,12 @@ if (process.platform === 'linux') {
     return wrap.debugBytes();
   };
 } else {
-  runWithContext = function <T>(fn: () => T, _opts: ContextOptions): T {
+  runWithContext = function <T>(fn: () => T): T {
     return fn();
   };
-  enterWithContext = function (_opts: ContextOptions): void {};
+  enterWithContext = function (): void {};
   clearContext = function (): void {};
-  appendAttributes = function (
-    _attributes: Array<string | null | undefined>,
-  ): void {};
+  appendAttributes = function (): void {};
   isContextTruncated = function (): boolean {
     return false;
   };
@@ -279,7 +276,7 @@ export function makeNamedContext(keys: string[]): NamedContext {
       | Array<[string, unknown]>
       | undefined,
   ): Array<string | null | undefined> | undefined {
-    if (named == null) return undefined;
+    if (named === null || named === undefined) return undefined;
     const attributes: Array<string | undefined> = [];
     const set = (name: string, value: unknown) => {
       const idx = indexByName.get(name);
