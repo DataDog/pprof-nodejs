@@ -487,9 +487,18 @@ void StoreAls(const FunctionCallbackInfo<Value> &args) {
   Local<Object> obj = args[0].As<Object>();
   otel_thread_ctx_nodejs_v1.als_identity_hash = obj->GetIdentityHash();
   otel_thread_ctx_nodejs_v1.als_handle = Global<Object>(isolate, obj);
+#if NODE_MAJOR_VERSION >= 22
   otel_thread_ctx_nodejs_v1.cped_slot = reinterpret_cast<v8::internal::Address *>(
       reinterpret_cast<char *>(isolate) +
       v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
+#else
+  // Node < 22 lacks ContinuationPreservedEmbedderData entirely (and the
+  // associated V8 internal offset). The TS layer refuses to install the
+  // hook on these versions via asyncContextFrameError, so StoreAls is
+  // never called from JS — this null assignment is just here so the
+  // addon compiles on the older Node versions the package supports.
+  otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
+#endif
   // Cache the per-isolate undefined singleton's tagged address. Undefined
   // is a read-only-roots heap object, never moves, so a cached numeric
   // address is fine — no Global<> tracking needed.
