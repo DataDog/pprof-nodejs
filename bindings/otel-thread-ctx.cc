@@ -61,28 +61,28 @@ using v8::Global;
 using v8::Object;
 
 struct otel_thread_ctx_nodejs_v1_t {
-  v8::internal::Address *cped_slot;      // offset 0
+  v8::internal::Address* cped_slot;      // offset 0
   Global<Object> als_handle;             // offset sizeof(void*); 1 V8 ptr
   int als_identity_hash;                 // offset 2 * sizeof(void*); 4 + 4 pad
   v8::internal::Address undefined_addr;  // offset 3 * sizeof(void*); tagged
 };
 
-__attribute__((visibility("default")))
-thread_local otel_thread_ctx_nodejs_v1_t otel_thread_ctx_nodejs_v1;
+__attribute__((visibility("default"))) thread_local otel_thread_ctx_nodejs_v1_t
+    otel_thread_ctx_nodejs_v1;
 }
 
-static_assert(sizeof(v8::Global<v8::Object>) == sizeof(void *),
+static_assert(sizeof(v8::Global<v8::Object>) == sizeof(void*),
               "Global<Object> must be exactly one pointer wide");
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, cped_slot) == 0,
               "cped_slot must be at offset 0");
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, als_handle) ==
-                  sizeof(void *),
+                  sizeof(void*),
               "als_handle must immediately follow cped_slot");
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, als_identity_hash) ==
-                  2 * sizeof(void *),
+                  2 * sizeof(void*),
               "als_identity_hash must immediately follow als_handle");
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, undefined_addr) ==
-                  3 * sizeof(void *),
+                  3 * sizeof(void*),
               "undefined_addr must follow als_identity_hash + padding");
 
 namespace dd {
@@ -129,7 +129,7 @@ static_assert(offsetof(OtelThreadCtxRecord, attrs_data) == 28,
               "attrs_data offset");
 
 struct OtelThreadCtxRecordDeleter {
-  void operator()(OtelThreadCtxRecord *p) const noexcept { free(p); }
+  void operator()(OtelThreadCtxRecord* p) const noexcept { free(p); }
 };
 using OwnedRecord =
     std::unique_ptr<OtelThreadCtxRecord, OtelThreadCtxRecordDeleter>;
@@ -161,22 +161,25 @@ class CtxWrap : public ObjectWrap {
   ~CtxWrap() override;
   static void Init(Local<Object> exports);
 
-  CtxWrap(const CtxWrap &) = delete;
-  CtxWrap &operator=(const CtxWrap &) = delete;
-  CtxWrap(CtxWrap &&) = delete;
-  CtxWrap &operator=(CtxWrap &&) noexcept = delete;
+  CtxWrap(const CtxWrap&) = delete;
+  CtxWrap& operator=(const CtxWrap&) = delete;
+  CtxWrap(CtxWrap&&) = delete;
+  CtxWrap& operator=(CtxWrap&&) noexcept = delete;
 
  private:
-  static void New(const FunctionCallbackInfo<Value> &args);
-  static void DebugBytes(const FunctionCallbackInfo<Value> &args);
-  static void Append(const FunctionCallbackInfo<Value> &args);
-  static void IsTruncated(const FunctionCallbackInfo<Value> &args);
+  static void New(const FunctionCallbackInfo<Value>& args);
+  static void DebugBytes(const FunctionCallbackInfo<Value>& args);
+  static void Append(const FunctionCallbackInfo<Value>& args);
+  static void IsTruncated(const FunctionCallbackInfo<Value>& args);
 
-  static bool EncodeAttrs(Isolate *isolate, Local<Context> context,
-                          Local<Value> attrs_val, size_t existing_size,
-                          std::vector<uint8_t> *out, bool *out_truncated);
+  static bool EncodeAttrs(Isolate* isolate,
+                          Local<Context> context,
+                          Local<Value> attrs_val,
+                          size_t existing_size,
+                          std::vector<uint8_t>* out,
+                          bool* out_truncated);
 
-  CtxWrap(OtelThreadCtxRecord *record, size_t capacity, bool truncated);
+  CtxWrap(OtelThreadCtxRecord* record, size_t capacity, bool truncated);
 
   // The three fields are kept in one access section because C++ leaves
   // the relative layout of fields in different access controls
@@ -188,7 +191,7 @@ class CtxWrap : public ObjectWrap {
   // exposing them publicly keeps everything in one ordering-stable
   // block. Readers never touch them.
  public:
-  OtelThreadCtxRecord *record_;
+  OtelThreadCtxRecord* record_;
   // attrs_data capacity in bytes of the record_ allocation. The total
   // allocation is `sizeof(OtelThreadCtxRecord) + capacity_`. Always
   // `record_->attrs_data_size <= capacity_ <= MAX_ATTRS_DATA_SIZE`.
@@ -215,28 +218,33 @@ static_assert(offsetof(CtxWrap, record_) == sizeof(node::ObjectWrap),
               "subobject");
 #pragma GCC diagnostic pop
 
-CtxWrap::~CtxWrap() { free(record_); }
+CtxWrap::~CtxWrap() {
+  free(record_);
+}
 
-CtxWrap::CtxWrap(OtelThreadCtxRecord *record, size_t capacity, bool truncated)
+CtxWrap::CtxWrap(OtelThreadCtxRecord* record, size_t capacity, bool truncated)
     : record_(record), capacity_(capacity), truncated_(truncated) {}
 
 // Copy exactly `expected_bytes` bytes out of a JS Uint8Array (or subclass
 // such as Buffer) into `out`. Returns false if the value isn't a
 // Uint8Array or its length doesn't match.
-bool CopyBytes(Local<Value> value, size_t expected_bytes, uint8_t *out) {
+bool CopyBytes(Local<Value> value, size_t expected_bytes, uint8_t* out) {
   if (!value->IsUint8Array()) return false;
   Local<Uint8Array> arr = value.As<Uint8Array>();
   if (arr->ByteLength() != expected_bytes) return false;
-  uint8_t *base =
-      static_cast<uint8_t *>(arr->Buffer()->GetBackingStore()->Data()) +
+  uint8_t* base =
+      static_cast<uint8_t*>(arr->Buffer()->GetBackingStore()->Data()) +
       arr->ByteOffset();
   memcpy(out, base, expected_bytes);
   return true;
 }
 
-bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
-                          Local<Value> attrs_val, size_t existing_size,
-                          std::vector<uint8_t> *out, bool *out_truncated) {
+bool CtxWrap::EncodeAttrs(Isolate* isolate,
+                          Local<Context> context,
+                          Local<Value> attrs_val,
+                          size_t existing_size,
+                          std::vector<uint8_t>* out,
+                          bool* out_truncated) {
   if (attrs_val->IsUndefined() || attrs_val->IsNull()) return true;
   if (!attrs_val->IsArray()) {
     isolate->ThrowError(
@@ -274,13 +282,18 @@ bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
     out->resize(entry_off + needed);
     (*out)[entry_off] = static_cast<uint8_t>(i);
 #if NODE_MAJOR_VERSION >= 24
-    int v_written = static_cast<int>(v->WriteUtf8V2(
-        isolate, reinterpret_cast<char *>(&(*out)[entry_off + 2]),
-        static_cast<size_t>(v_budget), String::WriteFlags::kNone));
+    int v_written = static_cast<int>(
+        v->WriteUtf8V2(isolate,
+                       reinterpret_cast<char*>(&(*out)[entry_off + 2]),
+                       static_cast<size_t>(v_budget),
+                       String::WriteFlags::kNone));
 #else
-    int v_written = v->WriteUtf8(
-        isolate, reinterpret_cast<char *>(&(*out)[entry_off + 2]), v_budget,
-        nullptr, String::NO_NULL_TERMINATION);
+    int v_written =
+        v->WriteUtf8(isolate,
+                     reinterpret_cast<char*>(&(*out)[entry_off + 2]),
+                     v_budget,
+                     nullptr,
+                     String::NO_NULL_TERMINATION);
 #endif
     (*out)[entry_off + 1] = static_cast<uint8_t>(v_written);
     if (v_written < v_budget) {
@@ -290,8 +303,8 @@ bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
   return true;
 }
 
-void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
-  Isolate *isolate = args.GetIsolate();
+void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
 
   if (!args.IsConstructCall()) [[unlikely]] {
@@ -323,7 +336,7 @@ void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
 
   size_t capacity = std::max(attrs_buf.size(), MIN_INITIAL_CAPACITY);
   const size_t total = sizeof(OtelThreadCtxRecord) + capacity;
-  OwnedRecord record(static_cast<OtelThreadCtxRecord *>(calloc(1, total)));
+  OwnedRecord record(static_cast<OtelThreadCtxRecord*>(calloc(1, total)));
   if (!record) {
     isolate->ThrowError("allocation failed");
     return;
@@ -338,9 +351,9 @@ void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
   // OTEP-4947 publication protocol: order the `valid = 1` store after every
   // other field write, with an atomic_signal_fence + volatile store.
   std::atomic_signal_fence(std::memory_order_release);
-  *reinterpret_cast<volatile uint8_t *>(&record->valid) = 1;
+  *reinterpret_cast<volatile uint8_t*>(&record->valid) = 1;
 
-  CtxWrap *self = new CtxWrap(record.release(), capacity, truncated);
+  CtxWrap* self = new CtxWrap(record.release(), capacity, truncated);
   self->Wrap(args.This());
   args.GetReturnValue().Set(args.This());
 }
@@ -349,11 +362,11 @@ void CtxWrap::New(const FunctionCallbackInfo<Value> &args) {
 // place (if the appended bytes fit in the current allocation's slack) or
 // reallocates to a larger one (geometrically), keeping the invariant
 // `record_->attrs_data_size <= capacity_`.
-void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
-  Isolate *isolate = args.GetIsolate();
+void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
 
-  CtxWrap *self = ObjectWrap::Unwrap<CtxWrap>(args.This());
+  CtxWrap* self = ObjectWrap::Unwrap<CtxWrap>(args.This());
   if (!self) {
     isolate->ThrowError("not an OtelThreadCtxWrap");
     return;
@@ -366,8 +379,8 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
   const size_t current_used = self->record_->attrs_data_size;
   std::vector<uint8_t> appended;
   bool truncated = false;
-  if (!EncodeAttrs(isolate, context, args[0], current_used, &appended,
-                   &truncated)) {
+  if (!EncodeAttrs(
+          isolate, context, args[0], current_used, &appended, &truncated)) {
     return;
   }
   if (truncated) self->truncated_ = true;
@@ -382,25 +395,27 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
     // attrs_data_size is the publication boundary — bytes past it are
     // not observable by the reader, so a reader firing mid-append sees
     // either the old or new size, never a torn state.
-    memcpy(&self->record_->attrs_data[current_used], appended.data(),
+    memcpy(&self->record_->attrs_data[current_used],
+           appended.data(),
            appended.size());
     std::atomic_signal_fence(std::memory_order_release);
-    *reinterpret_cast<volatile uint16_t *>(&self->record_->attrs_data_size) =
+    *reinterpret_cast<volatile uint16_t*>(&self->record_->attrs_data_size) =
         static_cast<uint16_t>(new_used);
     return;
   }
 
   // Doesn't fit. Reallocate with geometric growth, capped.
-  size_t new_cap = std::min(std::max(self->capacity_ * 2, new_used), MAX_ATTRS_DATA_SIZE);
+  size_t new_cap =
+      std::min(std::max(self->capacity_ * 2, new_used), MAX_ATTRS_DATA_SIZE);
 
   const size_t total = sizeof(OtelThreadCtxRecord) + new_cap;
-  OwnedRecord new_rec(static_cast<OtelThreadCtxRecord *>(calloc(1, total)));
+  OwnedRecord new_rec(static_cast<OtelThreadCtxRecord*>(calloc(1, total)));
   if (!new_rec) {
     isolate->ThrowError("allocation failed");
     return;
   }
-  memcpy(new_rec.get(), self->record_,
-         sizeof(OtelThreadCtxRecord) + current_used);
+  memcpy(
+      new_rec.get(), self->record_, sizeof(OtelThreadCtxRecord) + current_used);
   memcpy(&new_rec->attrs_data[current_used], appended.data(), appended.size());
   new_rec->attrs_data_size = static_cast<uint16_t>(new_used);
   // The copy should've preserved valid=1 from the source record.
@@ -415,15 +430,15 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value> &args) {
   // writer is stopped during reads) take care of CPU-side ordering and make
   // immediate freeing of the old record safe.
   std::atomic_signal_fence(std::memory_order_release);
-  OtelThreadCtxRecord *old_rec = self->record_;
+  OtelThreadCtxRecord* old_rec = self->record_;
   self->record_ = new_rec.release();
   self->capacity_ = new_cap;
   std::atomic_signal_fence(std::memory_order_acq_rel);
   free(old_rec);
 }
 
-void CtxWrap::IsTruncated(const FunctionCallbackInfo<Value> &args) {
-  CtxWrap *self = ObjectWrap::Unwrap<CtxWrap>(args.This());
+void CtxWrap::IsTruncated(const FunctionCallbackInfo<Value>& args) {
+  CtxWrap* self = ObjectWrap::Unwrap<CtxWrap>(args.This());
   if (!self) {
     args.GetIsolate()->ThrowError("not an OtelThreadCtxWrap");
     return;
@@ -431,9 +446,9 @@ void CtxWrap::IsTruncated(const FunctionCallbackInfo<Value> &args) {
   args.GetReturnValue().Set(self->truncated_);
 }
 
-void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value> &args) {
-  Isolate *isolate = args.GetIsolate();
-  CtxWrap *self = ObjectWrap::Unwrap<CtxWrap>(args.This());
+void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
+  CtxWrap* self = ObjectWrap::Unwrap<CtxWrap>(args.This());
   if (!self) {
     isolate->ThrowError("not an OtelThreadCtxWrap");
     return;
@@ -446,7 +461,7 @@ void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value> &args) {
 }
 
 void CtxWrap::Init(Local<Object> exports) {
-  Isolate *isolate = Isolate::GetCurrent();
+  Isolate* isolate = Isolate::GetCurrent();
   Local<Context> context = isolate->GetCurrentContext();
 
   Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -456,16 +471,16 @@ void CtxWrap::Init(Local<Object> exports) {
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "debugBytes"),
       FunctionTemplate::New(isolate, DebugBytes));
-  tpl->PrototypeTemplate()->Set(
-      String::NewFromUtf8Literal(isolate, "append"),
-      FunctionTemplate::New(isolate, Append));
+  tpl->PrototypeTemplate()->Set(String::NewFromUtf8Literal(isolate, "append"),
+                                FunctionTemplate::New(isolate, Append));
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "isTruncated"),
       FunctionTemplate::New(isolate, IsTruncated));
 
   Local<Function> constructor = tpl->GetFunction(context).ToLocalChecked();
   exports
-      ->Set(context, String::NewFromUtf8Literal(isolate, "otelThreadCtxWrap"),
+      ->Set(context,
+            String::NewFromUtf8Literal(isolate, "otelThreadCtxWrap"),
             constructor)
       .FromJust();
 }
@@ -476,17 +491,17 @@ void CtxWrap::Init(Local<Object> exports) {
 // after the isolate is already gone — causing a segfault. Registering
 // this as a per-isolate cleanup hook the first time StoreAls is called
 // keeps the handle safely scoped to the isolate.
-void ResetDiscoveryStruct(void * /*arg*/) {
+void ResetDiscoveryStruct(void* /*arg*/) {
   otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
   otel_thread_ctx_nodejs_v1.als_handle.Reset();
   otel_thread_ctx_nodejs_v1.als_identity_hash = 0;
   otel_thread_ctx_nodejs_v1.undefined_addr = 0;
 }
 
-void StoreAls(const FunctionCallbackInfo<Value> &args) {
+void StoreAls(const FunctionCallbackInfo<Value>& args) {
   static thread_local bool cleanup_registered = false;
 
-  Isolate *isolate = args.GetIsolate();
+  Isolate* isolate = args.GetIsolate();
   if (!args[0]->IsObject()) {
     isolate->ThrowError("First argument must be the AsyncLocalStorage object.");
     return;
@@ -495,9 +510,10 @@ void StoreAls(const FunctionCallbackInfo<Value> &args) {
   otel_thread_ctx_nodejs_v1.als_identity_hash = obj->GetIdentityHash();
   otel_thread_ctx_nodejs_v1.als_handle = Global<Object>(isolate, obj);
 #if NODE_MAJOR_VERSION >= 22
-  otel_thread_ctx_nodejs_v1.cped_slot = reinterpret_cast<v8::internal::Address *>(
-      reinterpret_cast<char *>(isolate) +
-      v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
+  otel_thread_ctx_nodejs_v1.cped_slot =
+      reinterpret_cast<v8::internal::Address*>(
+          reinterpret_cast<char*>(isolate) +
+          v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
 #else
   // Node < 22 lacks ContinuationPreservedEmbedderData entirely (and the
   // associated V8 internal offset). The TS layer refuses to install the
@@ -520,8 +536,8 @@ void StoreAls(const FunctionCallbackInfo<Value> &args) {
 // Without a function that explicitly reads the TLS variable, on x86 the
 // linker may strip the symbol from the dynamic symbol table even though
 // `nm` still reports it, breaking out-of-process discovery.
-void GetStoredAlsHash(const FunctionCallbackInfo<Value> &args) {
-  Isolate *isolate = args.GetIsolate();
+void GetStoredAlsHash(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
   args.GetReturnValue().Set(
       Integer::New(isolate, otel_thread_ctx_nodejs_v1.als_identity_hash));
 }
@@ -552,11 +568,12 @@ void OtelThreadCtx::Init(Local<Object> exports) {
   NODE_SET_METHOD(exports, "otelThreadCtxStoreAls", StoreAls);
   NODE_SET_METHOD(exports, "otelThreadCtxGetStoredAlsHash", GetStoredAlsHash);
 
-  Isolate *isolate = Isolate::GetCurrent();
+  Isolate* isolate = Isolate::GetCurrent();
   Local<Context> ctx = isolate->GetCurrentContext();
   exports
       ->Set(ctx,
-            String::NewFromUtf8Literal(isolate, "otelThreadCtxWrappedObjectOffset"),
+            String::NewFromUtf8Literal(isolate,
+                                       "otelThreadCtxWrappedObjectOffset"),
             Integer::New(isolate, WRAPPED_OBJECT_OFFSET))
       .FromJust();
   exports
