@@ -255,10 +255,7 @@ bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
     if (val_val->IsUndefined() || val_val->IsNull()) continue;
 
     Local<String> v;
-    if (!val_val->ToString(context).ToLocal(&v)) {
-      isolate->ThrowError("failed to coerce attribute value to string");
-      return false;
-    }
+    if (!val_val->ToString(context).ToLocal(&v)) return false;
     int v_utf8_len = v->Utf8Length(isolate);
     int v_budget = v_utf8_len > 255 ? 255 : v_utf8_len;
 
