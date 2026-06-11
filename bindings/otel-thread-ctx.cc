@@ -257,7 +257,11 @@ bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
 
     Local<String> v;
     if (!val_val->ToString(context).ToLocal(&v)) return false;
+#if NODE_MAJOR_VERSION >= 24
+    int v_utf8_len = static_cast<int>(v->Utf8LengthV2(isolate));
+#else
     int v_utf8_len = v->Utf8Length(isolate);
+#endif
     int v_budget = v_utf8_len > 255 ? 255 : v_utf8_len;
 
     const size_t needed = 2u + static_cast<size_t>(v_budget);
@@ -269,9 +273,15 @@ bool CtxWrap::EncodeAttrs(Isolate *isolate, Local<Context> context,
     const size_t entry_off = out->size();
     out->resize(entry_off + needed);
     (*out)[entry_off] = static_cast<uint8_t>(i);
+#if NODE_MAJOR_VERSION >= 24
+    int v_written = static_cast<int>(v->WriteUtf8V2(
+        isolate, reinterpret_cast<char *>(&(*out)[entry_off + 2]),
+        static_cast<size_t>(v_budget), String::WriteFlags::kNone));
+#else
     int v_written = v->WriteUtf8(
         isolate, reinterpret_cast<char *>(&(*out)[entry_off + 2]), v_budget,
         nullptr, String::NO_NULL_TERMINATION);
+#endif
     (*out)[entry_off + 1] = static_cast<uint8_t>(v_written);
     if (v_written < v_budget) {
       out->resize(entry_off + 2u + static_cast<size_t>(v_written));
@@ -436,11 +446,7 @@ void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value> &args) {
 }
 
 void CtxWrap::Init(Local<Object> exports) {
-#if NODE_MAJOR_VERSION >= 26
   Isolate *isolate = Isolate::GetCurrent();
-#else
-  Isolate *isolate = exports->GetIsolate();
-#endif
   Local<Context> context = isolate->GetCurrentContext();
 
   Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -546,7 +552,7 @@ void OtelThreadCtx::Init(Local<Object> exports) {
   NODE_SET_METHOD(exports, "otelThreadCtxStoreAls", StoreAls);
   NODE_SET_METHOD(exports, "otelThreadCtxGetStoredAlsHash", GetStoredAlsHash);
 
-  Isolate *isolate = exports->GetIsolate();
+  Isolate *isolate = Isolate::GetCurrent();
   Local<Context> ctx = isolate->GetCurrentContext();
   exports
       ->Set(ctx,
