@@ -84,5 +84,29 @@
     "node": ">=16"
   },
   "//": "Temporary fix to make nan@2.22.2 work with Node 24",
-  "postinstall": "sed -i '' 's/^.* Holder() const.*//' ./node_modules/nan/nan_callbacks_12_inl.h"
+  "postinstall": "sed -i '' 's/^.* Holder() const.*//' ./node_modules/nan/nan_callbacks_12_inl.h",
+  "overrides": {
+    "nyc": {
+      "brace-expansion": "^5.0.6",
+      "js-yaml": "^3.14.2"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "brace-expansion": "^5.0.6"
+    },
+    "istanbul-lib-processinfo": {
+      "brace-expansion": "^5.0.6"
+    },
+    "spawn-wrap": {
+      "brace-expansion": "^5.0.6"
+    },
+    "test-exclude": {
+      "brace-expansion": "^5.0.6"
+    },
+    "codecov": {
+      "js-yaml": "^3.14.2"
+    },
+    "mocha": {
+      "minimatch": "^9.0.9"
+    }
+  }
 }
