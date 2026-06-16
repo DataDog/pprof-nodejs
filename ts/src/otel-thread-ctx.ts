@@ -25,30 +25,18 @@ import {join} from 'path';
 import {AsyncLocalStorage} from 'node:async_hooks';
 
 /**
- * Inputs to {@link runWithContext} and {@link enterWithContext}.
+ * Inputs to {@link NamedContext.buildContext} (and the convenience
+ * methods that delegate to it).
  *
  * `traceId` and `spanId` are passed as raw bytes (a `Uint8Array` of length
  * 16 and 8 respectively; `Buffer` is acceptable as a subclass).
  *
- * `attributes`, if present, is positional: index N in the array is the value
- * for uint8 key index N on the wire. Slots that are `null`, `undefined`, or
- * absent (array holes) are skipped. Non-string values are coerced via
- * `toString`. Values longer than 255 UTF-8 bytes are silently truncated and
- * attributes that would overflow the 612-byte payload budget are silently
- * dropped — see {@link isContextTruncated} for how to detect that. Array
- * length must not exceed 256.
- */
-export interface ContextOptions {
-  traceId: Uint8Array;
-  spanId: Uint8Array;
-  attributes?: Array<string | null | undefined>;
-}
-
-/**
- * Inputs to the methods returned by {@link makeNamedContext}. Same as
- * {@link ContextOptions} but attributes are addressed by name; names are
- * resolved to uint8 key indexes using the array passed to
- * {@link makeNamedContext}.
+ * `namedAttributes` are resolved to positional uint8 key indexes via the
+ * `keys` array passed to {@link makeNamedContext}. Values are coerced to
+ * strings via `toString`. Values longer than 255 UTF-8 bytes are silently
+ * truncated, and attributes that would overflow the 612-byte payload cap
+ * are silently dropped (see {@link CtxWrap.isTruncated}). Names that
+ * aren't in the key map throw.
  */
 export interface NamedContextOptions {
   traceId: Uint8Array;
@@ -72,38 +60,63 @@ export interface ProcessContextAttributes {
 }
 
 /**
- * Object returned by {@link makeNamedContext}.
+ * A thread-context record. Construct with `new CtxWrap(...)`; install
+ * with {@link setContext} or {@link runWithContext}. The underlying
+ * native record is GC-owned: when no JS or async-context-frame
+ * reference survives, it's freed.
+ *
+ * `appendAttributes` mutates the wrap's record in place. Because every
+ * async-context frame that holds the same `CtxWrap` reference observes
+ * the same native record buffer, an append is visible across all those
+ * frames even when the reallocate path runs (the wrap's internal
+ * pointer is updated, the JS object is not replaced).
  */
-export interface NamedContext {
-  runWithContext<T>(fn: () => T, opts: NamedContextOptions): T;
-  enterWithContext(opts: NamedContextOptions): void;
-  clearContext(): void;
+export interface CtxWrap {
   appendAttributes(
-    namedAttributes:
-      | Record<string, unknown>
-      | Map<string, unknown>
-      | Array<[string, unknown]>,
+    attributes: Array<string | null | undefined> | undefined,
   ): void;
-  isContextTruncated(): boolean;
-  readonly processContextAttributes: ProcessContextAttributes;
+  isTruncated(): boolean;
+  /** Debug-only: returns the on-the-wire record bytes. Not stable. */
+  debugBytes(): Uint8Array;
 }
 
-interface CtxWrap {
-  debugBytes(): Uint8Array;
-  append(attributes: Array<string | null | undefined> | undefined): void;
-  isTruncated(): boolean;
+/**
+ * Constructor for {@link CtxWrap}. On non-Linux platforms, returns a
+ * no-op instance whose methods do nothing — the OTEP-4947 reader
+ * contract is ELF-TLSDESC, only meaningful on Linux.
+ */
+export interface CtxWrapCtor {
+  new (
+    traceId: Uint8Array,
+    spanId: Uint8Array,
+    attributes?: Array<string | null | undefined>,
+  ): CtxWrap;
 }
 
 interface Addon {
-  otelThreadCtxWrap: new (
-    traceId: Uint8Array,
-    spanId: Uint8Array,
-    attributes: Array<string | null | undefined> | undefined,
-  ) => CtxWrap;
+  ctxWrap: CtxWrapCtor;
   otelThreadCtxStoreAls(als: AsyncLocalStorage<CtxWrap>): void;
   otelThreadCtxGetStoredAlsHash(): number;
   otelThreadCtxWrappedObjectOffset: number;
   otelThreadCtxTaggedSize: number;
+}
+
+/**
+ * Object returned by {@link makeNamedContext}. Resolves the
+ * `namedAttributes` map to a positional array against the key list
+ * captured at factory time and builds a {@link CtxWrap}; convenience
+ * methods compose with {@link setContext} / {@link runWithContext}.
+ */
+export interface NamedContext {
+  /** Allocate a CtxWrap with attributes resolved positionally by name. */
+  buildContext(opts: NamedContextOptions): CtxWrap;
+  /** Sugar: `setContext(buildContext(opts))`. */
+  enterWithContext(opts: NamedContextOptions): void;
+  /** Sugar: `runWithContext(buildContext(opts), fn)`. */
+  runWithContext<T>(fn: () => T, opts: NamedContextOptions): T;
+  /** Sugar: `setContext(undefined)`. */
+  clearContext(): void;
+  readonly processContextAttributes: ProcessContextAttributes;
 }
 
 const SCHEMA_VERSION = 'nodejs_v1';
@@ -116,28 +129,41 @@ const SCHEMA_VERSION = 'nodejs_v1';
 let WRAPPED_OBJECT_OFFSET = 24;
 let TAGGED_SIZE = 8;
 
-export let runWithContext: <T>(fn: () => T, opts: ContextOptions) => T;
-export let enterWithContext: (opts: ContextOptions) => void;
+/** {@inheritDoc CtxWrapCtor} */
+export let CtxWrap: CtxWrapCtor;
+
 /**
- * Detach any thread-context record from the current asynchronous scope.
- * Subsequent reads in the same scope (until a new
- * {@link runWithContext}/{@link enterWithContext} attaches one) see no
- * active context. Idempotent. On non-Linux platforms this is a no-op.
+ * Returns the {@link CtxWrap} currently attached to the active
+ * async-context frame, or `undefined` if none is.
  */
-export let clearContext: () => void;
-export let appendAttributes: (
-  attributes: Array<string | null | undefined>,
-) => void;
-export let isContextTruncated: () => boolean;
+export let getContext: () => CtxWrap | undefined;
+
+/**
+ * Attach a {@link CtxWrap} (or `undefined` to detach) to the current
+ * async-context frame. Idempotent for `setContext(undefined)` when no
+ * frame has been installed. Re-installing the same wrap reference is
+ * cheap (no allocation); per-span caching of the wrap on the caller
+ * side is the intended usage pattern.
+ */
+export let setContext: (wrap: CtxWrap | undefined) => void;
+
+/**
+ * As {@link setContext}, but scoped to the callback's execution. After
+ * `fn` returns, the previous context is restored.
+ */
+export let runWithContext: <T>(wrap: CtxWrap | undefined, fn: () => T) => T;
 
 // Debug accessor (not part of the stable API; for tests / reader dev).
 export let _currentRecordBytes: () => Uint8Array | undefined = () => undefined;
 
 if (process.platform === 'linux') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const findBinding = require('node-gyp-build');
   const addon: Addon = findBinding(join(__dirname, '..', '..'));
   WRAPPED_OBJECT_OFFSET = addon.otelThreadCtxWrappedObjectOffset;
   TAGGED_SIZE = addon.otelThreadCtxTaggedSize;
+
+  CtxWrap = addon.ctxWrap;
 
   let als: AsyncLocalStorage<CtxWrap> | undefined;
 
@@ -169,85 +195,67 @@ if (process.platform === 'linux') {
     return als;
   }
 
-  function buildWrap(opts: ContextOptions): CtxWrap {
-    if (!opts || typeof opts !== 'object') {
-      throw new TypeError('options object required');
-    }
-    ensureHook();
-    return new addon.otelThreadCtxWrap(
-      opts.traceId,
-      opts.spanId,
-      opts.attributes,
-    );
-  }
-
-  runWithContext = function <T>(fn: () => T, opts: ContextOptions): T {
-    const wrap = buildWrap(opts);
-    return ensureHook().run(wrap, fn);
+  getContext = function (): CtxWrap | undefined {
+    return als ? als.getStore() : undefined;
   };
 
-  enterWithContext = function (opts: ContextOptions): void {
-    const wrap = buildWrap(opts);
+  setContext = function (wrap: CtxWrap | undefined): void {
+    if (wrap === undefined) {
+      // Idempotent: clearing when the hook hasn't been installed (no
+      // prior setContext call) is a no-op.
+      if (!als) return;
+      als.enterWith(undefined as unknown as CtxWrap);
+      return;
+    }
     ensureHook().enterWith(wrap);
   };
 
-  clearContext = function (): void {
-    // Idempotent: clearing when no hook has been installed yet (and
-    // therefore no context can be active) is a no-op.
-    if (!als) return;
-    als.enterWith(undefined as unknown as CtxWrap);
-  };
-
-  appendAttributes = function (
-    attributes: Array<string | null | undefined>,
-  ): void {
-    if (!als) {
-      throw new Error(
-        'no active thread context; call runWithContext or enterWithContext first',
-      );
+  runWithContext = function <T>(wrap: CtxWrap | undefined, fn: () => T): T {
+    if (wrap === undefined) {
+      if (!als) return fn();
+      return als.run(undefined as unknown as CtxWrap, fn);
     }
-    const wrap = als.getStore();
-    if (!wrap) {
-      throw new Error(
-        'no active thread context; call runWithContext or enterWithContext first',
-      );
-    }
-    wrap.append(attributes);
-  };
-
-  isContextTruncated = function (): boolean {
-    if (!als) return false;
-    const wrap = als.getStore();
-    if (!wrap) return false;
-    return wrap.isTruncated();
+    return ensureHook().run(wrap, fn);
   };
 
   _currentRecordBytes = function (): Uint8Array | undefined {
     if (!als) return undefined;
     const wrap = als.getStore();
-    if (!wrap) return undefined;
-    return wrap.debugBytes();
+    return wrap ? wrap.debugBytes() : undefined;
   };
 } else {
-  runWithContext = function <T>(fn: () => T): T {
-    return fn();
+  // Non-Linux degradation. The writer's reader contract is ELF-TLSDESC,
+  // meaningful only on Linux; on other platforms we still want the API
+  // to be callable so consumers don't have to gate every call site —
+  // construction succeeds but produces an inert wrap, and setContext /
+  // runWithContext don't actually wire anything into AsyncLocalStorage.
+  class NoopCtxWrap implements CtxWrap {
+    appendAttributes(): void {}
+    isTruncated(): boolean {
+      return false;
+    }
+    debugBytes(): Uint8Array {
+      return new Uint8Array(0);
+    }
+  }
+  CtxWrap = NoopCtxWrap as CtxWrapCtor;
+  getContext = function (): undefined {
+    return undefined;
   };
-  enterWithContext = function (): void {};
-  clearContext = function (): void {};
-  appendAttributes = function (): void {};
-  isContextTruncated = function (): boolean {
-    return false;
+  setContext = function (): void {};
+  runWithContext = function <T>(_wrap: CtxWrap | undefined, fn: () => T): T {
+    return fn();
   };
 }
 
 /**
- * Build name-addressed wrappers around {@link runWithContext},
- * {@link enterWithContext}, and {@link appendAttributes}. The supplied
+ * Build name-addressed wrappers around {@link CtxWrap},
+ * {@link setContext}, and {@link runWithContext}. The supplied
  * `keys` array is the same string list the caller publishes (or has
- * published) as the `threadlocal.attribute_key_map` resource attribute in
- * the OTEP-4719 process context: index N in this array is the uint8 key
- * index N in the on-the-wire record. The mapping is captured once at
- * factory time.
+ * published) as the `threadlocal.attribute_key_map` resource attribute
+ * in the OTEP-4719 process context: index N in this array is the uint8
+ * key index N in the on-the-wire record. The mapping is captured once
+ * at factory time.
  */
 export function makeNamedContext(keys: string[]): NamedContext {
   if (!Array.isArray(keys)) {
@@ -300,15 +308,15 @@ export function makeNamedContext(keys: string[]): NamedContext {
     return attributes;
   }
 
-  function toBaseOpts(opts: NamedContextOptions): ContextOptions {
+  function buildContext(opts: NamedContextOptions): CtxWrap {
     if (!opts || typeof opts !== 'object') {
       throw new TypeError('options object required');
     }
-    return {
-      traceId: opts.traceId,
-      spanId: opts.spanId,
-      attributes: resolveAttributes(opts.namedAttributes),
-    };
+    return new CtxWrap(
+      opts.traceId,
+      opts.spanId,
+      resolveAttributes(opts.namedAttributes),
+    );
   }
 
   const processContextAttributes = Object.freeze({
@@ -319,25 +327,15 @@ export function makeNamedContext(keys: string[]): NamedContext {
   }) as ProcessContextAttributes;
 
   return {
-    runWithContext<T>(fn: () => T, opts: NamedContextOptions): T {
-      return runWithContext(fn, toBaseOpts(opts));
-    },
+    buildContext,
     enterWithContext(opts: NamedContextOptions): void {
-      enterWithContext(toBaseOpts(opts));
+      setContext(buildContext(opts));
+    },
+    runWithContext<T>(fn: () => T, opts: NamedContextOptions): T {
+      return runWithContext(buildContext(opts), fn);
     },
     clearContext(): void {
-      clearContext();
-    },
-    appendAttributes(
-      namedAttributes:
-        | Record<string, unknown>
-        | Map<string, unknown>
-        | Array<[string, unknown]>,
-    ): void {
-      appendAttributes(resolveAttributes(namedAttributes)!);
-    },
-    isContextTruncated(): boolean {
-      return isContextTruncated();
+      setContext(undefined);
     },
     processContextAttributes,
   };

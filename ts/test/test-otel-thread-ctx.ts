@@ -25,15 +25,41 @@ import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
 import {
-  ContextOptions,
-  appendAttributes,
-  clearContext,
-  enterWithContext,
-  isContextTruncated,
+  CtxWrap,
+  getContext,
   makeNamedContext,
   runWithContext,
+  setContext,
   _currentRecordBytes,
 } from '../src/otel-thread-ctx';
+
+// Helpers bridging the old positional-attrs test shape to the new
+// CtxWrap-first API.
+interface PosOpts {
+  traceId: Uint8Array;
+  spanId: Uint8Array;
+  attributes?: Array<string | null | undefined>;
+}
+function tcRun<T>(fn: () => T, opts: PosOpts): T {
+  return runWithContext(
+    new CtxWrap(opts.traceId, opts.spanId, opts.attributes),
+    fn,
+  );
+}
+function tcEnter(opts: PosOpts): void {
+  setContext(new CtxWrap(opts.traceId, opts.spanId, opts.attributes));
+}
+function tcClear(): void {
+  setContext(undefined);
+}
+function tcAppend(
+  attributes: Array<string | null | undefined> | undefined,
+): void {
+  getContext()!.appendAttributes(attributes);
+}
+function tcIsTruncated(): boolean {
+  return getContext()?.isTruncated() ?? false;
+}
 
 const isLinux = process.platform === 'linux';
 // AsyncContextFrame (the writer's discovery substrate) is opt-in on Node
@@ -117,7 +143,7 @@ function captureBytes(opts: {
   attributes?: Array<string | null | undefined>;
 }): Uint8Array {
   let bytes: Uint8Array | undefined;
-  runWithContext(() => {
+  tcRun(() => {
     bytes = _currentRecordBytes();
   }, opts);
   return bytes as Uint8Array;
@@ -278,10 +304,10 @@ function captureBytes(opts: {
         const d = 'd'.repeat(30);
         let bytes: Uint8Array | undefined;
         let truncated = false;
-        runWithContext(
+        tcRun(
           () => {
             bytes = _currentRecordBytes();
-            truncated = isContextTruncated();
+            truncated = tcIsTruncated();
           },
           {
             traceId: TRACE_ID_BYTES,
@@ -322,7 +348,7 @@ function captureBytes(opts: {
 
     describe('runWithContext lifecycle', () => {
       it('returns the callback result', () => {
-        const result = runWithContext(() => 'ok', {
+        const result = tcRun(() => 'ok', {
           traceId: TRACE_ID_BYTES,
           spanId: SPAN_ID_BYTES,
         });
@@ -334,7 +360,7 @@ function captureBytes(opts: {
       });
 
       it('has no active record after the call returns', () => {
-        runWithContext(() => undefined, {
+        tcRun(() => undefined, {
           traceId: TRACE_ID_BYTES,
           spanId: SPAN_ID_BYTES,
         });
@@ -346,9 +372,9 @@ function captureBytes(opts: {
         const innerSpanBytes = bytesFromHex('aabbccddeeff0011');
         const innerOpts = {traceId: TRACE_ID_BYTES, spanId: innerSpanBytes};
 
-        runWithContext(() => {
+        tcRun(() => {
           const outerBefore = decodeHeader(_currentRecordBytes()!).spanId;
-          runWithContext(() => {
+          tcRun(() => {
             const inner = decodeHeader(_currentRecordBytes()!).spanId;
             strictAssert.deepEqual(inner, innerSpanBytes);
           }, innerOpts);
@@ -359,7 +385,7 @@ function captureBytes(opts: {
       });
 
       it('keeps the same record after awaits', async () => {
-        await runWithContext(
+        await tcRun(
           async () => {
             const before = decodeHeader(_currentRecordBytes()!).spanId;
             await Promise.resolve();
@@ -379,7 +405,7 @@ function captureBytes(opts: {
         const bSpan = bytesFromHex('2222222222222222');
 
         async function run(spanBytes: Uint8Array) {
-          return runWithContext(
+          return tcRun(
             async () => {
               const observed: Uint8Array[] = [];
               for (let i = 0; i < 4; i++) {
@@ -400,7 +426,7 @@ function captureBytes(opts: {
 
     describe('enterWithContext', () => {
       it('attaches the record to the current async scope', () => {
-        void runWithContext(
+        void tcRun(
           () => {
             strictAssert.deepEqual(
               decodeHeader(_currentRecordBytes()!).spanId,
@@ -408,7 +434,7 @@ function captureBytes(opts: {
             );
 
             const newSpan = bytesFromHex('aabbccddeeff0011');
-            enterWithContext({traceId: TRACE_ID_BYTES, spanId: newSpan});
+            tcEnter({traceId: TRACE_ID_BYTES, spanId: newSpan});
             strictAssert.deepEqual(
               decodeHeader(_currentRecordBytes()!).spanId,
               newSpan,
@@ -426,48 +452,39 @@ function captureBytes(opts: {
 
         strictAssert.equal(_currentRecordBytes(), undefined);
       });
-
-      it('requires an options object', () => {
-        strictAssert.throws(
-          () => enterWithContext(undefined as unknown as ContextOptions),
-          /options object required/,
-        );
-      });
     });
 
     describe('clearContext', () => {
       it('detaches the active record within a scope', () => {
-        runWithContext(
+        tcRun(
           () => {
             strictAssert.ok(_currentRecordBytes());
-            clearContext();
+            tcClear();
             strictAssert.equal(_currentRecordBytes(), undefined);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
         );
       });
 
-      it('makes appendAttributes throw and isContextTruncated return false', () => {
-        runWithContext(
+      it('drops the active record so getContext returns undefined', () => {
+        tcRun(
           () => {
-            clearContext();
-            strictAssert.throws(
-              () => appendAttributes(['v']),
-              /no active thread context/,
-            );
-            strictAssert.equal(isContextTruncated(), false);
+            strictAssert.ok(getContext() !== undefined);
+            tcClear();
+            strictAssert.equal(getContext(), undefined);
+            strictAssert.equal(tcIsTruncated(), false);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
         );
       });
 
       it('is idempotent (calling with no context or twice is a no-op)', () => {
-        clearContext();
+        tcClear();
         strictAssert.equal(_currentRecordBytes(), undefined);
-        runWithContext(
+        tcRun(
           () => {
-            clearContext();
-            clearContext();
+            tcClear();
+            tcClear();
             strictAssert.equal(_currentRecordBytes(), undefined);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
@@ -475,11 +492,11 @@ function captureBytes(opts: {
       });
 
       it('lets a nested runWithContext re-establish a record', () => {
-        runWithContext(
+        tcRun(
           () => {
-            clearContext();
+            tcClear();
             const innerSpan = bytesFromHex('aabbccddeeff0011');
-            runWithContext(
+            tcRun(
               () => {
                 strictAssert.deepEqual(
                   decodeHeader(_currentRecordBytes()!).spanId,
@@ -497,11 +514,11 @@ function captureBytes(opts: {
       });
 
       it('lets enterWithContext re-establish a record', () => {
-        runWithContext(
+        tcRun(
           () => {
-            clearContext();
+            tcClear();
             const newSpan = bytesFromHex('aabbccddeeff0011');
-            enterWithContext({traceId: TRACE_ID_BYTES, spanId: newSpan});
+            tcEnter({traceId: TRACE_ID_BYTES, spanId: newSpan});
             strictAssert.deepEqual(
               decodeHeader(_currentRecordBytes()!).spanId,
               newSpan,
@@ -530,12 +547,12 @@ function captureBytes(opts: {
 
     describe('appendAttributes', () => {
       it('adds entries to the current record', () => {
-        runWithContext(
+        tcRun(
           () => {
             strictAssert.deepEqual(decodeAttrs(_currentRecordBytes()!), [
               'GET',
             ]);
-            appendAttributes([, , '200']);
+            tcAppend([, , '200']);
             strictAssert.deepEqual(decodeAttrs(_currentRecordBytes()!), [
               'GET',
               ,
@@ -547,10 +564,10 @@ function captureBytes(opts: {
       });
 
       it('writes in-place when bytes fit in the slack', () => {
-        runWithContext(
+        tcRun(
           () => {
             const before = _currentRecordBytes()!;
-            appendAttributes([, 'ab']);
+            tcAppend([, 'ab']);
             const after = _currentRecordBytes()!;
             strictAssert.deepEqual(decodeAttrs(after), ['xxx', 'ab']);
             strictAssert.equal(after.length, before.length + 2 + 2);
@@ -563,13 +580,13 @@ function captureBytes(opts: {
       });
 
       it('grows the record geometrically when slack runs out', () => {
-        runWithContext(
+        tcRun(
           () => {
             const v = 'y'.repeat(60);
             for (let i = 0; i < 8; i++) {
               const append: Array<string | undefined> = [];
               append[i] = v;
-              appendAttributes(append);
+              tcAppend(append);
             }
             const decoded = decodeAttrs(_currentRecordBytes()!);
             for (let i = 0; i < 8; i++) {
@@ -584,18 +601,11 @@ function captureBytes(opts: {
         );
       });
 
-      it('throws when there is no current context', () => {
-        strictAssert.throws(
-          () => appendAttributes(['v']),
-          /no active thread context/,
-        );
-      });
-
       it('is a no-op when given an empty array', () => {
-        runWithContext(
+        tcRun(
           () => {
             const before = _currentRecordBytes();
-            appendAttributes([]);
+            tcAppend([]);
             const after = _currentRecordBytes();
             strictAssert.deepEqual(after, before);
           },
@@ -604,10 +614,10 @@ function captureBytes(opts: {
       });
 
       it('is a no-op when all slots are null/undefined', () => {
-        runWithContext(
+        tcRun(
           () => {
             const before = _currentRecordBytes();
-            appendAttributes([null, undefined, , null]);
+            tcAppend([null, undefined, , null]);
             const after = _currentRecordBytes();
             strictAssert.deepEqual(after, before);
           },
@@ -617,33 +627,33 @@ function captureBytes(opts: {
 
       it('silently drops entries past the 612-byte cap and sets the truncated flag', () => {
         const big = 'a'.repeat(255);
-        runWithContext(
+        tcRun(
           () => {
-            appendAttributes([big, big]);
-            strictAssert.equal(isContextTruncated(), false);
-            appendAttributes([, , big]);
-            strictAssert.equal(isContextTruncated(), true);
+            tcAppend([big, big]);
+            strictAssert.equal(tcIsTruncated(), false);
+            tcAppend([, , big]);
+            strictAssert.equal(tcIsTruncated(), true);
             strictAssert.equal(
               decodeHeader(_currentRecordBytes()!).attrsDataSize,
               514,
             );
             const small = 'x'.repeat(30);
-            appendAttributes([, , , small]);
+            tcAppend([, , , small]);
             const decoded = decodeAttrs(_currentRecordBytes()!);
             strictAssert.equal(decoded[0], big);
             strictAssert.equal(decoded[1], big);
             strictAssert.equal(decoded[2], undefined);
             strictAssert.equal(decoded[3], small);
-            strictAssert.equal(isContextTruncated(), true);
+            strictAssert.equal(tcIsTruncated(), true);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
         );
       });
 
       it('propagates through async continuations', async () => {
-        await runWithContext(
+        await tcRun(
           async () => {
-            appendAttributes([, 'after-await']);
+            tcAppend([, 'after-await']);
             await Promise.resolve();
             strictAssert.deepEqual(decodeAttrs(_currentRecordBytes()!), [
               'before',
@@ -661,13 +671,13 @@ function captureBytes(opts: {
 
     describe('isContextTruncated', () => {
       it('returns false outside a context', () => {
-        strictAssert.equal(isContextTruncated(), false);
+        strictAssert.equal(tcIsTruncated(), false);
       });
 
       it('returns false for a non-truncated record', () => {
-        runWithContext(
+        tcRun(
           () => {
-            strictAssert.equal(isContextTruncated(), false);
+            strictAssert.equal(tcIsTruncated(), false);
           },
           {
             traceId: TRACE_ID_BYTES,
@@ -705,13 +715,12 @@ function captureBytes(opts: {
         );
       });
 
-      it('returns an object exposing all five NamedContext methods', () => {
+      it('returns an object exposing the NamedContext methods', () => {
         const named = makeNamedContext(['a']);
+        strictAssert.equal(typeof named.buildContext, 'function');
         strictAssert.equal(typeof named.runWithContext, 'function');
         strictAssert.equal(typeof named.enterWithContext, 'function');
         strictAssert.equal(typeof named.clearContext, 'function');
-        strictAssert.equal(typeof named.appendAttributes, 'function');
-        strictAssert.equal(typeof named.isContextTruncated, 'function');
       });
 
       it('resolves namedAttributes given as an object', () => {
@@ -799,7 +808,7 @@ function captureBytes(opts: {
 
       it('enterWithContext attaches a name-addressed record', () => {
         const named = makeNamedContext(['route']);
-        runWithContext(
+        tcRun(
           () => {
             named.enterWithContext({
               traceId: TRACE_ID_BYTES,
@@ -812,52 +821,25 @@ function captureBytes(opts: {
         );
       });
 
-      it('appendAttributes appends by name', () => {
-        const named = makeNamedContext([
-          'http.method',
-          'http.route',
-          'http.status',
-        ]);
-        named.runWithContext(
-          () => {
-            named.appendAttributes({'http.status': '500'});
-            strictAssert.deepEqual(decodeAttrs(_currentRecordBytes()!), [
-              'GET',
-              '/x',
-              '500',
-            ]);
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: {'http.method': 'GET', 'http.route': '/x'},
-          },
-        );
-      });
-
-      it('appendAttributes rejects unknown names', () => {
+      it('buildContext rejects unknown names', () => {
         const named = makeNamedContext(['known']);
-        named.runWithContext(
-          () => {
-            strictAssert.throws(
-              () => named.appendAttributes({unknown: 'v'}),
-              /unknown attribute name: unknown/,
-            );
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: {known: 'k'},
-          },
+        strictAssert.throws(
+          () =>
+            named.buildContext({
+              traceId: TRACE_ID_BYTES,
+              spanId: SPAN_ID_BYTES,
+              namedAttributes: {unknown: 'v'},
+            }),
+          /unknown attribute name: unknown/,
         );
       });
 
-      it('isContextTruncated mirrors the top-level function', () => {
+      it('isTruncated reflects appended-then-overflowed entries', () => {
         const named = makeNamedContext(['a', 'b', 'c']);
         named.runWithContext(
           () => {
-            strictAssert.equal(named.isContextTruncated(), false);
-            appendAttributes([
+            strictAssert.equal(tcIsTruncated(), false);
+            tcAppend([
               ,
               ,
               'c'.repeat(255),
@@ -868,7 +850,7 @@ function captureBytes(opts: {
               ,
               'e'.repeat(255),
             ]);
-            strictAssert.equal(named.isContextTruncated(), true);
+            strictAssert.equal(tcIsTruncated(), true);
           },
           {
             traceId: TRACE_ID_BYTES,

@@ -63,11 +63,10 @@ export const heap = {
 // Node 24+ by default) only; degrades to no-ops on other platforms / Node
 // versions.
 export const otelThreadCtx = {
+  CtxWrap: otelThreadCtxModule.CtxWrap,
+  getContext: otelThreadCtxModule.getContext,
+  setContext: otelThreadCtxModule.setContext,
   runWithContext: otelThreadCtxModule.runWithContext,
-  enterWithContext: otelThreadCtxModule.enterWithContext,
-  clearContext: otelThreadCtxModule.clearContext,
-  appendAttributes: otelThreadCtxModule.appendAttributes,
-  isContextTruncated: otelThreadCtxModule.isContextTruncated,
   makeNamedContext: otelThreadCtxModule.makeNamedContext,
 };
 
