@@ -16,6 +16,7 @@
 import {writeFileSync} from 'fs';
 
 import * as heapProfiler from './heap-profiler';
+import * as otelThreadCtxModule from './otel-thread-ctx';
 import {encodeSync} from './profile-encoder';
 import * as timeProfiler from './time-profiler';
 export {
@@ -55,6 +56,19 @@ export const heap = {
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,
   CallbackMode: heapProfiler.CallbackMode,
+};
+
+// Writer for the OpenTelemetry Thread Local Context Record (OTEP-4947).
+// Linux + AsyncContextFrame (Node 22 with --experimental-async-context-frame,
+// Node 24+ by default) only; degrades to no-ops on other platforms / Node
+// versions.
+export const otelThreadCtx = {
+  runWithContext: otelThreadCtxModule.runWithContext,
+  enterWithContext: otelThreadCtxModule.enterWithContext,
+  clearContext: otelThreadCtxModule.clearContext,
+  appendAttributes: otelThreadCtxModule.appendAttributes,
+  isContextTruncated: otelThreadCtxModule.isContextTruncated,
+  makeNamedContext: otelThreadCtxModule.makeNamedContext,
 };
 
 // If loaded with --require, start profiling.
