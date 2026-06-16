@@ -25,7 +25,7 @@ import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
 import {
-  CtxWrap,
+  ThreadContext,
   getContext,
   makeNamedContext,
   runWithContext,
@@ -34,7 +34,7 @@ import {
 } from '../src/otel-thread-ctx';
 
 // Helpers bridging the old positional-attrs test shape to the new
-// CtxWrap-first API.
+// ThreadContext-first API.
 interface PosOpts {
   traceId: Uint8Array;
   spanId: Uint8Array;
@@ -42,12 +42,12 @@ interface PosOpts {
 }
 function tcRun<T>(fn: () => T, opts: PosOpts): T {
   return runWithContext(
-    new CtxWrap(opts.traceId, opts.spanId, opts.attributes),
+    new ThreadContext(opts.traceId, opts.spanId, opts.attributes),
     fn,
   );
 }
 function tcEnter(opts: PosOpts): void {
-  setContext(new CtxWrap(opts.traceId, opts.spanId, opts.attributes));
+  setContext(new ThreadContext(opts.traceId, opts.spanId, opts.attributes));
 }
 function tcClear(): void {
   setContext(undefined);
@@ -152,7 +152,7 @@ function captureBytes(opts: {
 (isLinux && isAsyncContextFrameAvailable ? describe : describe.skip)(
   'OTEP-4947 thread context (Linux-only)',
   () => {
-    describe('CtxWrap construction', () => {
+    describe('ThreadContext construction', () => {
       it('accepts Uint8Array trace and span IDs', () => {
         const bytes = captureBytes({
           traceId: TRACE_ID_BYTES,

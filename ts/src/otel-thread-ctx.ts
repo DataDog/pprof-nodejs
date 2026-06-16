@@ -35,7 +35,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';
  * `keys` array passed to {@link makeNamedContext}. Values are coerced to
  * strings via `toString`. Values longer than 255 UTF-8 bytes are silently
  * truncated, and attributes that would overflow the 612-byte payload cap
- * are silently dropped (see {@link CtxWrap.isTruncated}). Names that
+ * are silently dropped (see {@link ThreadContext.isTruncated}). Names that
  * aren't in the key map throw.
  */
 export interface NamedContextOptions {
@@ -60,18 +60,18 @@ export interface ProcessContextAttributes {
 }
 
 /**
- * A thread-context record. Construct with `new CtxWrap(...)`; install
+ * A thread-context record. Construct with `new ThreadContext(...)`; install
  * with {@link setContext} or {@link runWithContext}. The underlying
  * native record is GC-owned: when no JS or async-context-frame
  * reference survives, it's freed.
  *
- * `appendAttributes` mutates the wrap's record in place. Because every
- * async-context frame that holds the same `CtxWrap` reference observes
+ * `appendAttributes` mutates the context's record in place. Because every
+ * async-context frame that holds the same `ThreadContext` reference observes
  * the same native record buffer, an append is visible across all those
- * frames even when the reallocate path runs (the wrap's internal
+ * frames even when the reallocate path runs (the context's internal
  * pointer is updated, the JS object is not replaced).
  */
-export interface CtxWrap {
+export interface ThreadContext {
   appendAttributes(
     attributes: Array<string | null | undefined> | undefined,
   ): void;
@@ -81,21 +81,21 @@ export interface CtxWrap {
 }
 
 /**
- * Constructor for {@link CtxWrap}. On non-Linux platforms, returns a
+ * Constructor for {@link ThreadContext}. On non-Linux platforms, returns a
  * no-op instance whose methods do nothing — the OTEP-4947 reader
  * contract is ELF-TLSDESC, only meaningful on Linux.
  */
-export interface CtxWrapCtor {
+export interface ThreadContextCtor {
   new (
     traceId: Uint8Array,
     spanId: Uint8Array,
     attributes?: Array<string | null | undefined>,
-  ): CtxWrap;
+  ): ThreadContext;
 }
 
 interface Addon {
-  ctxWrap: CtxWrapCtor;
-  otelThreadCtxStoreAls(als: AsyncLocalStorage<CtxWrap>): void;
+  threadContext: ThreadContextCtor;
+  otelThreadCtxStoreAls(als: AsyncLocalStorage<ThreadContext>): void;
   otelThreadCtxGetStoredAlsHash(): number;
   otelThreadCtxWrappedObjectOffset: number;
   otelThreadCtxTaggedSize: number;
@@ -104,12 +104,12 @@ interface Addon {
 /**
  * Object returned by {@link makeNamedContext}. Resolves the
  * `namedAttributes` map to a positional array against the key list
- * captured at factory time and builds a {@link CtxWrap}; convenience
+ * captured at factory time and builds a {@link ThreadContext}; convenience
  * methods compose with {@link setContext} / {@link runWithContext}.
  */
 export interface NamedContext {
-  /** Allocate a CtxWrap with attributes resolved positionally by name. */
-  buildContext(opts: NamedContextOptions): CtxWrap;
+  /** Allocate a ThreadContext with attributes resolved positionally by name. */
+  buildContext(opts: NamedContextOptions): ThreadContext;
   /** Sugar: `setContext(buildContext(opts))`. */
   enterWithContext(opts: NamedContextOptions): void;
   /** Sugar: `runWithContext(buildContext(opts), fn)`. */
@@ -129,29 +129,32 @@ const SCHEMA_VERSION = 'nodejs_v1';
 let WRAPPED_OBJECT_OFFSET = 24;
 let TAGGED_SIZE = 8;
 
-/** {@inheritDoc CtxWrapCtor} */
-export let CtxWrap: CtxWrapCtor;
+/** {@inheritDoc ThreadContextCtor} */
+export let ThreadContext: ThreadContextCtor;
 
 /**
- * Returns the {@link CtxWrap} currently attached to the active
+ * Returns the {@link ThreadContext} currently attached to the active
  * async-context frame, or `undefined` if none is.
  */
-export let getContext: () => CtxWrap | undefined;
+export let getContext: () => ThreadContext | undefined;
 
 /**
- * Attach a {@link CtxWrap} (or `undefined` to detach) to the current
+ * Attach a {@link ThreadContext} (or `undefined` to detach) to the current
  * async-context frame. Idempotent for `setContext(undefined)` when no
- * frame has been installed. Re-installing the same wrap reference is
- * cheap (no allocation); per-span caching of the wrap on the caller
+ * frame has been installed. Re-installing the same context reference is
+ * cheap (no allocation); per-span caching of the context on the caller
  * side is the intended usage pattern.
  */
-export let setContext: (wrap: CtxWrap | undefined) => void;
+export let setContext: (context: ThreadContext | undefined) => void;
 
 /**
  * As {@link setContext}, but scoped to the callback's execution. After
  * `fn` returns, the previous context is restored.
  */
-export let runWithContext: <T>(wrap: CtxWrap | undefined, fn: () => T) => T;
+export let runWithContext: <T>(
+  context: ThreadContext | undefined,
+  fn: () => T,
+) => T;
 
 // Debug accessor (not part of the stable API; for tests / reader dev).
 export let _currentRecordBytes: () => Uint8Array | undefined = () => undefined;
@@ -163,9 +166,9 @@ if (process.platform === 'linux') {
   WRAPPED_OBJECT_OFFSET = addon.otelThreadCtxWrappedObjectOffset;
   TAGGED_SIZE = addon.otelThreadCtxTaggedSize;
 
-  CtxWrap = addon.ctxWrap;
+  ThreadContext = addon.threadContext;
 
-  let als: AsyncLocalStorage<CtxWrap> | undefined;
+  let als: AsyncLocalStorage<ThreadContext> | undefined;
 
   function asyncContextFrameError(): string | undefined {
     const [major] = process.versions.node.split('.').map(Number);
@@ -182,7 +185,7 @@ if (process.platform === 'linux') {
     return 'Node major versions prior to v22 do not support the feature at all';
   }
 
-  function ensureHook(): AsyncLocalStorage<CtxWrap> {
+  function ensureHook(): AsyncLocalStorage<ThreadContext> {
     if (als) return als;
     const err = asyncContextFrameError();
     if (err) {
@@ -190,46 +193,49 @@ if (process.platform === 'linux') {
         `otel thread-ctx writer requires async_context_frame support, which is unavailable: ${err}.`,
       );
     }
-    als = new AsyncLocalStorage<CtxWrap>();
+    als = new AsyncLocalStorage<ThreadContext>();
     addon.otelThreadCtxStoreAls(als);
     return als;
   }
 
-  getContext = function (): CtxWrap | undefined {
+  getContext = function (): ThreadContext | undefined {
     return als ? als.getStore() : undefined;
   };
 
-  setContext = function (wrap: CtxWrap | undefined): void {
-    if (wrap === undefined) {
+  setContext = function (context: ThreadContext | undefined): void {
+    if (context === undefined) {
       // Idempotent: clearing when the hook hasn't been installed (no
       // prior setContext call) is a no-op.
       if (!als) return;
-      als.enterWith(undefined as unknown as CtxWrap);
+      als.enterWith(undefined as unknown as ThreadContext);
       return;
     }
-    ensureHook().enterWith(wrap);
+    ensureHook().enterWith(context);
   };
 
-  runWithContext = function <T>(wrap: CtxWrap | undefined, fn: () => T): T {
-    if (wrap === undefined) {
+  runWithContext = function <T>(
+    context: ThreadContext | undefined,
+    fn: () => T,
+  ): T {
+    if (context === undefined) {
       if (!als) return fn();
-      return als.run(undefined as unknown as CtxWrap, fn);
+      return als.run(undefined as unknown as ThreadContext, fn);
     }
-    return ensureHook().run(wrap, fn);
+    return ensureHook().run(context, fn);
   };
 
   _currentRecordBytes = function (): Uint8Array | undefined {
     if (!als) return undefined;
-    const wrap = als.getStore();
-    return wrap ? wrap.debugBytes() : undefined;
+    const context = als.getStore();
+    return context ? context.debugBytes() : undefined;
   };
 } else {
   // Non-Linux degradation. The writer's reader contract is ELF-TLSDESC,
   // meaningful only on Linux; on other platforms we still want the API
   // to be callable so consumers don't have to gate every call site —
-  // construction succeeds but produces an inert wrap, and setContext /
+  // construction succeeds but produces an inert context, and setContext /
   // runWithContext don't actually wire anything into AsyncLocalStorage.
-  class NoopCtxWrap implements CtxWrap {
+  class NoopThreadContext implements ThreadContext {
     appendAttributes(): void {}
     isTruncated(): boolean {
       return false;
@@ -238,18 +244,21 @@ if (process.platform === 'linux') {
       return new Uint8Array(0);
     }
   }
-  CtxWrap = NoopCtxWrap as CtxWrapCtor;
+  ThreadContext = NoopThreadContext as ThreadContextCtor;
   getContext = function (): undefined {
     return undefined;
   };
   setContext = function (): void {};
-  runWithContext = function <T>(_wrap: CtxWrap | undefined, fn: () => T): T {
+  runWithContext = function <T>(
+    _context: ThreadContext | undefined,
+    fn: () => T,
+  ): T {
     return fn();
   };
 }
 
 /**
- * Build name-addressed wrappers around {@link CtxWrap},
+ * Build name-addressed wrappers around {@link ThreadContext},
  * {@link setContext}, and {@link runWithContext}. The supplied
  * `keys` array is the same string list the caller publishes (or has
  * published) as the `threadlocal.attribute_key_map` resource attribute
@@ -308,11 +317,11 @@ export function makeNamedContext(keys: string[]): NamedContext {
     return attributes;
   }
 
-  function buildContext(opts: NamedContextOptions): CtxWrap {
+  function buildContext(opts: NamedContextOptions): ThreadContext {
     if (!opts || typeof opts !== 'object') {
       throw new TypeError('options object required');
     }
-    return new CtxWrap(
+    return new ThreadContext(
       opts.traceId,
       opts.spanId,
       resolveAttributes(opts.namedAttributes),
