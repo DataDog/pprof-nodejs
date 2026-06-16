@@ -21,3 +21,10 @@ updates:
       - dependencies
       - javascript
       - semver-patch
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
