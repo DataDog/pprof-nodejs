@@ -59,7 +59,8 @@
     "sinon": "^22.0.0",
     "source-map-support": "^0.5.21",
     "tmp": "0.2.7",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "node-addon-api": "^8.0.0"
   },
   "files": [
     "out/src",
