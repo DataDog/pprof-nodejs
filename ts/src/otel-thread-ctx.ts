@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+// Vendored from https://github.com/polarsignals/custom-labels/tree/otel-thread-ctx-wip/js/
+// (originally js/index.js + js/index.d.ts, merged into TypeScript). Kept
+// as a near-verbatim copy: edits should ideally land upstream first and
+// be ported here, so the two stay in sync. We plan to drop this vendored
+// copy once the upstream package is suitable to depend on directly.
+
 // Node.js writer for the OpenTelemetry Thread Local Context Record
 // (OTEP-4947), discoverable from an out-of-process reader via the
 // `otel_thread_ctx_nodejs_v1` thread-local symbol exported by

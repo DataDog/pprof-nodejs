@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+// Vendored from https://github.com/polarsignals/custom-labels/tree/otel-thread-ctx-wip/js/test/
+// (originally js/test/test.js, ported to TypeScript). Kept as a
+// near-verbatim copy: edits should ideally land upstream first and be
+// ported here, so the two stay in sync. We plan to drop this vendored
+// copy once the upstream package is suitable to depend on directly.
+
 // Tests intentionally use array holes to verify the writer's positional
 // attribute encoding (where a hole means "no value at this key index").
 /* eslint-disable no-sparse-arrays */

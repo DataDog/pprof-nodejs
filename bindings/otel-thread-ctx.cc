@@ -14,6 +14,13 @@
  * limitations under the License.
  */
 
+// Vendored from
+// https://github.com/polarsignals/custom-labels/tree/otel-thread-ctx-wip/js/
+// (originally js/addon.cpp). Kept as a near-verbatim copy: edits should
+// ideally land upstream first and be ported here, so the two stay in
+// sync. We plan to drop this vendored copy once the upstream package is
+// suitable to depend on directly.
+
 // Node.js writer for the OTEP-4947 Thread Local Context Record, adapted for
 // the Node.js asynchronous context model. The record is wrapped in a JS
 // object (CtxWrap) and stored in an AsyncLocalStorage instance; an
