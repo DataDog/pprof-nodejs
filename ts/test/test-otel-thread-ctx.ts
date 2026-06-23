@@ -865,18 +865,18 @@ function captureBytes(opts: {
           const keys = ['http.method', 'http.route', 'user.id'];
           const named = makeNamedContext(keys);
           const pca = named.processContextAttributes;
-          strictAssert.equal(pca['threadlocal.schema_version'], 'nodejs_v1');
-          strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
           strictAssert.equal(
-            pca['threadlocal.nodejs_v1.wrapped_object_offset'],
-            24,
+            pca['threadlocal.schema_version'],
+            'nodejs_v1_dev',
           );
-          strictAssert.equal(pca['threadlocal.nodejs_v1.tagged_size'], 8);
+          strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
+          strictAssert.equal(pca['threadlocal.wrapped_object_offset'], 24);
+          strictAssert.equal(pca['threadlocal.tagged_size'], 8);
           strictAssert.deepEqual(Object.keys(pca).sort(), [
             'threadlocal.attribute_key_map',
-            'threadlocal.nodejs_v1.tagged_size',
-            'threadlocal.nodejs_v1.wrapped_object_offset',
             'threadlocal.schema_version',
+            'threadlocal.tagged_size',
+            'threadlocal.wrapped_object_offset',
           ]);
         });
 

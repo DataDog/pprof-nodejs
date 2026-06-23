@@ -53,10 +53,10 @@ export interface NamedContextOptions {
  * application hands to its OTEP-4719 process-context publisher.
  */
 export interface ProcessContextAttributes {
-  readonly 'threadlocal.schema_version': 'nodejs_v1';
+  readonly 'threadlocal.schema_version': 'nodejs_v1_dev';
   readonly 'threadlocal.attribute_key_map': readonly string[];
-  readonly 'threadlocal.nodejs_v1.wrapped_object_offset': number;
-  readonly 'threadlocal.nodejs_v1.tagged_size': number;
+  readonly 'threadlocal.wrapped_object_offset': number;
+  readonly 'threadlocal.tagged_size': number;
 }
 
 /**
@@ -119,7 +119,7 @@ export interface NamedContext {
   readonly processContextAttributes: ProcessContextAttributes;
 }
 
-const SCHEMA_VERSION = 'nodejs_v1';
+const SCHEMA_VERSION = 'nodejs_v1_dev';
 
 // V8 layout constants the addon captured from the V8 headers Node bundles.
 // On non-Linux these fall back to values matching Node's standard build
@@ -331,8 +331,8 @@ export function makeNamedContext(keys: string[]): NamedContext {
   const processContextAttributes = Object.freeze({
     'threadlocal.schema_version': SCHEMA_VERSION,
     'threadlocal.attribute_key_map': Object.freeze(keys.slice()),
-    'threadlocal.nodejs_v1.wrapped_object_offset': WRAPPED_OBJECT_OFFSET,
-    'threadlocal.nodejs_v1.tagged_size': TAGGED_SIZE,
+    'threadlocal.wrapped_object_offset': WRAPPED_OBJECT_OFFSET,
+    'threadlocal.tagged_size': TAGGED_SIZE,
   }) as ProcessContextAttributes;
 
   return {
