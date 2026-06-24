@@ -67,9 +67,9 @@ export interface ProcessContextAttributes {
 
 /**
  * A thread-context record. Construct with `new ThreadContext(...)`; install
- * with {@link setContext} or {@link runWithContext}. The underlying
- * native record is GC-owned: when no JS or async-context-frame
- * reference survives, it's freed.
+ * via the {@link enter} or {@link run} instance methods. The underlying
+ * native record is GC-owned: when no JS or async-context-frame reference
+ * survives, it's freed.
  *
  * `appendAttributes` mutates the context's record in place. Because every
  * async-context frame that holds the same `ThreadContext` reference observes
@@ -84,6 +84,26 @@ export interface ThreadContext {
   isTruncated(): boolean;
   /** Debug-only: returns the on-the-wire record bytes. Not stable. */
   debugBytes(): Uint8Array;
+
+  /**
+   * Attach this context to the current async-context frame (and every
+   * frame derived from it until the frame ends or {@link clearContext}
+   * detaches it). Re-installing the same context reference is cheap (no
+   * allocation); per-span caching of the context on the caller side is
+   * the intended usage pattern.
+   *
+   * On non-Linux platforms this is a no-op.
+   */
+  enter(): void;
+
+  /**
+   * Attach this context for the duration of `fn`. Equivalent to
+   * `als.run(this, fn)` — after `fn` returns, the previous context is
+   * restored. Returns whatever `fn` returns; if `fn` returns a Promise,
+   * the same Promise is propagated. On non-Linux platforms simply
+   * invokes `fn`.
+   */
+  run<T>(fn: () => T): T;
 }
 
 /**
@@ -97,6 +117,7 @@ export interface ThreadContextCtor {
     spanId: Uint8Array,
     attributes?: Array<string | null | undefined>,
   ): ThreadContext;
+  readonly prototype: ThreadContext;
 }
 
 interface Addon {
@@ -111,16 +132,17 @@ interface Addon {
  * Object returned by {@link makeNamedContext}. Resolves the
  * `namedAttributes` map to a positional array against the key list
  * captured at factory time and builds a {@link ThreadContext}; convenience
- * methods compose with {@link setContext} / {@link runWithContext}.
+ * methods compose with {@link ThreadContext.enter} /
+ * {@link ThreadContext.run}.
  */
 export interface NamedContext {
   /** Allocate a ThreadContext with attributes resolved positionally by name. */
   buildContext(opts: NamedContextOptions): ThreadContext;
-  /** Sugar: `setContext(buildContext(opts))`. */
+  /** Sugar: `buildContext(opts).enter()`. */
   enterWithContext(opts: NamedContextOptions): void;
-  /** Sugar: `runWithContext(buildContext(opts), fn)`. */
+  /** Sugar: `buildContext(opts).run(fn)`. */
   runWithContext<T>(fn: () => T, opts: NamedContextOptions): T;
-  /** Sugar: `setContext(undefined)`. */
+  /** Sugar: re-export of the module-level {@link clearContext}. */
   clearContext(): void;
   readonly processContextAttributes: ProcessContextAttributes;
 }
@@ -145,22 +167,11 @@ export let ThreadContext: ThreadContextCtor;
 export let getContext: () => ThreadContext | undefined;
 
 /**
- * Attach a {@link ThreadContext} (or `undefined` to detach) to the current
- * async-context frame. Idempotent for `setContext(undefined)` when no
- * frame has been installed. Re-installing the same context reference is
- * cheap (no allocation); per-span caching of the context on the caller
- * side is the intended usage pattern.
+ * Detach any {@link ThreadContext} from the current async-context frame.
+ * Idempotent when no context is attached. On non-Linux platforms this is
+ * a no-op.
  */
-export let setContext: (context: ThreadContext | undefined) => void;
-
-/**
- * As {@link setContext}, but scoped to the callback's execution. After
- * `fn` returns, the previous context is restored.
- */
-export let runWithContext: <T>(
-  context: ThreadContext | undefined,
-  fn: () => T,
-) => T;
+export let clearContext: () => void;
 
 // Debug accessor (not part of the stable API; for tests / reader dev).
 export let _currentRecordBytes: () => Uint8Array | undefined = () => undefined;
@@ -208,26 +219,25 @@ if (process.platform === 'linux') {
     return als ? als.getStore() : undefined;
   };
 
-  setContext = function (context: ThreadContext | undefined): void {
-    if (context === undefined) {
-      // Idempotent: clearing when the hook hasn't been installed (no
-      // prior setContext call) is a no-op.
-      if (!als) return;
-      als.enterWith(undefined as unknown as ThreadContext);
-      return;
-    }
-    ensureHook().enterWith(context);
+  // Idempotent: clearing when the hook hasn't been installed (no prior
+  // enter / run on a ThreadContext) is a no-op.
+  clearContext = function (): void {
+    if (!als) return;
+    als.enterWith(undefined as unknown as ThreadContext);
   };
 
-  runWithContext = function <T>(
-    context: ThreadContext | undefined,
+  // Install the active-context channel on the ThreadContext prototype so
+  // the only way to push a ThreadContext into our AsyncLocalStorage is
+  // via the context itself — callers can't poison the ALS with an
+  // arbitrary object.
+  ThreadContext.prototype.enter = function (this: ThreadContext): void {
+    ensureHook().enterWith(this);
+  };
+  ThreadContext.prototype.run = function <T>(
+    this: ThreadContext,
     fn: () => T,
   ): T {
-    if (context === undefined) {
-      if (!als) return fn();
-      return als.run(undefined as unknown as ThreadContext, fn);
-    }
-    return ensureHook().run(context, fn);
+    return ensureHook().run(this, fn);
   };
 
   _currentRecordBytes = function (): Uint8Array | undefined {
@@ -239,8 +249,9 @@ if (process.platform === 'linux') {
   // Non-Linux degradation. The writer's reader contract is ELF-TLSDESC,
   // meaningful only on Linux; on other platforms we still want the API
   // to be callable so consumers don't have to gate every call site —
-  // construction succeeds but produces an inert context, and setContext /
-  // runWithContext don't actually wire anything into AsyncLocalStorage.
+  // construction succeeds but produces an inert context, and the
+  // enter/run/clearContext entry points don't wire anything into
+  // AsyncLocalStorage.
   class NoopThreadContext implements ThreadContext {
     appendAttributes(): void {}
     isTruncated(): boolean {
@@ -249,23 +260,20 @@ if (process.platform === 'linux') {
     debugBytes(): Uint8Array {
       return new Uint8Array(0);
     }
+    enter(): void {}
+    run<T>(fn: () => T): T {
+      return fn();
+    }
   }
   ThreadContext = NoopThreadContext as ThreadContextCtor;
   getContext = function (): undefined {
     return undefined;
   };
-  setContext = function (): void {};
-  runWithContext = function <T>(
-    _context: ThreadContext | undefined,
-    fn: () => T,
-  ): T {
-    return fn();
-  };
+  clearContext = function (): void {};
 }
 
 /**
- * Build name-addressed wrappers around {@link ThreadContext},
- * {@link setContext}, and {@link runWithContext}. The supplied
+ * Build a name-addressed factory for {@link ThreadContext}. The supplied
  * `keys` array is the same string list the caller publishes (or has
  * published) as the `threadlocal.attribute_key_map` resource attribute
  * in the OTEP-4719 process context: index N in this array is the uint8
@@ -344,13 +352,13 @@ export function makeNamedContext(keys: string[]): NamedContext {
   return {
     buildContext,
     enterWithContext(opts: NamedContextOptions): void {
-      setContext(buildContext(opts));
+      buildContext(opts).enter();
     },
     runWithContext<T>(fn: () => T, opts: NamedContextOptions): T {
-      return runWithContext(buildContext(opts), fn);
+      return buildContext(opts).run(fn);
     },
     clearContext(): void {
-      setContext(undefined);
+      clearContext();
     },
     processContextAttributes,
   };

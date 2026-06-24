@@ -65,8 +65,7 @@ export const heap = {
 export const otelThreadCtx = {
   ThreadContext: otelThreadCtxModule.ThreadContext,
   getContext: otelThreadCtxModule.getContext,
-  setContext: otelThreadCtxModule.setContext,
-  runWithContext: otelThreadCtxModule.runWithContext,
+  clearContext: otelThreadCtxModule.clearContext,
   makeNamedContext: otelThreadCtxModule.makeNamedContext,
 };
 

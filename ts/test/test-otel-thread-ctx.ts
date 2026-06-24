@@ -33,9 +33,8 @@ import {join} from 'node:path';
 import {
   ThreadContext,
   getContext,
+  clearContext,
   makeNamedContext,
-  runWithContext,
-  setContext,
   _currentRecordBytes,
 } from '../src/otel-thread-ctx';
 
@@ -47,16 +46,10 @@ interface PosOpts {
   attributes?: Array<string | null | undefined>;
 }
 function tcRun<T>(fn: () => T, opts: PosOpts): T {
-  return runWithContext(
-    new ThreadContext(opts.traceId, opts.spanId, opts.attributes),
-    fn,
-  );
+  return new ThreadContext(opts.traceId, opts.spanId, opts.attributes).run(fn);
 }
 function tcEnter(opts: PosOpts): void {
-  setContext(new ThreadContext(opts.traceId, opts.spanId, opts.attributes));
-}
-function tcClear(): void {
-  setContext(undefined);
+  new ThreadContext(opts.traceId, opts.spanId, opts.attributes).enter();
 }
 function tcAppend(
   attributes: Array<string | null | undefined> | undefined,
@@ -465,7 +458,7 @@ function captureBytes(opts: {
         tcRun(
           () => {
             strictAssert.ok(_currentRecordBytes());
-            tcClear();
+            clearContext();
             strictAssert.equal(_currentRecordBytes(), undefined);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
@@ -476,7 +469,7 @@ function captureBytes(opts: {
         tcRun(
           () => {
             strictAssert.ok(getContext() !== undefined);
-            tcClear();
+            clearContext();
             strictAssert.equal(getContext(), undefined);
             strictAssert.equal(tcIsTruncated(), false);
           },
@@ -485,12 +478,12 @@ function captureBytes(opts: {
       });
 
       it('is idempotent (calling with no context or twice is a no-op)', () => {
-        tcClear();
+        clearContext();
         strictAssert.equal(_currentRecordBytes(), undefined);
         tcRun(
           () => {
-            tcClear();
-            tcClear();
+            clearContext();
+            clearContext();
             strictAssert.equal(_currentRecordBytes(), undefined);
           },
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
@@ -500,7 +493,7 @@ function captureBytes(opts: {
       it('lets a nested runWithContext re-establish a record', () => {
         tcRun(
           () => {
-            tcClear();
+            clearContext();
             const innerSpan = bytesFromHex('aabbccddeeff0011');
             tcRun(
               () => {
@@ -522,7 +515,7 @@ function captureBytes(opts: {
       it('lets enterWithContext re-establish a record', () => {
         tcRun(
           () => {
-            tcClear();
+            clearContext();
             const newSpan = bytesFromHex('aabbccddeeff0011');
             tcEnter({traceId: TRACE_ID_BYTES, spanId: newSpan});
             strictAssert.deepEqual(
