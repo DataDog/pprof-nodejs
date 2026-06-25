@@ -15,9 +15,9 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
       - run: yarn
