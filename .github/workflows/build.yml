@@ -13,8 +13,8 @@ jobs:
         version: [18, 20, 22, 24, 25, 26]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.version }}
       - run: npm install
@@ -26,8 +26,8 @@ jobs:
         version: [18, 20, 22, 24, 25, 26]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.version }}
       - run: sudo apt-get update && sudo apt-get install valgrind
