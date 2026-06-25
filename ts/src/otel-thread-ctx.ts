@@ -31,32 +31,9 @@ import {join} from 'path';
 import {AsyncLocalStorage} from 'node:async_hooks';
 
 /**
- * Inputs to {@link NamedContext.buildContext} (and the convenience
- * methods that delegate to it).
- *
- * `traceId` and `spanId` are passed as raw bytes (a `Uint8Array` of length
- * 16 and 8 respectively; `Buffer` is acceptable as a subclass).
- *
- * `namedAttributes` are resolved to positional uint8 key indexes via the
- * `keys` array passed to {@link makeNamedContext}. Values are coerced to
- * strings via `toString`. Values longer than 255 UTF-8 bytes are silently
- * truncated, and attributes that would overflow the 612-byte payload cap
- * are silently dropped (see {@link ThreadContext.isTruncated}). Names that
- * aren't in the key map throw.
- */
-export interface NamedContextOptions {
-  traceId: Uint8Array;
-  spanId: Uint8Array;
-  namedAttributes?:
-    | Record<string, unknown>
-    | Map<string, unknown>
-    | Array<[string, unknown]>;
-}
-
-/**
  * OTEP-4719 process-context attributes corresponding to a particular
- * {@link NamedContext}. Spread this into whatever attribute map the
- * application hands to its OTEP-4719 process-context publisher.
+ * key list. Spread this into whatever attribute map the application
+ * hands to its OTEP-4719 process-context publisher.
  */
 export interface ProcessContextAttributes {
   readonly 'threadlocal.schema_version': 'nodejs_v1_dev';
@@ -126,25 +103,6 @@ interface Addon {
   otelThreadCtxGetStoredAlsHash(): number;
   otelThreadCtxWrappedObjectOffset: number;
   otelThreadCtxTaggedSize: number;
-}
-
-/**
- * Object returned by {@link makeNamedContext}. Resolves the
- * `namedAttributes` map to a positional array against the key list
- * captured at factory time and builds a {@link ThreadContext}; convenience
- * methods compose with {@link ThreadContext.enter} /
- * {@link ThreadContext.run}.
- */
-export interface NamedContext {
-  /** Allocate a ThreadContext with attributes resolved positionally by name. */
-  buildContext(opts: NamedContextOptions): ThreadContext;
-  /** Sugar: `buildContext(opts).enter()`. */
-  enterWithContext(opts: NamedContextOptions): void;
-  /** Sugar: `buildContext(opts).run(fn)`. */
-  runWithContext<T>(fn: () => T, opts: NamedContextOptions): T;
-  /** Sugar: re-export of the module-level {@link clearContext}. */
-  clearContext(): void;
-  readonly processContextAttributes: ProcessContextAttributes;
 }
 
 const SCHEMA_VERSION = 'nodejs_v1_dev';
@@ -273,93 +231,40 @@ if (process.platform === 'linux') {
 }
 
 /**
- * Build a name-addressed factory for {@link ThreadContext}. The supplied
- * `keys` array is the same string list the caller publishes (or has
- * published) as the `threadlocal.attribute_key_map` resource attribute
- * in the OTEP-4719 process context: index N in this array is the uint8
- * key index N in the on-the-wire record. The mapping is captured once
- * at factory time.
+ * Returns the OTEP-4719 process-context attributes the caller should
+ * publish so an out-of-process reader can decode the on-the-wire uint8
+ * key indexes back to attribute names. The supplied `keys` array is the
+ * same string list the caller writes into the positional `attributes`
+ * argument of {@link ThreadContext}: index N here is the uint8 key index
+ * N in each record.
+ *
+ * `keys` is validated: must be a string array of length ≤ 256 with no
+ * duplicates.
  */
-export function makeNamedContext(keys: string[]): NamedContext {
+export function getProcessContextAttributes(
+  keys: string[],
+): ProcessContextAttributes {
   if (!Array.isArray(keys)) {
     throw new TypeError('keys must be an array of attribute names');
   }
   if (keys.length > 256) {
     throw new RangeError('keys array exceeds 256 entries');
   }
-  const indexByName = new Map<string, number>();
-  keys.forEach((name, i) => {
+  const seen = new Set<string>();
+  for (let i = 0; i < keys.length; ++i) {
+    const name = keys[i];
     if (typeof name !== 'string') {
       throw new TypeError('every key must be a string');
     }
-    if (indexByName.has(name)) {
-      throw new Error(
-        `duplicate key name at indexes ${indexByName.get(name)} and ${i}: ${name}`,
-      );
+    if (seen.has(name)) {
+      throw new Error(`duplicate key name at index ${i}: ${name}`);
     }
-    indexByName.set(name, i);
-  });
-
-  function resolveAttributes(
-    named:
-      | Record<string, unknown>
-      | Map<string, unknown>
-      | Array<[string, unknown]>
-      | undefined,
-  ): Array<string | null | undefined> | undefined {
-    if (named === null || named === undefined) return undefined;
-    const attributes: Array<string | undefined> = [];
-    const set = (name: string, value: unknown) => {
-      const idx = indexByName.get(name);
-      if (idx === undefined) {
-        throw new Error(`unknown attribute name: ${name}`);
-      }
-      attributes[idx] = String(value);
-    };
-    if (Array.isArray(named)) {
-      for (const [n, v] of named) set(n, v);
-    } else if (named instanceof Map) {
-      for (const [n, v] of named) set(n, v);
-    } else if (typeof named === 'object') {
-      for (const n of Object.keys(named))
-        set(n, (named as Record<string, unknown>)[n]);
-    } else {
-      throw new TypeError(
-        'namedAttributes must be an object, Map, or array of pairs',
-      );
-    }
-    return attributes;
+    seen.add(name);
   }
-
-  function buildContext(opts: NamedContextOptions): ThreadContext {
-    if (!opts || typeof opts !== 'object') {
-      throw new TypeError('options object required');
-    }
-    return new ThreadContext(
-      opts.traceId,
-      opts.spanId,
-      resolveAttributes(opts.namedAttributes),
-    );
-  }
-
-  const processContextAttributes = Object.freeze({
+  return Object.freeze({
     'threadlocal.schema_version': SCHEMA_VERSION,
     'threadlocal.attribute_key_map': Object.freeze(keys.slice()),
     'threadlocal.wrapped_object_offset': WRAPPED_OBJECT_OFFSET,
     'threadlocal.tagged_size': TAGGED_SIZE,
   }) as ProcessContextAttributes;
-
-  return {
-    buildContext,
-    enterWithContext(opts: NamedContextOptions): void {
-      buildContext(opts).enter();
-    },
-    runWithContext<T>(fn: () => T, opts: NamedContextOptions): T {
-      return buildContext(opts).run(fn);
-    },
-    clearContext(): void {
-      clearContext();
-    },
-    processContextAttributes,
-  };
 }

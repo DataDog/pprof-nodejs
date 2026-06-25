@@ -34,7 +34,7 @@ import {
   ThreadContext,
   getContext,
   clearContext,
-  makeNamedContext,
+  getProcessContextAttributes,
   _currentRecordBytes,
 } from '../src/otel-thread-ctx';
 
@@ -526,22 +526,6 @@ function captureBytes(opts: {
           {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
         );
       });
-
-      it('named.clearContext detaches the active record', () => {
-        const named = makeNamedContext(['route']);
-        named.runWithContext(
-          () => {
-            strictAssert.ok(_currentRecordBytes());
-            named.clearContext();
-            strictAssert.equal(_currentRecordBytes(), undefined);
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: {route: '/x'},
-          },
-        );
-      });
     });
 
     describe('appendAttributes', () => {
@@ -685,157 +669,9 @@ function captureBytes(opts: {
           },
         );
       });
-    });
 
-    describe('makeNamedContext', () => {
-      it('rejects non-array keys', () => {
-        strictAssert.throws(
-          () => makeNamedContext({} as unknown as string[]),
-          /must be an array/,
-        );
-      });
-
-      it('rejects more than 256 keys', () => {
-        const tooMany = Array.from({length: 257}, (_, i) => `k${i}`);
-        strictAssert.throws(() => makeNamedContext(tooMany), /exceeds 256/);
-      });
-
-      it('rejects duplicate names', () => {
-        strictAssert.throws(
-          () => makeNamedContext(['x', 'y', 'x']),
-          /duplicate key name/,
-        );
-      });
-
-      it('rejects non-string entries', () => {
-        strictAssert.throws(
-          () => makeNamedContext(['ok', 42 as unknown as string]),
-          /must be a string/,
-        );
-      });
-
-      it('returns an object exposing the NamedContext methods', () => {
-        const named = makeNamedContext(['a']);
-        strictAssert.equal(typeof named.buildContext, 'function');
-        strictAssert.equal(typeof named.runWithContext, 'function');
-        strictAssert.equal(typeof named.enterWithContext, 'function');
-        strictAssert.equal(typeof named.clearContext, 'function');
-      });
-
-      it('resolves namedAttributes given as an object', () => {
-        const named = makeNamedContext(['http.method', 'http.route']);
-        let bytes: Uint8Array | undefined;
-        named.runWithContext(
-          () => {
-            bytes = _currentRecordBytes();
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: {'http.method': 'GET', 'http.route': '/x'},
-          },
-        );
-        strictAssert.deepEqual(decodeAttrs(bytes!), ['GET', '/x']);
-      });
-
-      it('resolves namedAttributes given as a Map', () => {
-        const named = makeNamedContext(['a', 'b']);
-        let bytes: Uint8Array | undefined;
-        named.runWithContext(
-          () => {
-            bytes = _currentRecordBytes();
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: new Map<string, string>([
-              ['a', 'A'],
-              ['b', 'B'],
-            ]),
-          },
-        );
-        strictAssert.deepEqual(decodeAttrs(bytes!), ['A', 'B']);
-      });
-
-      it('resolves namedAttributes given as an array of pairs', () => {
-        const named = makeNamedContext(['a', 'b']);
-        let bytes: Uint8Array | undefined;
-        named.runWithContext(
-          () => {
-            bytes = _currentRecordBytes();
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: [
-              ['a', 'A'],
-              ['b', 'B'],
-            ],
-          },
-        );
-        strictAssert.deepEqual(decodeAttrs(bytes!), ['A', 'B']);
-      });
-
-      it('rejects unknown names', () => {
-        const named = makeNamedContext(['a']);
-        strictAssert.throws(
-          () =>
-            named.runWithContext(() => undefined, {
-              traceId: TRACE_ID_BYTES,
-              spanId: SPAN_ID_BYTES,
-              namedAttributes: {unknown: 'v'},
-            }),
-          /unknown attribute name: unknown/,
-        );
-      });
-
-      it('coerces non-string values', () => {
-        const named = makeNamedContext(['n']);
-        let bytes: Uint8Array | undefined;
-        named.runWithContext(
-          () => {
-            bytes = _currentRecordBytes();
-          },
-          {
-            traceId: TRACE_ID_BYTES,
-            spanId: SPAN_ID_BYTES,
-            namedAttributes: {n: 7},
-          },
-        );
-        strictAssert.deepEqual(decodeAttrs(bytes!), ['7']);
-      });
-
-      it('enterWithContext attaches a name-addressed record', () => {
-        const named = makeNamedContext(['route']);
+      it('reflects appended-then-overflowed entries', () => {
         tcRun(
-          () => {
-            named.enterWithContext({
-              traceId: TRACE_ID_BYTES,
-              spanId: SPAN_ID_BYTES,
-              namedAttributes: {route: '/x'},
-            });
-            strictAssert.deepEqual(decodeAttrs(_currentRecordBytes()!), ['/x']);
-          },
-          {traceId: TRACE_ID_BYTES, spanId: SPAN_ID_BYTES},
-        );
-      });
-
-      it('buildContext rejects unknown names', () => {
-        const named = makeNamedContext(['known']);
-        strictAssert.throws(
-          () =>
-            named.buildContext({
-              traceId: TRACE_ID_BYTES,
-              spanId: SPAN_ID_BYTES,
-              namedAttributes: {unknown: 'v'},
-            }),
-          /unknown attribute name: unknown/,
-        );
-      });
-
-      it('isTruncated reflects appended-then-overflowed entries', () => {
-        const named = makeNamedContext(['a', 'b', 'c']);
-        named.runWithContext(
           () => {
             strictAssert.equal(tcIsTruncated(), false);
             tcAppend([
@@ -854,50 +690,72 @@ function captureBytes(opts: {
           {
             traceId: TRACE_ID_BYTES,
             spanId: SPAN_ID_BYTES,
-            namedAttributes: {a: 'a', b: 'b'},
+            attributes: ['a', 'b'],
           },
         );
       });
+    });
 
-      describe('processContextAttributes', () => {
-        it('matches the input keys plus the V8 layout constants', () => {
-          const keys = ['http.method', 'http.route', 'user.id'];
-          const named = makeNamedContext(keys);
-          const pca = named.processContextAttributes;
-          strictAssert.equal(
-            pca['threadlocal.schema_version'],
-            'nodejs_v1_dev',
-          );
-          strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
-          strictAssert.equal(pca['threadlocal.wrapped_object_offset'], 24);
-          strictAssert.equal(pca['threadlocal.tagged_size'], 8);
-          strictAssert.deepEqual(Object.keys(pca).sort(), [
-            'threadlocal.attribute_key_map',
-            'threadlocal.schema_version',
-            'threadlocal.tagged_size',
-            'threadlocal.wrapped_object_offset',
-          ]);
-        });
+    describe('getProcessContextAttributes', () => {
+      it('rejects non-array keys', () => {
+        strictAssert.throws(
+          () => getProcessContextAttributes({} as unknown as string[]),
+          /must be an array/,
+        );
+      });
 
-        it('is frozen and a defensive copy', () => {
-          const keys = ['http.method', 'http.route'];
-          const named = makeNamedContext(keys);
-          const pca = named.processContextAttributes;
-          strictAssert.ok(Object.isFrozen(pca));
-          strictAssert.ok(
-            Object.isFrozen(pca['threadlocal.attribute_key_map']),
-          );
-          keys.push('mutated.after');
-          strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], [
-            'http.method',
-            'http.route',
-          ]);
-          strictAssert.throws(() => {
-            (pca as unknown as Record<string, string>)[
-              'threadlocal.schema_version'
-            ] = 'tampered';
-          }, /read-only|read only|TypeError/i);
-        });
+      it('rejects more than 256 keys', () => {
+        const tooMany = Array.from({length: 257}, (_, i) => `k${i}`);
+        strictAssert.throws(
+          () => getProcessContextAttributes(tooMany),
+          /exceeds 256/,
+        );
+      });
+
+      it('rejects duplicate names', () => {
+        strictAssert.throws(
+          () => getProcessContextAttributes(['x', 'y', 'x']),
+          /duplicate key name/,
+        );
+      });
+
+      it('rejects non-string entries', () => {
+        strictAssert.throws(
+          () => getProcessContextAttributes(['ok', 42 as unknown as string]),
+          /must be a string/,
+        );
+      });
+
+      it('returns the expected shape', () => {
+        const keys = ['http.method', 'http.route', 'user.id'];
+        const pca = getProcessContextAttributes(keys);
+        strictAssert.equal(pca['threadlocal.schema_version'], 'nodejs_v1_dev');
+        strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
+        strictAssert.equal(pca['threadlocal.wrapped_object_offset'], 24);
+        strictAssert.equal(pca['threadlocal.tagged_size'], 8);
+        strictAssert.deepEqual(Object.keys(pca).sort(), [
+          'threadlocal.attribute_key_map',
+          'threadlocal.schema_version',
+          'threadlocal.tagged_size',
+          'threadlocal.wrapped_object_offset',
+        ]);
+      });
+
+      it('is frozen and a defensive copy', () => {
+        const keys = ['http.method', 'http.route'];
+        const pca = getProcessContextAttributes(keys);
+        strictAssert.ok(Object.isFrozen(pca));
+        strictAssert.ok(Object.isFrozen(pca['threadlocal.attribute_key_map']));
+        keys.push('mutated.after');
+        strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], [
+          'http.method',
+          'http.route',
+        ]);
+        strictAssert.throws(() => {
+          (pca as unknown as Record<string, string>)[
+            'threadlocal.schema_version'
+          ] = 'tampered';
+        }, /read-only|read only|TypeError/i);
       });
     });
 

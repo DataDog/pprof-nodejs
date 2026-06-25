@@ -66,7 +66,7 @@ export const otelThreadCtx = {
   ThreadContext: otelThreadCtxModule.ThreadContext,
   getContext: otelThreadCtxModule.getContext,
   clearContext: otelThreadCtxModule.clearContext,
-  makeNamedContext: otelThreadCtxModule.makeNamedContext,
+  getProcessContextAttributes: otelThreadCtxModule.getProcessContextAttributes,
 };
 
 // If loaded with --require, start profiling.
