@@ -34,6 +34,7 @@ import {isMainThread} from 'worker_threads';
 
 let enabled = false;
 let heapIntervalBytes = 0;
+let heapStackDepth = 0;
 let startedWithAllocations = false;
 
 /*
@@ -86,12 +87,22 @@ export function profile(
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
 ): Profile {
-  return convertProfile(
+  const result = convertProfile(
     v8Profile(),
     ignoreSamplePath,
     sourceMapper,
     generateLabels,
   );
+  // In allocation mode V8 keeps every sampled object (live + collected-by-GC)
+  // in an append-only buffer that's only freed by stopSamplingHeapProfiler.
+  // Without this reset, each call to getAllocationProfile re-reads the entire
+  // history, so alloc_* totals grow linearly with wall-clock time and V8's
+  // internal sample buffer leaks for the lifetime of the process.
+  if (startedWithAllocations) {
+    stopSamplingHeapProfiler();
+    startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, true);
+  }
+  return result;
 }
 
 export function convertProfile(
@@ -193,6 +204,7 @@ export function start(
     );
   }
   heapIntervalBytes = intervalBytes;
+  heapStackDepth = stackDepth;
   startedWithAllocations = allocations;
   startSamplingHeapProfiler(intervalBytes, stackDepth, allocations);
   enabled = true;
