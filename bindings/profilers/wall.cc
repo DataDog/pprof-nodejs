@@ -467,7 +467,10 @@ void WallProfiler::Cleanup(Isolate* isolate) {
     if (interceptSignal()) {
       SignalHandler::DecreaseUseCount();
     }
-    Dispose(isolate);
+    // We're running inside the environment cleanup hook itself; Node removes
+    // the hook (and frees its internal record) after we return, so we must not
+    // remove it here — doing so would be a use-after-free. See Dispose().
+    Dispose(isolate, /*removeCleanupHook=*/false);
   }
 }
 
@@ -689,7 +692,7 @@ WallProfiler::~WallProfiler() {
   liveContextPtrHead_ = nullptr;
 }
 
-void WallProfiler::Dispose(Isolate* isolate) {
+void WallProfiler::Dispose(Isolate* isolate, bool removeCleanupHook) {
   if (cpuProfiler_ != nullptr) {
     cpuProfiler_->Dispose();
     cpuProfiler_ = nullptr;
@@ -704,8 +707,10 @@ void WallProfiler::Dispose(Isolate* isolate) {
       isolate->RemoveGCEpilogueCallback(&GCEpilogueCallback, this);
     }
 
-    node::RemoveEnvironmentCleanupHook(
-        isolate, &WallProfiler::CleanupHook, isolate);
+    if (removeCleanupHook) {
+      node::RemoveEnvironmentCleanupHook(
+          isolate, &WallProfiler::CleanupHook, isolate);
+    }
   }
 }
 
