@@ -1,1 +1,2 @@
 leak:CRYPTO_zalloc
+leak:ossl_load_builtin_compressions
