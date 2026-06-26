@@ -113,7 +113,14 @@ class WallProfiler : public Nan::ObjectWrap {
   ContextBuffer contexts_;
 
   ~WallProfiler();
-  void Dispose(v8::Isolate* isolate);
+  // removeCleanupHook must be false when Dispose is called from within the
+  // environment cleanup hook (CleanupHook). Node removes the hook itself after
+  // invoking it and dereferences its internal hook record again afterwards, so
+  // calling node::RemoveEnvironmentCleanupHook from inside the hook frees that
+  // record early and leaves Node reading freed memory (use-after-free crash on
+  // worker termination). In all other (still-running) call sites the hook is
+  // live and must be removed so it doesn't fire later against a dead profiler.
+  void Dispose(v8::Isolate* isolate, bool removeCleanupHook = true);
 
   // A new CPU profiler object will be created each time profiling is started
   // to work around https://bugs.chromium.org/p/v8/issues/detail?id=11051.
