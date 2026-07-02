@@ -19,6 +19,7 @@
 #include <v8.h>
 
 #include "allocation-profile-node.hh"
+#include "otel-thread-ctx.hh"
 #include "profilers/heap.hh"
 #include "profilers/wall.hh"
 #include "translate-time-profile.hh"
@@ -53,5 +54,6 @@ NODE_MODULE_INIT(/* exports, module, context */) {
   dd::TimeProfileNodeView::Init(exports);
   dd::HeapProfiler::Init(exports);
   dd::WallProfiler::Init(exports);
+  dd::OtelThreadCtx::Init(exports);
   Nan::SetMethod(exports, "getNativeThreadId", GetNativeThreadId);
 }

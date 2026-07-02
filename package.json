@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "5.15.1",
+  "version": "5.16.0",
   "description": "pprof support for Node.js",
   "repository": {
     "type": "git",
@@ -16,7 +16,6 @@
     "compile": "tsc -p .",
     "fix": "gts fix",
     "format": "clang-format --style file -i --glob='bindings/**/*.{h,hh,cpp,cc}'",
-    "install": "exit 0",
     "lint": "jsgl --local . && gts check && clang-format --style file -n -Werror --glob='bindings/**/*.{h,hh,cpp,cc}'",
     "prepare": "npm run compile && npm run rebuild",
     "pretest:js-asan": "npm run compile && npm run build:asan",
@@ -29,7 +28,8 @@
     "test:js-tsan": "LD_PRELOAD=`gcc -print-file-name=libtsan.so` mocha out/test/test-*.js",
     "test:js-valgrind": "valgrind --leak-check=full mocha out/test/test-*.js",
     "test:js": "nyc mocha -r source-map-support/register out/test/test-*.js",
-    "test": "npm run test:js"
+    "test": "npm run test:js",
+    "test:docker": "./scripts/docker/run-in-docker.sh"
   },
   "author": {
     "name": "Google Inc."
@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.1",
-    "@types/node": "25.9.1",
+    "@types/node": "25.9.2",
     "@types/semver": "^7.5.8",
     "@types/sinon": "^21.0.1",
     "@types/tmp": "^0.2.3",
@@ -58,7 +58,7 @@
     "semver": "^7.8.1",
     "sinon": "^22.0.0",
     "source-map-support": "^0.5.21",
-    "tmp": "0.2.6",
+    "tmp": "0.2.7",
     "typescript": "^6.0.3"
   },
   "files": [
