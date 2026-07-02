@@ -16,24 +16,17 @@
 
 #include "map-get.hh"
 
-// Find a value in JavaScript map by directly reading the underlying V8 hash
+// Find a value in a JavaScript map by directly reading the underlying V8 hash
 // map.
 //
-// V8 uses TWO internal hash map representations:
-//   1. SmallOrderedHashMap: For small maps (capacity 4-254)
-//      - Metadata stored as uint8_t bytes
-//      - Entry size: 2 (key, value)
-//      - Chain table separate from entries
-//
-//   2. OrderedHashMap: For larger maps (capacity >254)
-//      - Metadata stored as Smis in FixedArray
-//      - Entry size: 3 (key, value, chain)
-//      - Chain stored inline with entries
-//
-// This code handles both types by detecting the table format at runtime.
-// Practical testing shows that at least the AsyncContextFrame maps use the
-// large map format even for small cardinality maps, but just in case we handle
-// both.
+// V8 defines two internal hash map representations: a compact
+// SmallOrderedHashMap (for low-cardinality maps) and the regular
+// OrderedHashMap. However, a JS Map always uses the regular OrderedHashMap:
+// V8's Map constructor hardcodes AllocateOrderedHashMap() and the "start small,
+// then promote" path that could ever install a SmallOrderedHashMap
+// (OrderedHashMapHandler) is test-only, never used by the JSMap/JSSet builtins.
+// We only ever read AsyncContextFrame maps (the CPED map), which are ordinary
+// JS Maps, so we only handle the OrderedHashMap layout here.
 
 #include <cstdint>
 
@@ -49,7 +42,7 @@ using Address = uintptr_t;
 // Heap object tagging
 constexpr int kHeapObjectTag = 1;
 
-// OrderedHashMap/SmallOrderedHashMap shared constants
+// OrderedHashMap constants
 constexpr int kNotFound = -1;
 constexpr int kLoadFactor = 2;
 
@@ -89,7 +82,7 @@ struct JSMapLayout {
   HeapObjectLayout header_;     // Map is a HeapObject
   Address properties_or_hash_;  // not used by us
   Address elements_;            // not used by us
-  // Tagged pointer to a [Small]OrderedHashMapLayout
+  // Tagged pointer to an OrderedHashMapLayout
   Address table_;
 };
 
@@ -100,11 +93,7 @@ struct FixedArrayLayout {
   Address elements_[0];
 };
 
-// NOTE: both OrderedHashMap and SmallOrderedHashMap have compatible method
-// definitions so FindEntryByHash and FindValueByHash can be defined as
-// templated function working on both.
-
-// OrderedHashMap layout (for large maps, capacity >254)
+// OrderedHashMap layout
 // From v8/src/objects/ordered-hash-table.h
 struct OrderedHashMapLayout {
   FixedArrayLayout fixedArray_;  // OrderedHashMap is a FixedArray
@@ -173,90 +162,14 @@ struct OrderedHashMapLayout {
   }
 };
 
-// SmallOrderedHashMap layout (for small maps, capacity 4-254)
-// Memory layout (stores metadata as uint8_t, not Smis):
-//   [0]: map pointer (HeapObject)
-//   [kHeaderSize + 0]: number_of_elements (uint8)
-//   [kHeaderSize + 1]: number_of_deleted_elements (uint8)
-//   [kHeaderSize + 2]: number_of_buckets (uint8)
-//   [kHeaderSize + 3...]: padding (5 bytes on 64-bit, 1 byte on 32-bit)
-//   [DataTableStartOffset...]: data table (key-value pairs as Tagged)
-//   [...]: hash table (uint8 bucket indices)
-//   [...]: chain table (uint8 next entry indices)
-//
-// Each entry is 2 Tagged elements (kEntrySize = 2):
-//   [0]: key (Tagged Object)
-//   [1]: value (Tagged Object)
-//
-// From v8/src/objects/ordered-hash-table.h
-struct SmallOrderedHashMapLayout {
-  HeapObjectLayout header_;
-  uint8_t number_of_elements_;
-  uint8_t number_of_deleted_elements_;
-  uint8_t number_of_buckets_;
-  uint8_t padding_[5];  // 5 bytes on 64-bit
-  // Variable length:
-  // - Address data_table_[capacity * kEntrySize]  // Keys and values
-  // - uint8_t hash_table_[number_of_buckets_]     // Bucket -> first entry
-  // - uint8_t chain_table_[capacity]              // Entry -> next entry
-  Address data_table_[0];
-
-  // Constants for entry structure
-  static constexpr int kEntrySize = 2;
-  static constexpr int kKeyOffset = 0;
-  static constexpr int kValueOffset = 1;
-  static constexpr int kNotFoundValue = 255;
-
-  // Get capacity from number of buckets
-  int Capacity() const { return number_of_buckets_ * kLoadFactor; }
-
-  int NumberOfBuckets() const { return number_of_buckets_; }
-
-  int GetEntryCount() const {
-    return number_of_elements_ + number_of_deleted_elements_;
-  }
-
-  const uint8_t* GetHashTable() const {
-    return reinterpret_cast<const uint8_t*>(data_table_ +
-                                            Capacity() * kEntrySize);
-  }
-
-  const uint8_t* GetChainTable() const {
-    return GetHashTable() + number_of_buckets_;
-  }
-
-  // Get key at entry index
-  Address GetKey(int entry) const {
-    return data_table_[entry * kEntrySize + kKeyOffset];
-  }
-
-  // Get value at entry index
-  Address GetValue(int entry) const {
-    return data_table_[entry * kEntrySize + kValueOffset];
-  }
-
-  // Get first entry in bucket
-  uint8_t GetFirstEntry(int bucket) const {
-    const uint8_t* hash_table = GetHashTable();
-    return hash_table[bucket];
-  }
-
-  // Get next entry in chain
-  uint8_t GetNextChainEntry(int entry) const {
-    const uint8_t* chain_table = GetChainTable();
-    return chain_table[entry];
-  }
-};
-
 // ============================================================================
-// Templated Hash Table Lookup
+// Hash Table Lookup
 // ============================================================================
 
-// Find an entry by a key and its hash in any hash table layout
-// Template parameter LayoutT should be either OrderedHashMapLayout or
-// SmallOrderedHashMapLayout
-template <typename LayoutT>
-int FindEntryByHash(const LayoutT* layout, int hash, Address key_to_find) {
+// Find an entry by a key and its hash in an OrderedHashMap.
+int FindEntryByHash(const OrderedHashMapLayout* layout,
+                    int hash,
+                    Address key_to_find) {
   const int entry_count = layout->GetEntryCount();
   const int bucket = hash & (layout->NumberOfBuckets() - 1);
   int entry = layout->GetFirstEntry(bucket);
@@ -266,8 +179,8 @@ int FindEntryByHash(const LayoutT* layout, int hash, Address key_to_find) {
   // reason the chain is cyclical. Also, every entry value must be between
   // [0, GetEntryCount).
   for (int max_entries_left = entry_count;
-       entry != LayoutT::kNotFoundValue && entry >= 0 && entry < entry_count &&
-       max_entries_left > 0;
+       entry != OrderedHashMapLayout::kNotFoundValue && entry >= 0 &&
+       entry < entry_count && max_entries_left > 0;
        max_entries_left--) {
     Address key_at_entry = layout->GetKey(entry);
     if (key_at_entry == key_to_find) {
@@ -279,44 +192,13 @@ int FindEntryByHash(const LayoutT* layout, int hash, Address key_to_find) {
   return kNotFound;
 }
 
-// Find an entry by a key and its hash in any hash table layout, and return its
+// Find an entry by a key and its hash in an OrderedHashMap, and return its
 // value or the zero address if it is not found.
-// Template parameter LayoutT should be either OrderedHashMapLayout or
-// SmallOrderedHashMapLayout
-template <typename LayoutT>
-Address FindValueByHash(const LayoutT* layout, int hash, Address key_to_find) {
+Address FindValueByHash(const OrderedHashMapLayout* layout,
+                        int hash,
+                        Address key_to_find) {
   auto entry = FindEntryByHash(layout, hash, key_to_find);
   return entry == kNotFound ? 0 : layout->GetValue(entry);
-}
-
-static bool IsSmallOrderedHashMap(Address table_untagged) {
-  const SmallOrderedHashMapLayout* potential_small =
-      reinterpret_cast<const SmallOrderedHashMapLayout*>(table_untagged);
-
-  // Read the header as one 64-bit value for validation
-  uint64_t smallHeader =
-      *reinterpret_cast<const uint64_t*>(&potential_small->number_of_elements_);
-
-  static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
-                "Little-endian required");
-  // Small map will have some bits in bytes 0-2 be nonzero, and all bits in
-  // bytes 3-7 zero. That effectively limits the value range of smallHeader to
-  // [0x1-0xFFFFFF].
-  if (smallHeader == 0 || smallHeader >= 0x1000000) return false;
-
-  auto num_elements = potential_small->number_of_elements_;
-  auto num_deleted = potential_small->number_of_deleted_elements_;
-  auto num_buckets = potential_small->number_of_buckets_;
-
-  // num_buckets must be between 2 and 127
-  if (num_buckets < 2 || num_buckets > 127) return false;
-
-  // num_buckets must be a power of 2
-  if ((num_buckets & (num_buckets - 1)) != 0) return false;
-
-  auto capacity = num_buckets * kLoadFactor;
-  // Sum of elements and deleted elements can't exceed capacity
-  return num_elements + num_deleted <= capacity;
 }
 
 static bool IsOrderedHashMap(Address table_untagged) {
@@ -368,11 +250,7 @@ Address GetValueFromMap(Address map_addr, int hash, Address key) {
       reinterpret_cast<const JSMapLayout*>(UntagPointer(map_addr));
   Address table_untagged = UntagPointer(map_untagged->table_);
 
-  if (IsSmallOrderedHashMap(table_untagged)) {
-    const SmallOrderedHashMapLayout* layout =
-        reinterpret_cast<const SmallOrderedHashMapLayout*>(table_untagged);
-    return FindValueByHash(layout, hash, key);
-  } else if (IsOrderedHashMap(table_untagged)) {
+  if (IsOrderedHashMap(table_untagged)) {
     const OrderedHashMapLayout* layout =
         reinterpret_cast<const OrderedHashMapLayout*>(table_untagged);
     return FindValueByHash(layout, hash, key);
