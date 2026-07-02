@@ -69,42 +69,69 @@ describe('Time Profiler', () => {
         useCPED,
       });
       const initialContext: {[key: string]: string} = {};
-      time.setContext(initialContext);
       const kSampleCount = time.constants.kSampleCount;
       const state = time.getState();
       assert.equal(state[kSampleCount], 0, 'Initial state should be 0');
-      const deadline = Date.now() + 1000;
-      while (state[kSampleCount] === 0) {
-        if (Date.now() > deadline) {
-          assert.fail('State did not change');
-        }
-      }
-      assert(state[kSampleCount] >= 1, 'Unexpected number of samples');
 
       let checked = false;
-      initialContext['aaa'] = 'bbb';
 
-      let endTime = 0n;
-      time.stop(false, ({node, context}: GenerateTimeLabelsArgs) => {
-        if (node.name === time.constants.NON_JS_THREADS_FUNCTION_NAME) {
-          return {};
+      // Collect several samples while the context is active, then verify the
+      // context was associated with them. Two things make this robust against
+      // the flakiness this test used to exhibit:
+      //   - We establish the context the way production code does: via
+      //     runWithContext when useCPED is enabled, and setContext otherwise.
+      //     A bare setContext under useCPED only takes effect when the current
+      //     continuation already has an AsyncContextFrame, so on its own it
+      //     silently no-ops — which made the result depend on test ordering.
+      //   - We wait for several samples rather than a single one. The first
+      //     sample is taken at profiler start (before any context is set) and
+      //     is skipped during context association, so relying on just one
+      //     sample left nothing reliable to associate the context with.
+      const minSamples = 5;
+      function sampleAndVerify() {
+        const deadline = Date.now() + 5_000;
+        while (state[kSampleCount] < minSamples) {
+          if (Date.now() > deadline) {
+            assert.fail(
+              `Only ${state[kSampleCount]} sample(s) collected, expected ${minSamples}`,
+            );
+          }
         }
-        assert.ok(context !== null, 'Context should not be null');
-        if (!endTime) {
-          endTime = BigInt(Date.now()) * 1000n;
-        }
 
-        assert.deepEqual(
-          context!.context,
-          initialContext,
-          'Unexpected context',
-        );
+        // Mutate the context object after the samples were taken: the profiler
+        // stores a live reference to it, so the change must be visible below.
+        initialContext['aaa'] = 'bbb';
 
-        assert.ok(context!.timestamp >= startTime);
-        assert.ok(context!.timestamp <= endTime);
-        checked = true;
-        return {...context!.context};
-      });
+        let endTime = 0n;
+        time.stop(false, ({node, context}: GenerateTimeLabelsArgs) => {
+          if (node.name === time.constants.NON_JS_THREADS_FUNCTION_NAME) {
+            return {};
+          }
+          assert.ok(context !== null, 'Context should not be null');
+          if (!endTime) {
+            endTime = BigInt(Date.now()) * 1000n;
+          }
+
+          assert.deepEqual(
+            context!.context,
+            initialContext,
+            'Unexpected context',
+          );
+
+          assert.ok(context!.timestamp >= startTime);
+          assert.ok(context!.timestamp <= endTime);
+          checked = true;
+          return {...context!.context};
+        });
+      }
+
+      if (useCPED) {
+        time.runWithContext(initialContext, sampleAndVerify);
+      } else {
+        time.setContext(initialContext);
+        sampleAndVerify();
+      }
+
       assert(checked, 'No context found');
     });
 
