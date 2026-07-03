@@ -289,17 +289,29 @@ bool CtxWrap::EncodeAttrs(Isolate* isolate,
     isolate->ThrowError("attributes array length must not exceed 256");
     return false;
   }
-  // Reserve a conservative upper bound; reallocations are cheap but
-  // unnecessary for the typical small attribute set.
-  out->reserve(out->size() + n * 4);
+
+  // Phase 1: coerce every present value to a string up front. `ToString`
+  // may invoke user JS (a custom `toString` on the value), which could
+  // re-enter into this ThreadContext (e.g. via `appendAttributes`) and
+  // interleave with our writes to `out`. Doing all such coercion BEFORE
+  // touching `out` keeps the encode phase re-entrancy-free.
+  std::vector<std::pair<uint32_t, Local<String>>> coerced;
+  coerced.reserve(n);
   for (uint32_t i = 0; i < n; ++i) {
     Local<Value> val_val;
     if (!attrs->Get(context, i).ToLocal(&val_val)) return false;
     // null / undefined / array holes mean "no value at this key index".
     if (val_val->IsUndefined() || val_val->IsNull()) continue;
-
     Local<String> v;
     if (!val_val->ToString(context).ToLocal(&v)) return false;
+    coerced.emplace_back(i, v);
+  }
+
+  // Phase 2: encode. From here on we don't call any V8 function that can
+  // enter user JS; the record is safe to mutate under the assumption that
+  // no re-entrant Append will interleave.
+  out->reserve(out->size() + coerced.size() * 4);
+  for (const auto& [i, v] : coerced) {
 #if NODE_MAJOR_VERSION >= 24
     int v_utf8_len = static_cast<int>(v->Utf8LengthV2(isolate));
 #else
@@ -356,9 +368,10 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("ThreadContext must be called with `new`");
     return;
   }
-  if (args.Length() != 3) {
+  if (args.Length() < 2 || args.Length() > 3) {
     isolate->ThrowError(
-        "ThreadContext expects 3 arguments: traceId, spanId, attributes");
+        "ThreadContext expects 2 or 3 arguments: traceId, spanId, "
+        "attributes?");
     return;
   }
 
@@ -581,8 +594,6 @@ void ResetDiscoveryStruct(void* /*arg*/) {
 }
 
 void StoreAls(const FunctionCallbackInfo<Value>& args) {
-  static thread_local bool cleanup_registered = false;
-
   Isolate* isolate = args.GetIsolate();
   if (!args[0]->IsObject()) {
     isolate->ThrowError("First argument must be the AsyncLocalStorage object.");
@@ -604,15 +615,21 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   // addon compiles on the older Node versions the package supports.
   otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
 #endif
+  // `undefined_addr == 0` doubles as the "not yet initialized on this
+  // isolate" flag: it starts at zero (thread-local zero-init), any real
+  // V8 undefined singleton address is non-zero, and ResetDiscoveryStruct
+  // clears it back to zero — so a subsequent StoreAls (e.g. isolate
+  // tear-down then re-init on the same thread) re-registers the cleanup
+  // hook. Register BEFORE the write so the flag transition is the last
+  // observable step.
+  if (otel_thread_ctx_nodejs_v1.undefined_addr == 0) {
+    node::AddEnvironmentCleanupHook(isolate, ResetDiscoveryStruct, nullptr);
+  }
   // Cache the per-isolate undefined singleton's tagged address. Undefined
   // is a read-only-roots heap object, never moves, so a cached numeric
   // address is fine — no Global<> tracking needed.
   otel_thread_ctx_nodejs_v1.undefined_addr =
       reinterpret_cast<v8::internal::Address>(*v8::Undefined(isolate));
-  if (!cleanup_registered) {
-    node::AddEnvironmentCleanupHook(isolate, ResetDiscoveryStruct, nullptr);
-    cleanup_registered = true;
-  }
 }
 
 // Without a function that explicitly reads the TLS variable, on x86 the

@@ -424,8 +424,8 @@ function captureBytes(opts: {
     });
 
     describe('enterWithContext', () => {
-      it('attaches the record to the current async scope', () => {
-        void tcRun(
+      it('attaches the record to the current async scope', async () => {
+        await tcRun(
           () => {
             strictAssert.deepEqual(
               decodeHeader(_currentRecordBytes()!).spanId,
