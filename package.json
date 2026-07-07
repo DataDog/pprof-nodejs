@@ -8,6 +8,7 @@
   },
   "main": "out/src/index.js",
   "types": "out/src/index.d.ts",
+  "gypfile": false,
   "scripts": {
     "build:asan": "node-gyp configure build --jobs=max --address_sanitizer",
     "build:tsan": "node-gyp configure build --jobs=max --thread_sanitizer",
