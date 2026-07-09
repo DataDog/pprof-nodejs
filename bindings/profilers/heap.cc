@@ -95,7 +95,9 @@ struct HeapProfilerState {
     }
     if (isolate) {
       isolate->AddNearHeapLimitCallback(&NearHeapLimit, nullptr);
-      // Restore 90% of the original heap limit when possible.
+      // Restore the original heap limit once live old-generation usage falls
+      // below 90% of the original limit. The threshold controls when V8
+      // restores the limit, not the restored limit size.
       constexpr double kHeapLimitRestoreThreshold = 0.90;
       isolate->AutomaticallyRestoreInitialHeapLimit(kHeapLimitRestoreThreshold);
       callbackInstalled = true;
