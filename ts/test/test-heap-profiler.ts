@@ -331,6 +331,36 @@ describe('HeapProfiler', () => {
 });
 
 describe('OOMMonitoring', () => {
+  it('should restore heap limit after v8 recovers from OOM', async function () {
+    this.timeout(30000);
+
+    const proc = fork(path.join(__dirname, 'oom-restore-heap-limit.js'), {
+      execArgv: ['--expose-gc', '--max-old-space-size=64'],
+      silent: true,
+    });
+    let output = '';
+
+    proc.stdout?.on('data', chunk => {
+      output += chunk;
+    });
+    proc.stderr?.on('data', chunk => {
+      output += chunk;
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      proc.on('error', reject);
+      proc.on('exit', code => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(`oom-restore-heap-limit exited with ${code}\n${output}`),
+          );
+        }
+      });
+    });
+  });
+
   it('should call external process upon OOM', async function () {
     // this test is very slow on some configs (asan/valgrind)
     this.timeout(20000);
