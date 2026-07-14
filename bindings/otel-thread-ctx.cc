@@ -31,6 +31,8 @@
 
 #include "otel-thread-ctx.hh"
 
+#include "defer.hh"
+
 #include <node.h>
 #include <node_object_wrap.h>
 #include <v8-internal.h>
@@ -225,6 +227,16 @@ class CtxWrap : public ObjectWrap {
   // attribute had to be dropped because it would have pushed attrs_data
   // past MAX_ATTRS_DATA_SIZE.
   bool truncated_;
+  // Reentrancy guard for Append(). EncodeAttrs calls ToString on each
+  // attribute value, which can execute user JS (e.g. a custom
+  // `toString`) that in turn calls `appendAttributes` on the same
+  // ThreadContext. A reentrant Append would mutate attrs_data_size out
+  // from under the outer call's `current_used` snapshot, causing the
+  // outer memcpy to overwrite the reentrant call's bytes and the outer
+  // attrs_data_size write to shrink the record. We reject the reentrant
+  // call instead. New() doesn't need the guard because a freshly constructed
+  // CtxWrap isn't observable to JS until New() returns.
+  bool encoding_;
 };
 
 // Pin the offset of `record_` — the field the reader walks to from the
@@ -247,7 +259,10 @@ CtxWrap::~CtxWrap() {
 }
 
 CtxWrap::CtxWrap(OtelThreadCtxRecord* record, size_t capacity, bool truncated)
-    : record_(record), capacity_(capacity), truncated_(truncated) {}
+    : record_(record),
+      capacity_(capacity),
+      truncated_(truncated),
+      encoding_(false) {}
 
 // Copy exactly `expected_bytes` bytes out of a JS Uint8Array (or subclass
 // such as Buffer) into `out`. Returns false if the value isn't a
@@ -289,6 +304,7 @@ bool CtxWrap::EncodeAttrs(Isolate* isolate,
     isolate->ThrowError("attributes array length must not exceed 256");
     return false;
   }
+
   // Reserve a conservative upper bound; reallocations are cheap but
   // unnecessary for the typical small attribute set.
   out->reserve(out->size() + n * 4);
@@ -297,7 +313,6 @@ bool CtxWrap::EncodeAttrs(Isolate* isolate,
     if (!attrs->Get(context, i).ToLocal(&val_val)) return false;
     // null / undefined / array holes mean "no value at this key index".
     if (val_val->IsUndefined() || val_val->IsNull()) continue;
-
     Local<String> v;
     if (!val_val->ToString(context).ToLocal(&v)) return false;
 #if NODE_MAJOR_VERSION >= 24
@@ -356,9 +371,10 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("ThreadContext must be called with `new`");
     return;
   }
-  if (args.Length() != 3) {
+  if (args.Length() < 2 || args.Length() > 3) {
     isolate->ThrowError(
-        "ThreadContext expects 3 arguments: traceId, spanId, attributes");
+        "ThreadContext expects 2 or 3 arguments: traceId, spanId, "
+        "attributes?");
     return;
   }
 
@@ -437,6 +453,22 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("append expects 1 argument: attributes");
     return;
   }
+
+  // Reject reentrant Append on the same wrap. EncodeAttrs' `ToString`
+  // below can execute user JS, and if that JS calls `appendAttributes`
+  // on this same ThreadContext, the reentrant call would grow
+  // attrs_data_size out from under the outer call's `current_used`
+  // snapshot, causing the outer memcpy to overwrite the reentrant call's
+  // bytes and the outer attrs_data_size write to shrink the record.
+  if (self->encoding_) {
+    isolate->ThrowError(
+        "reentrant appendAttributes on the same ThreadContext is not allowed");
+    return;
+  }
+  self->encoding_ = true;
+  defer {
+    self->encoding_ = false;
+  };
 
   const size_t current_used = self->record_->attrs_data_size;
   std::vector<uint8_t> appended;
@@ -581,8 +613,6 @@ void ResetDiscoveryStruct(void* /*arg*/) {
 }
 
 void StoreAls(const FunctionCallbackInfo<Value>& args) {
-  static thread_local bool cleanup_registered = false;
-
   Isolate* isolate = args.GetIsolate();
   if (!args[0]->IsObject()) {
     isolate->ThrowError("First argument must be the AsyncLocalStorage object.");
@@ -604,15 +634,21 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   // addon compiles on the older Node versions the package supports.
   otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
 #endif
+  // `undefined_addr == 0` doubles as the "not yet initialized on this
+  // isolate" flag: it starts at zero (thread-local zero-init), any real
+  // V8 undefined singleton address is non-zero, and ResetDiscoveryStruct
+  // clears it back to zero — so a subsequent StoreAls (e.g. isolate
+  // tear-down then re-init on the same thread) re-registers the cleanup
+  // hook. Register BEFORE the write so the flag transition is the last
+  // observable step.
+  if (otel_thread_ctx_nodejs_v1.undefined_addr == 0) {
+    node::AddEnvironmentCleanupHook(isolate, ResetDiscoveryStruct, nullptr);
+  }
   // Cache the per-isolate undefined singleton's tagged address. Undefined
   // is a read-only-roots heap object, never moves, so a cached numeric
   // address is fine — no Global<> tracking needed.
   otel_thread_ctx_nodejs_v1.undefined_addr =
       reinterpret_cast<v8::internal::Address>(*v8::Undefined(isolate));
-  if (!cleanup_registered) {
-    node::AddEnvironmentCleanupHook(isolate, ResetDiscoveryStruct, nullptr);
-    cleanup_registered = true;
-  }
 }
 
 // Without a function that explicitly reads the TLS variable, on x86 the
