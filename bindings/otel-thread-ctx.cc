@@ -728,15 +728,15 @@ void OtelThreadCtx::Init(Local<Object> exports) {
             Integer::New(isolate, NATIVE_WRAP_FIELDS_OFFSET))
       .FromJust();
   exports
-      ->Set(ctx,
-            String::NewFromUtf8Literal(isolate,
-                                       "otelThreadCtxJsMapTableOffset"),
-            Integer::New(isolate, JS_MAP_TABLE_OFFSET))
+      ->Set(
+          ctx,
+          String::NewFromUtf8Literal(isolate, "otelThreadCtxJsMapTableOffset"),
+          Integer::New(isolate, JS_MAP_TABLE_OFFSET))
       .FromJust();
   exports
       ->Set(ctx,
-            String::NewFromUtf8Literal(
-                isolate, "otelThreadCtxOrderedHashMapHeaderSize"),
+            String::NewFromUtf8Literal(isolate,
+                                       "otelThreadCtxOrderedHashMapHeaderSize"),
             Integer::New(isolate, ORDERED_HASH_MAP_HEADER_SIZE))
       .FromJust();
 }
