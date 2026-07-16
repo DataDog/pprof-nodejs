@@ -710,35 +710,19 @@ void OtelThreadCtx::Init(Local<Object> exports) {
 
   Isolate* isolate = Isolate::GetCurrent();
   Local<Context> ctx = isolate->GetCurrentContext();
-  exports
-      ->Set(ctx,
-            String::NewFromUtf8Literal(isolate,
-                                       "otelThreadCtxWrappedObjectOffset"),
-            Integer::New(isolate, WRAPPED_OBJECT_OFFSET))
-      .FromJust();
-  exports
-      ->Set(ctx,
-            String::NewFromUtf8Literal(isolate, "otelThreadCtxTaggedSize"),
-            Integer::New(isolate, TAGGED_SIZE))
-      .FromJust();
-  exports
-      ->Set(ctx,
-            String::NewFromUtf8Literal(isolate,
-                                       "otelThreadCtxNativeWrapFieldsOffset"),
-            Integer::New(isolate, NATIVE_WRAP_FIELDS_OFFSET))
-      .FromJust();
-  exports
-      ->Set(
-          ctx,
-          String::NewFromUtf8Literal(isolate, "otelThreadCtxJsMapTableOffset"),
-          Integer::New(isolate, JS_MAP_TABLE_OFFSET))
-      .FromJust();
-  exports
-      ->Set(ctx,
-            String::NewFromUtf8Literal(isolate,
-                                       "otelThreadCtxOrderedHashMapHeaderSize"),
-            Integer::New(isolate, ORDERED_HASH_MAP_HEADER_SIZE))
-      .FromJust();
+  auto publish_int = [&](const char* name, int value) {
+    exports
+        ->Set(ctx,
+              String::NewFromUtf8(isolate, name).ToLocalChecked(),
+              Integer::New(isolate, value))
+        .FromJust();
+  };
+  publish_int("otelThreadCtxJsMapTableOffset", JS_MAP_TABLE_OFFSET);
+  publish_int("otelThreadCtxNativeWrapFieldsOffset", NATIVE_WRAP_FIELDS_OFFSET);
+  publish_int("otelThreadCtxOrderedHashMapHeaderSize",
+              ORDERED_HASH_MAP_HEADER_SIZE);
+  publish_int("otelThreadCtxTaggedSize", TAGGED_SIZE);
+  publish_int("otelThreadCtxWrappedObjectOffset", WRAPPED_OBJECT_OFFSET);
 }
 
 }  // namespace dd
