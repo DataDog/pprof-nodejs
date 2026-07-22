@@ -18,6 +18,8 @@ import {setTimeout} from 'timers/promises';
 
 import {Profile} from 'pprof-format';
 import {
+  ColumnNumbers,
+  DEFAULT_COLUMN_NUMBERS,
   serializeTimeProfile,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
@@ -54,6 +56,7 @@ let gProfiler: NativeTimeProfiler | undefined;
 let gStore: AsyncLocalStorage<unknown> | undefined;
 let gSourceMapper: SourceMapper | undefined;
 let gIntervalMicros: Microseconds;
+let gColumnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS;
 let gV8ProfilerStuckEventLoopDetected = 0;
 
 function handleStopRestart() {
@@ -107,6 +110,15 @@ export interface TimeProfilerOptions {
   collectCpuTime?: boolean;
   collectAsyncId?: boolean;
   useCPED?: boolean;
+
+  /**
+   * Controls how frame column numbers are represented in the serialized
+   * profile. Defaults to `'drop'` (column omitted) to preserve the historical
+   * line-number semantics for existing consumers. Set to `'pack'` to pack the
+   * column into the high 32 bits of the line field for backends that support
+   * it (e.g. Datadog's JS/Node deobfuscation). See {@link ColumnNumbers}.
+   */
+  columnNumbers?: ColumnNumbers;
 }
 
 const DEFAULT_OPTIONS: TimeProfilerOptions = {
@@ -118,6 +130,7 @@ const DEFAULT_OPTIONS: TimeProfilerOptions = {
   collectCpuTime: false,
   collectAsyncId: false,
   useCPED: false,
+  columnNumbers: DEFAULT_COLUMN_NUMBERS,
 };
 
 export async function profile(
@@ -147,6 +160,7 @@ export function start(options: TimeProfilerOptions = {}) {
   gProfiler = new TimeProfiler({...options, CPEDKey: store, isMainThread});
   gSourceMapper = options.sourceMapper;
   gIntervalMicros = options.intervalMicros!;
+  gColumnNumbers = options.columnNumbers ?? DEFAULT_COLUMN_NUMBERS;
   gV8ProfilerStuckEventLoopDetected = 0;
 
   gProfiler.start();
@@ -183,6 +197,7 @@ export function stop(
     true,
     generateLabels,
     lowCardinalityLabels,
+    gColumnNumbers,
   );
 
   if (!restart) {
@@ -220,6 +235,7 @@ export function stopV2(
         true,
         generateLabels,
         lowCardinalityLabels,
+        gColumnNumbers,
       ),
   );
   if (restart) {

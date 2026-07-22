@@ -82,6 +82,85 @@ describe('profile-serializer', () => {
       assert.deepEqual(timeProfileOut, timeProfile);
     });
 
+    it('should drop the column by default and pack it when columnNumbers is "pack"', () => {
+      // Regression test for SCP-1293: a bundled/minified module (e.g. a
+      // Next.js server chunk) emits every function onto generated line 1, so
+      // the column is the only discriminator between functions. The pprof Line
+      // message carries no dedicated column, so with columnNumbers='pack' the
+      // column is packed into the high 32 bits (column<<32 | line) — the
+      // encoding the Datadog deobfuscation backend decodes. The default 'drop'
+      // must leave the plain line untouched for backwards compatibility.
+      const alphaLeaf = {
+        name: 'alpha',
+        scriptName: '/opt/app/.next/server/chunks/58844.js',
+        scriptId: 1,
+        lineNumber: 1,
+        columnNumber: 15665,
+        hitCount: 3,
+        children: [],
+      };
+      const betaLeaf = {
+        name: 'beta',
+        scriptName: '/opt/app/.next/server/chunks/58844.js',
+        scriptId: 1,
+        lineNumber: 1,
+        columnNumber: 14349,
+        hitCount: 2,
+        children: [],
+      };
+      const bundleProfile: TimeProfile = {
+        startTime: 0,
+        endTime: 10 * 1000 * 1000,
+        hasCpuTime: true,
+        nonJSThreadsCpuTime: 0,
+        topDownRoot: {
+          name: '(root)',
+          scriptName: 'root',
+          scriptId: 0,
+          lineNumber: 0,
+          columnNumber: 0,
+          hitCount: 0,
+          children: [alphaLeaf, betaLeaf],
+        },
+      };
+
+      const lineByName = (profile: Profile) => {
+        const m = new Map<string, number | bigint>();
+        for (const location of profile.location!) {
+          const line = location.line![0];
+          const fn = getAndVerifyPresence(
+            profile.function!,
+            line.functionId as number,
+          );
+          m.set(
+            profile.stringTable.strings[fn.name as number] as string,
+            line.line,
+          );
+        }
+        return m;
+      };
+
+      // Default: column dropped, plain generated line 1 retained.
+      const dropped = lineByName(serializeTimeProfile(bundleProfile, 1000));
+      assert.strictEqual(dropped.get('alpha'), 1);
+      assert.strictEqual(dropped.get('beta'), 1);
+
+      // 'pack': column in the high 32 bits, generated line 1 in the low bits.
+      const packed = lineByName(
+        serializeTimeProfile(
+          bundleProfile,
+          1000,
+          undefined,
+          false,
+          undefined,
+          [],
+          'pack',
+        ),
+      );
+      assert.strictEqual(BigInt(packed.get('alpha')!), (15665n << 32n) | 1n);
+      assert.strictEqual(BigInt(packed.get('beta')!), (14349n << 32n) | 1n);
+    });
+
     it('should omit non-jS threads CPU time when profile has no CPU time', () => {
       const timeProfile: TimeProfile = {
         startTime: 0,
