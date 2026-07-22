@@ -101,9 +101,12 @@ export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
  * Line.line field: the column in the high 32 bits, the line in the low 32 bits
  * (matching the backend's JavaScriptProfileUnminifier.decodeLineAndColumn).
  *
- * BigInt is used because a minified single-line bundle can place functions at
- * columns beyond 2**21, which would overflow JavaScript's 32-bit bitwise
- * operators and, once shifted, exceed the 2**53 safe-integer range.
+ * BigInt is required: JavaScript's bitwise operators are 32-bit, so `column <<
+ * 32` on a plain number is a no-op that returns `column` unchanged. Computing
+ * the pack arithmetically as `column * 2**32 + line` instead loses integer
+ * precision once the column exceeds 2**21 (the product passes 2**53, Number's
+ * safe-integer limit) — and minified single-line bundles routinely have columns
+ * that large.
  */
 function packLineAndColumn(
   line: number | undefined,

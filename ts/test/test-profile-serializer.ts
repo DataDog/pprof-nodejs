@@ -277,6 +277,33 @@ describe('profile-serializer', () => {
       const heapProfileOut = serializeHeapProfile(v8HeapProfile, 0, 512 * 1024);
       assert.deepEqual(heapProfileOut, heapProfile);
     });
+    it('should pack the column into the emitted line when columnNumbers is "pack"', () => {
+      // v8HeapProfile frames all use columnNumber 5; with 'pack' each emitted
+      // line must carry that column in its high 32 bits.
+      const packed = serializeHeapProfile(
+        v8HeapProfile,
+        0,
+        512 * 1024,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        'pack',
+      );
+      for (const location of packed.location!) {
+        const line = location.line![0];
+        assert.strictEqual(
+          BigInt(line.line) >> 32n,
+          5n,
+          'column packed into high bits',
+        );
+      }
+      // Default still drops the column (plain line, no high bits).
+      const dropped = serializeHeapProfile(v8HeapProfile, 0, 512 * 1024);
+      for (const location of dropped.location!) {
+        assert.strictEqual(BigInt(location.line![0].line) >> 32n, 0n);
+      }
+    });
     it('should produce expected profile when there is anonymous function', () => {
       const heapProfileOut = serializeHeapProfile(
         v8AnonymousFunctionHeapProfile,
