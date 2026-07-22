@@ -78,6 +78,49 @@ function isGeneratedLocation(
   );
 }
 
+/**
+ * Controls how a frame's column number is represented in the emitted profile.
+ * - `'drop'`: omit the column; only the line number is emitted. This is the
+ *   default and matches the historical behavior and standard pprof line
+ *   semantics, so existing consumers see unchanged line numbers.
+ * - `'pack'`: pack the column into the high 32 bits of the line field
+ *   (`column << 32 | line`) — the encoding the Datadog deobfuscation backend
+ *   decodes (the same one the Chrome profile intake uses). Required to
+ *   deobfuscate single-line (bundled/minified) frames, where the column is the
+ *   only discriminator between functions.
+ *
+ * The enum leaves room for a future `'emit'` mode that would populate a real
+ * pprof `Line.column` field once the backend consumes it.
+ */
+export type ColumnNumbers = 'drop' | 'pack';
+
+export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
+
+/**
+ * Packs a frame's line and column into the single value carried by the pprof
+ * Line.line field: the column in the high 32 bits, the line in the low 32 bits
+ * (matching the backend's JavaScriptProfileUnminifier.decodeLineAndColumn).
+ *
+ * BigInt is required: JavaScript's bitwise operators are 32-bit, so `column <<
+ * 32` on a plain number is a no-op that returns `column` unchanged. Computing
+ * the pack arithmetically as `column * 2**32 + line` instead loses integer
+ * precision once the column exceeds 2**21 (the product passes 2**53, Number's
+ * safe-integer limit) — and minified single-line bundles routinely have columns
+ * that large.
+ */
+function packLineAndColumn(
+  line: number | undefined,
+  column: number | undefined,
+): number | bigint {
+  if (!line) {
+    return 0;
+  }
+  if (!column) {
+    return line;
+  }
+  return (BigInt(column) << 32n) | BigInt(line);
+}
+
 function requireAllocationStat(
   value: number | undefined,
   field: string,
@@ -107,6 +150,7 @@ function serialize<T extends ProfileNode>(
   stringTable: StringTable,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ) {
   const samples: Sample[] = [];
   const locations: Location[] = [];
@@ -187,7 +231,10 @@ function serialize<T extends ProfileNode>(
   function getLine(loc: SourceLocation, scriptId?: number): Line {
     return new Line({
       functionId: getFunction(loc, scriptId).id,
-      line: loc.line,
+      line:
+        columnNumbers === 'pack'
+          ? packLineAndColumn(loc.line, loc.column)
+          : loc.line,
     });
   }
 
@@ -386,6 +433,7 @@ export function serializeTimeProfile(
   recomputeSamplingInterval = false,
   generateLabels?: GenerateTimeLabelsFunction,
   lowCardinalityLabels: string[] = [],
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -509,6 +557,7 @@ export function serializeTimeProfile(
     stringTable,
     undefined,
     sourceMapper,
+    columnNumbers,
   );
 
   return new Profile(profile);
@@ -556,6 +605,7 @@ export function serializeHeapProfile(
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
   allocations = false,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const appendHeapEntryToSamples: AppendEntryToSamples<
     AllocationProfileNode | AllocationProfileNodeWithStats
@@ -642,6 +692,7 @@ export function serializeHeapProfile(
     stringTable,
     ignoreSamplesPath,
     sourceMapper,
+    columnNumbers,
   );
 
   return new Profile(profile);

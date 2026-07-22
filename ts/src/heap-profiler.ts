@@ -23,7 +23,11 @@ import {
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
 } from './heap-profiler-bindings';
-import {serializeHeapProfile} from './profile-serializer';
+import {
+  ColumnNumbers,
+  DEFAULT_COLUMN_NUMBERS,
+  serializeHeapProfile,
+} from './profile-serializer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -86,12 +90,14 @@ export function profile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const result = convertProfile(
     v8Profile(),
     ignoreSamplePath,
     sourceMapper,
     generateLabels,
+    columnNumbers,
   );
   // In allocation mode V8 keeps every sampled object (live + collected-by-GC)
   // in an append-only buffer that's only freed by stopSamplingHeapProfiler.
@@ -110,6 +116,7 @@ export function convertProfile(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const allocations = startedWithAllocations;
   const startTimeNanos = Date.now() * 1000 * 1000;
@@ -160,6 +167,7 @@ export function convertProfile(
     sourceMapper,
     generateLabels,
     allocations,
+    columnNumbers,
   );
 }
 
@@ -175,9 +183,16 @@ export function profileV2(
   ignoreSamplePath?: string,
   sourceMapper?: SourceMapper,
   generateLabels?: GenerateAllocationLabelsFunction,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   return v8ProfileV2(root => {
-    return convertProfile(root, ignoreSamplePath, sourceMapper, generateLabels);
+    return convertProfile(
+      root,
+      ignoreSamplePath,
+      sourceMapper,
+      generateLabels,
+      columnNumbers,
+    );
   });
 }
 
