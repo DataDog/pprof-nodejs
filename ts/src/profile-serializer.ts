@@ -157,6 +157,7 @@ function serialize<T extends ProfileNode>(
   const functions: Function[] = [];
   const functionIdMap = new Map<string, number>();
   const locationIdMap = new Map<string, number>();
+  const packColumns = columnNumbers === 'pack';
 
   let hasMissingMapFiles = false;
 
@@ -234,7 +235,7 @@ function serialize<T extends ProfileNode>(
     // unminification (the same condition that sets dd:has-missing-map-files).
     // Locally-resolved frames keep their plain line, so packed values never
     // reach profiles that skip server-side unminification.
-    const packColumn = columnNumbers === 'pack' && loc.missingMapFile === true;
+    const packColumn = packColumns && loc.missingMapFile === true;
     return new Line({
       functionId: getFunction(loc, scriptId).id,
       line: packColumn ? packLineAndColumn(loc.line, loc.column) : loc.line,
