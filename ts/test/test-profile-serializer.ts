@@ -82,30 +82,19 @@ describe('profile-serializer', () => {
       assert.deepEqual(timeProfileOut, timeProfile);
     });
 
-    it('should drop the column by default and pack it when columnNumbers is "pack"', () => {
-      // Regression test for SCP-1293: a bundled/minified module (e.g. a
-      // Next.js server chunk) emits every function onto generated line 1, so
-      // the column is the only discriminator between functions. The pprof Line
-      // message carries no dedicated column, so with columnNumbers='pack' the
-      // column is packed into the high 32 bits (column<<32 | line) — the
-      // encoding the Datadog deobfuscation backend decodes. The default 'drop'
-      // must leave the plain line untouched for backwards compatibility.
-      const alphaLeaf = {
+    it('does not pack the column for frames without a missing source map, even when columnNumbers is "pack"', () => {
+      // Packing is scoped to frames whose source map was declared but missing
+      // (dd:has-missing-map-files) — the ones bound for server-side
+      // unminification. A frame that never went through a missing map (here:
+      // no source mapper at all) keeps its plain line even under 'pack', so
+      // profiles that skip server-side unminification never carry packed lines.
+      const leaf = {
         name: 'alpha',
         scriptName: '/opt/app/.next/server/chunks/58844.js',
         scriptId: 1,
         lineNumber: 1,
         columnNumber: 15665,
         hitCount: 3,
-        children: [],
-      };
-      const betaLeaf = {
-        name: 'beta',
-        scriptName: '/opt/app/.next/server/chunks/58844.js',
-        scriptId: 1,
-        lineNumber: 1,
-        columnNumber: 14349,
-        hitCount: 2,
         children: [],
       };
       const bundleProfile: TimeProfile = {
@@ -120,45 +109,32 @@ describe('profile-serializer', () => {
           lineNumber: 0,
           columnNumber: 0,
           hitCount: 0,
-          children: [alphaLeaf, betaLeaf],
+          children: [leaf],
         },
       };
 
-      const lineByName = (profile: Profile) => {
-        const m = new Map<string, number | bigint>();
-        for (const location of profile.location!) {
-          const line = location.line![0];
-          const fn = getAndVerifyPresence(
-            profile.function!,
-            line.functionId as number,
-          );
-          m.set(
-            profile.stringTable.strings[fn.name as number] as string,
-            line.line,
-          );
-        }
-        return m;
+      const lineOf = (profile: Profile) => {
+        const location = profile.location![0];
+        return BigInt(location.line![0].line);
       };
 
-      // Default: column dropped, plain generated line 1 retained.
-      const dropped = lineByName(serializeTimeProfile(bundleProfile, 1000));
-      assert.strictEqual(dropped.get('alpha'), 1);
-      assert.strictEqual(dropped.get('beta'), 1);
-
-      // 'pack': column in the high 32 bits, generated line 1 in the low bits.
-      const packed = lineByName(
-        serializeTimeProfile(
-          bundleProfile,
-          1000,
-          undefined,
-          false,
-          undefined,
-          [],
-          'pack',
+      // Neither 'drop' (default) nor 'pack' packs the column when there is no
+      // missing source map — there is no server-side unminification to feed.
+      assert.strictEqual(lineOf(serializeTimeProfile(bundleProfile, 1000)), 1n);
+      assert.strictEqual(
+        lineOf(
+          serializeTimeProfile(
+            bundleProfile,
+            1000,
+            undefined,
+            false,
+            undefined,
+            [],
+            'pack',
+          ),
         ),
+        1n,
       );
-      assert.strictEqual(BigInt(packed.get('alpha')!), (15665n << 32n) | 1n);
-      assert.strictEqual(BigInt(packed.get('beta')!), (14349n << 32n) | 1n);
     });
 
     it('should omit non-jS threads CPU time when profile has no CPU time', () => {
@@ -277,9 +253,10 @@ describe('profile-serializer', () => {
       const heapProfileOut = serializeHeapProfile(v8HeapProfile, 0, 512 * 1024);
       assert.deepEqual(heapProfileOut, heapProfile);
     });
-    it('should pack the column into the emitted line when columnNumbers is "pack"', () => {
-      // v8HeapProfile frames all use columnNumber 5; with 'pack' each emitted
-      // line must carry that column in its high 32 bits.
+    it('does not pack the column without a missing source map, even when columnNumbers is "pack"', () => {
+      // Packing is scoped to frames with a missing source map (bound for
+      // server-side unminification). v8HeapProfile has no source mapper, so no
+      // frame is missing a map and lines stay plain under both 'drop' and 'pack'.
       const packed = serializeHeapProfile(
         v8HeapProfile,
         0,
@@ -291,14 +268,12 @@ describe('profile-serializer', () => {
         'pack',
       );
       for (const location of packed.location!) {
-        const line = location.line![0];
         assert.strictEqual(
-          BigInt(line.line) >> 32n,
-          5n,
-          'column packed into high bits',
+          BigInt(location.line![0].line) >> 32n,
+          0n,
+          'column must not be packed without a missing source map',
         );
       }
-      // Default still drops the column (plain line, no high bits).
       const dropped = serializeHeapProfile(v8HeapProfile, 0, 512 * 1024);
       for (const location of dropped.location!) {
         assert.strictEqual(BigInt(location.line![0].line) >> 32n, 0n);
@@ -500,6 +475,35 @@ describe('profile-serializer', () => {
         sourceMapper,
       );
       assertHasMissingMapToken(profile);
+    });
+
+    it('packs the column for a missing-map frame when columnNumbers is "pack"', () => {
+      // The frame's map is declared but missing, so it is bound for server-side
+      // unminification (same condition as the missing-map token). Its generated
+      // column (1) is packed into the high 32 bits of the emitted line.
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        sourceMapper,
+        false,
+        undefined,
+        [],
+        'pack',
+      );
+      assertHasMissingMapToken(profile);
+      assert.strictEqual(
+        BigInt(profile.location![0].line![0].line),
+        (1n << 32n) | 1n,
+      );
+    });
+
+    it('leaves a missing-map frame line plain under the default "drop"', () => {
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        sourceMapper,
+      );
+      assert.strictEqual(BigInt(profile.location![0].line![0].line), 1n);
     });
 
     it('serializeHeapProfile emits missing-map token when a map is declared but absent', () => {
