@@ -497,6 +497,48 @@ describe('profile-serializer', () => {
       );
     });
 
+    it('emits the real column in the pprof Line.column field and keeps the line plain when columnNumbers is "emit"', () => {
+      // 'emit' never packs: the line field stays plain and the generated column
+      // (1) is written to the dedicated pprof Line.column field. The backend
+      // performs the line/column packing itself for Node.js profiles.
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        sourceMapper,
+        false,
+        undefined,
+        [],
+        'emit',
+      );
+      assertHasMissingMapToken(profile);
+      const line = profile.location![0].line![0];
+      assert.strictEqual(BigInt(line.line), 1n);
+      assert.strictEqual(BigInt(line.column), 1n);
+    });
+
+    it('does not carry a column under "emit" for a frame with no missing map', () => {
+      // 'emit' is scoped to the same frames as 'pack': only those whose map was
+      // declared but missing locally. With no source mapper the frame is neither
+      // resolved nor flagged missing, so no column is emitted (Line.column
+      // defaults to 0) and the line stays plain.
+      const profile = serializeTimeProfile(
+        makeSingleNodeTimeProfile(missingJsPath),
+        1000,
+        undefined,
+        false,
+        undefined,
+        [],
+        'emit',
+      );
+      assert.ok(
+        !profile.comment || profile.comment.length === 0,
+        'expected no missing-map token without a source mapper',
+      );
+      const line = profile.location![0].line![0];
+      assert.strictEqual(BigInt(line.line), 1n);
+      assert.strictEqual(BigInt(line.column), 0n);
+    });
+
     it('leaves a missing-map frame line plain under the default "drop"', () => {
       const profile = serializeTimeProfile(
         makeSingleNodeTimeProfile(missingJsPath),
