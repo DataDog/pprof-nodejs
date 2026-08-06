@@ -106,7 +106,30 @@ void SetContextPtr(ContextPtr& contextPtr,
   }
 }
 
-class PersistentContextPtr : public node::ObjectWrap {
+inline void* GetAlignedPointerFromInternalField(Object* object, int index) {
+#if NODE_MAJOR_VERSION >= 26
+  return object->GetAlignedPointerFromInternalField(
+      index, kEmbedderDataTypeTagDefault);
+#else
+  return object->GetAlignedPointerFromInternalField(index);
+#endif
+}
+
+// Deliberately not a node::ObjectWrap. That base registers a per-instance
+// environment cleanup hook in its constructor and calls
+// RemoveEnvironmentCleanupHook from its destructor, which CHECKs that the
+// Environment is still alive:
+//
+//   node[650]: void node::RemoveEnvironmentCleanupHook(...) hooks.cc:142
+//   Assertion failed: (env) != nullptr
+//
+// A PCP is owned by a weak V8 handle, and V8 runs weak callbacks during
+// isolate teardown — after the Environment has been torn down — so that CHECK
+// fires and aborts the process. All we need from a wrapper is the
+// internal-field pointer and the weak handle, and ~WallProfiler already
+// deletes whatever is still on the live list, so the cleanup hook the base
+// class installs has nothing left to do.
+class PersistentContextPtr {
   ContextPtr context;
   // Back-pointer to the WallProfiler that created this PCP. Guaranteed to be
   // a valid pointer whenever pprev_ != nullptr — ~WallProfiler nulls pprev_
@@ -125,7 +148,16 @@ class PersistentContextPtr : public node::ObjectWrap {
   PersistentContextPtr** pprev_ = nullptr;
   PersistentContextPtr* next_ = nullptr;
 
+  // Weak handle on the holder object. Owns this PCP: when V8 collects the
+  // holder, WeakCallback deletes us.
+  v8::Persistent<v8::Object> handle_;
+
   friend class WallProfiler;
+
+  static void WeakCallback(
+      const v8::WeakCallbackInfo<PersistentContextPtr>& data) {
+    delete data.GetParameter();
+  }
 
  public:
   PersistentContextPtr(WallProfiler* profiler, Local<Object> wrap);
@@ -139,14 +171,18 @@ class PersistentContextPtr : public node::ObjectWrap {
   ContextPtr Get() const { return context; }
 
   static PersistentContextPtr* Unwrap(Local<Object> wrap) {
-    return node::ObjectWrap::Unwrap<PersistentContextPtr>(wrap);
+    return static_cast<PersistentContextPtr*>(
+        GetAlignedPointerFromInternalField(*wrap, 0));
   }
 };
 
 PersistentContextPtr::PersistentContextPtr(WallProfiler* profiler,
                                            Local<Object> wrap)
     : profiler_(profiler) {
-  Wrap(wrap);
+  auto* isolate = Isolate::GetCurrent();
+  wrap->SetAlignedPointerInInternalField(0, this);
+  handle_.Reset(isolate, wrap);
+  handle_.SetWeak(this, &WeakCallback, v8::WeakCallbackType::kParameter);
   // Splice ourselves at the head of profiler's live list.
   auto** headSlot = profiler->liveContextPtrHeadSlot();
   next_ = *headSlot;
@@ -167,15 +203,11 @@ PersistentContextPtr::~PersistentContextPtr() {
     if (next_ != nullptr) next_->pprev_ = pprev_;
     profiler_->recordContextRelease();
   }
-}
-
-inline void* GetAlignedPointerFromInternalField(Object* object, int index) {
-#if NODE_MAJOR_VERSION >= 26
-  return object->GetAlignedPointerFromInternalField(
-      index, kEmbedderDataTypeTagDefault);
-#else
-  return object->GetAlignedPointerFromInternalField(index);
-#endif
+  // Cancels the weak callback when we're deleted by ~WallProfiler rather than
+  // by V8; a no-op when we got here from WeakCallback itself. The holder
+  // object's internal field is left dangling either way, but nothing reads it
+  // once the owning profiler is gone.
+  handle_.Reset();
 }
 
 // Maximum number of rounds in the GetV8ToEpochOffset
@@ -678,9 +710,9 @@ WallProfiler::~WallProfiler() {
   // Delete every PCP still live in the CPED map. ~PCP would normally unlink
   // itself via pprev_/next_, but we're tearing down the list we point into —
   // so null pprev_ first to signal "already detached" and let ~PCP skip the
-  // unlink. (~ObjectWrap will still clear V8's weak callback during delete,
-  // so the dangling internal-field pointer in the wrap object stays inert
-  // even if V8 later GCs the wrap.)
+  // unlink. (~PCP still resets its weak handle during delete, so the dangling
+  // internal-field pointer in the wrap object stays inert even if V8 later
+  // GCs the wrap.)
   auto* p = liveContextPtrHead_;
   while (p != nullptr) {
     auto* next = p->next_;
