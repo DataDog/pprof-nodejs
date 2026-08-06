@@ -47,12 +47,12 @@ async function main() {
   await post(session, 'HeapProfiler.enable');
   await post(session, 'HeapProfiler.startSampling', {samplingInterval: 16384});
 
-  // Allocate so the sampler actually has samples to report.
+  // Allocate so the sampler actually has samples to report. Kept modest and
+  // scoped to this function: the profile only needs a non-empty sample set.
   const retained: Array<{i: number; s: string}> = [];
-  for (let i = 0; i < 200000; i++) {
+  for (let i = 0; i < 20000; i++) {
     retained.push({i, s: 'x'.repeat(16)});
   }
-  (globalThis as unknown as {__retained: unknown}).__retained = retained;
 
   // pprof never started the heap profiler, so there is no state for this
   // isolate. Both of these must return rather than crash.
