@@ -115,6 +115,17 @@ inline void* GetAlignedPointerFromInternalField(Object* object, int index) {
 #endif
 }
 
+inline void SetAlignedPointerInInternalField(Local<Object> object,
+                                             int index,
+                                             void* value) {
+#if NODE_MAJOR_VERSION >= 26
+  object->SetAlignedPointerInInternalField(
+      index, value, kEmbedderDataTypeTagDefault);
+#else
+  object->SetAlignedPointerInInternalField(index, value);
+#endif
+}
+
 // Deliberately not a node::ObjectWrap. That base registers a per-instance
 // environment cleanup hook in its constructor and calls
 // RemoveEnvironmentCleanupHook from its destructor, which CHECKs that the
@@ -180,7 +191,7 @@ PersistentContextPtr::PersistentContextPtr(WallProfiler* profiler,
                                            Local<Object> wrap)
     : profiler_(profiler) {
   auto* isolate = Isolate::GetCurrent();
-  wrap->SetAlignedPointerInInternalField(0, this);
+  SetAlignedPointerInInternalField(wrap, 0, this);
   handle_.Reset(isolate, wrap);
   handle_.SetWeak(this, &WeakCallback, v8::WeakCallbackType::kParameter);
   // Splice ourselves at the head of profiler's live list.
