@@ -330,6 +330,43 @@ describe('HeapProfiler', () => {
   });
 });
 
+describe('foreign heap sampler', () => {
+  // Regression test: V8's sampling heap profiler can be enabled by something
+  // other than pprof (inspector, DevTools, another agent). getAllocationProfile
+  // and mapAllocationProfile then see a live V8 profile with no per-isolate
+  // state, and used to dereference an empty shared_ptr. Forked because the
+  // failure is a SIGSEGV.
+  it('should not crash when V8 heap sampling was enabled outside of pprof', async function () {
+    this.timeout(30000);
+
+    const proc = fork(path.join(__dirname, 'heap-foreign-sampler.js'), {
+      silent: true,
+    });
+    let output = '';
+    proc.stdout?.on('data', chunk => {
+      output += chunk;
+    });
+    proc.stderr?.on('data', chunk => {
+      output += chunk;
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      proc.on('error', reject);
+      proc.on('exit', (code, signal) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              `heap-foreign-sampler exited with code=${code} signal=${signal}\n${output}`,
+            ),
+          );
+        }
+      });
+    });
+  });
+});
+
 describe('OOMMonitoring', () => {
   it('should restore heap limit after v8 recovers from OOM', async function () {
     this.timeout(30000);
