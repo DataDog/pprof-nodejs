@@ -696,6 +696,43 @@ function captureBytes(opts: {
       });
     });
 
+    describe('invalidate', () => {
+      it('flips the record valid byte to 0 in place', () => {
+        // Verified through the shared record: same ThreadContext reference
+        // observed by any async-context frame that inherits it sees the
+        // new valid=0 the moment we call invalidate() on any of them.
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES);
+        ctx.run(() => {
+          strictAssert.equal(decodeHeader(_currentRecordBytes()!).valid, 1);
+          ctx.invalidate();
+          strictAssert.equal(decodeHeader(_currentRecordBytes()!).valid, 0);
+        });
+      });
+
+      it('is idempotent', () => {
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES);
+        ctx.run(() => {
+          ctx.invalidate();
+          ctx.invalidate();
+          strictAssert.equal(decodeHeader(_currentRecordBytes()!).valid, 0);
+        });
+      });
+
+      it('appendAttributes after invalidate mutates attrs_data but leaves valid=0', () => {
+        // valid is a separate byte from attrs_data — an invalidated record
+        // can still grow via appendAttributes; readers MUST honor
+        // valid==0 and ignore the record regardless.
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES);
+        ctx.run(() => {
+          ctx.invalidate();
+          ctx.appendAttributes([, 'late']);
+          const hdr = decodeHeader(_currentRecordBytes()!);
+          strictAssert.equal(hdr.valid, 0);
+          strictAssert.equal(hdr.attrsDataSize, 6); // key(1) + len(1) + 'late'(4)
+        });
+      });
+    });
+
     describe('getProcessContextAttributes', () => {
       it('rejects non-array keys', () => {
         strictAssert.throws(
