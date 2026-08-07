@@ -15,6 +15,12 @@ updates:
     ignore:
       # Internal dependencies that we update manually
       - dependency-name: "pprof-format"
+      # TypeScript 7 (the native port) is not yet supported by typescript-eslint
+      # (and therefore gts), so major bumps break `npm run lint`.
+      # See https://github.com/typescript-eslint/typescript-eslint/issues/10940
+      # Re-enable once typescript-eslint ships TS >=7 support.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     versioning-strategy: "increase"
     labels:
       - dependabot
