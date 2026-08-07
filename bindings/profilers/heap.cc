@@ -435,6 +435,9 @@ size_t NearHeapLimit(void* data,
       state->profile.reset();
     }
   } else {
+    // Drop any profile retained from an earlier invocation: it is stale, and
+    // nothing below is going to consume or replace it.
+    state->profile.reset();
     fprintf(stderr,
             "NearHeapLimit: heap profiler is not enabled, no allocation "
             "profile to report\n");
@@ -535,7 +538,21 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
 NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
   auto isolate = info.GetIsolate();
   isolate->GetHeapProfiler()->StopSamplingHeapProfiler();
-  PerIsolateData::For(isolate)->GetHeapProfilerState().reset();
+
+  // Uninstall explicitly rather than leaving it to ~HeapProfilerState. reset()
+  // only destroys the state if this is the last reference, and it need not be:
+  // NearHeapLimit and InterruptCallback both take a shared_ptr copy for the
+  // duration of the call, so a stop() reached from inside one of them (the
+  // near-heap-limit JS callback calling heapProfiler.stop(), say) would leave
+  // the state alive, the destructor unrun, and this callback still registered
+  // with V8 while the per-isolate slot is already empty. The next
+  // near-heap-limit GC would then enter NearHeapLimit with no state at all.
+  // Idempotent: it clears callbackInstalled.
+  auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state) {
+    state->UninstallNearHeapLimitCallback();
+  }
+  state.reset();
 
   // Remove cleanup hook since profiler is explicitly stopped
   {
