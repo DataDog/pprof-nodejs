@@ -115,8 +115,9 @@ export interface TimeProfilerOptions {
    * Controls how frame column numbers are represented in the serialized
    * profile. Defaults to `'drop'` (column omitted) to preserve the historical
    * line-number semantics for existing consumers. Set to `'pack'` to pack the
-   * column into the high 32 bits of the line field for backends that support
-   * it (e.g. Datadog's JS/Node deobfuscation). See {@link ColumnNumbers}.
+   * column into the high 32 bits of the line field, or `'emit'` to populate the
+   * dedicated pprof `Line.column` field, for backends that support it (e.g.
+   * Datadog's JS/Node deobfuscation). See {@link ColumnNumbers}.
    */
   columnNumbers?: ColumnNumbers;
 }

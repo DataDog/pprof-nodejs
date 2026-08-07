@@ -87,12 +87,18 @@ function isGeneratedLocation(
  *   (`column << 32 | line`) — the encoding the Datadog deobfuscation backend
  *   decodes (the same one the Chrome profile intake uses). Required to
  *   deobfuscate single-line (bundled/minified) frames, where the column is the
- *   only discriminator between functions.
- *
- * The enum leaves room for a future `'emit'` mode that would populate a real
- * pprof `Line.column` field once the backend consumes it.
+ *   only discriminator between functions. Only frames whose source map was
+ *   declared but missing locally are packed.
+ * - `'emit'`: like `'pack'`, but records the column in the dedicated pprof
+ *   `Line.column` field instead of packing it into the line field, so the line
+ *   field stays standards-compliant and the two concerns are cleanly separated.
+ *   Scoped to the same frames as `'pack'` — only those whose source map was
+ *   declared but missing locally, i.e. the frames bound for server-side
+ *   unminification. The Datadog backend performs the `column << 32 | line`
+ *   packing itself (for Node.js profiles) when it consumes the column field.
+ *   Requires pprof-format >= 2.3.0, the version that added `Line.column`.
  */
-export type ColumnNumbers = 'drop' | 'pack';
+export type ColumnNumbers = 'drop' | 'pack' | 'emit';
 
 export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
 
@@ -158,6 +164,7 @@ function serialize<T extends ProfileNode>(
   const functionIdMap = new Map<string, number>();
   const locationIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
+  const emitColumns = columnNumbers === 'emit';
 
   let hasMissingMapFiles = false;
 
@@ -230,15 +237,23 @@ function serialize<T extends ProfileNode>(
   }
 
   function getLine(loc: SourceLocation, scriptId?: number): Line {
-    // Only pack the column for frames whose source map was declared but missing
-    // locally — i.e. exactly the frames that will be sent for server-side
-    // unminification (the same condition that sets dd:has-missing-map-files).
-    // Locally-resolved frames keep their plain line, so packed values never
-    // reach profiles that skip server-side unminification.
-    const packColumn = packColumns && loc.missingMapFile === true;
+    // Both 'pack' and 'emit' carry the column only for frames whose source map
+    // was declared but missing locally — i.e. exactly the frames bound for
+    // server-side unminification (the same condition that sets
+    // dd:has-missing-map-files). Locally-resolved frames keep a plain line and
+    // no column, so column data never reaches profiles that skip server-side
+    // unminification.
+    const carryColumn = loc.missingMapFile === true;
     return new Line({
       functionId: getFunction(loc, scriptId).id,
-      line: packColumn ? packLineAndColumn(loc.line, loc.column) : loc.line,
+      // 'pack' encodes the column into the high 32 bits of the line field.
+      line:
+        packColumns && carryColumn
+          ? packLineAndColumn(loc.line, loc.column)
+          : loc.line,
+      // 'emit' records the column in the dedicated pprof Line.column field
+      // instead; the backend does the line/column packing itself.
+      column: emitColumns && carryColumn ? loc.column : undefined,
     });
   }
 
