@@ -67,12 +67,17 @@ struct HeapProfilerState {
   explicit HeapProfilerState(v8::Isolate* isolate) : isolate(isolate) {}
 
   ~HeapProfilerState() {
+    // Uninstall first. By the time we run, the shared_ptr in PerIsolateData is
+    // already empty (that is what destroyed us), so NearHeapLimit would find no
+    // state to work with; anything below that can trigger a GC must not be able
+    // to reach it.
+    UninstallNearHeapLimitCallback();
+
     auto profiler = isolate->GetHeapProfiler();
     if (profiler) {
       profiler->StopSamplingHeapProfiler();
     }
 
-    UninstallNearHeapLimitCallback();
     if (async) {
       // defer deletion of async when uv_close callback is invoked
       uv_close(reinterpret_cast<uv_handle_t*>(async), [](uv_handle_t* handle) {
@@ -365,6 +370,21 @@ size_t NearHeapLimit(void* data,
   auto isolate = v8::Isolate::GetCurrent();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
+  if (!state) {
+    // StopSamplingHeapProfiler uninstalls us before dropping the state, so
+    // normally this cannot happen. The gap is the other destruction path: a
+    // shared_ptr copy taken by an in-flight NearHeapLimit or InterruptCallback
+    // can outlive the per-isolate slot — the OOM JS callback calling
+    // process.exit() erases PerIsolateData while InterruptCallback still holds
+    // a reference, so ~HeapProfilerState never runs to uninstall us. Decline
+    // and let V8 do its normal OOM handling.
+    //
+    // Deliberately no RemoveNearHeapLimitCallback here: the state that tracked
+    // the installation is already unreachable, so callbackInstalled cannot be
+    // cleared, and the only way to get here is a process on its way out.
+    return current_heap_limit;
+  }
+
   if (state->insideCallback) {
     // Reentrant call detected, try to increase heap limit a bit so that
     // previous callback can proceed
@@ -401,26 +421,41 @@ size_t NearHeapLimit(void* data,
               stats.object_count());
     }
   }
+  // GetAllocationProfile returns null when V8's sampling heap profiler isn't
+  // running, and that can happen while this callback is still installed:
+  // HeapProfilerCleanupHook stops V8's sampler without touching our state, so
+  // between that hook and the isolate actually going away we stay registered
+  // with nothing to sample. The heap-limit bookkeeping below still has to run,
+  // so skip only the profile-dependent work.
   std::unique_ptr<v8::AllocationProfile> profile{
       isolate->GetHeapProfiler()->GetAllocationProfile()};
-  state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
-  if (state->dumpProfileOnStderr) {
-    dumpAllocationProfile(stderr, state->profile.get());
-  }
-
-  if (!state->export_command.empty()) {
-    ExportProfile(*state);
-  }
-
-  if (!state->callback.IsEmpty()) {
-    if (state->callbackMode & kInterruptCallback) {
-      isolate->RequestInterrupt(InterruptCallback, nullptr);
+  if (profile) {
+    state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
+    if (state->dumpProfileOnStderr) {
+      dumpAllocationProfile(stderr, state->profile.get());
     }
-    if (state->callbackMode & kAsyncCallback) {
-      uv_async_send(state->async);
+
+    if (!state->export_command.empty()) {
+      ExportProfile(*state);
+    }
+
+    if (!state->callback.IsEmpty()) {
+      if (state->callbackMode & kInterruptCallback) {
+        isolate->RequestInterrupt(InterruptCallback, nullptr);
+      }
+      if (state->callbackMode & kAsyncCallback) {
+        uv_async_send(state->async);
+      }
+    } else {
+      state->profile.reset();
     }
   } else {
+    // Drop any profile retained from an earlier invocation: it is stale, and
+    // nothing below is going to consume or replace it.
     state->profile.reset();
+    fprintf(stderr,
+            "NearHeapLimit: heap profiler is not enabled, no allocation "
+            "profile to report\n");
   }
 
   if (!state->isMainThread) {
@@ -518,7 +553,21 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
 NAN_METHOD(HeapProfiler::StopSamplingHeapProfiler) {
   auto isolate = info.GetIsolate();
   isolate->GetHeapProfiler()->StopSamplingHeapProfiler();
-  PerIsolateData::For(isolate)->GetHeapProfilerState().reset();
+
+  // Uninstall explicitly rather than leaving it to ~HeapProfilerState. reset()
+  // only destroys the state if this is the last reference, and it need not be:
+  // NearHeapLimit and InterruptCallback both take a shared_ptr copy for the
+  // duration of the call, so a stop() reached from inside one of them (the
+  // near-heap-limit JS callback calling heapProfiler.stop(), say) would leave
+  // the state alive, the destructor unrun, and this callback still registered
+  // with V8 while the per-isolate slot is already empty. The next
+  // near-heap-limit GC would then enter NearHeapLimit with no state at all.
+  // Idempotent: it clears callbackInstalled.
+  auto& state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state) {
+    state->UninstallNearHeapLimitCallback();
+  }
+  state.reset();
 
   // Remove cleanup hook since profiler is explicitly stopped
   {
@@ -541,14 +590,22 @@ NAN_METHOD(HeapProfiler::GetAllocationProfile) {
   if (!profile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
-  const bool allocations = state->allocations;
+  // A non-null profile only proves V8's sampling heap profiler is running; it
+  // does not imply we are the one who started it. Anything else in the process
+  // (the inspector's HeapProfiler.startSampling, another agent) can enable it
+  // without ever going through StartSamplingHeapProfiler, in which case there
+  // is no per-isolate state. Serve the profile without allocation stats rather
+  // than dereferencing an empty shared_ptr.
+  const bool allocations = state && state->allocations;
   v8::AllocationProfile::Node* root = profile->GetRootNode();
   AllocationProfileNodeStatsMap allocation_stats;
   if (allocations) {
     allocation_stats = BuildAllocationStatsByNodeId(profile->GetSamples());
   }
 
-  state->OnNewProfile();
+  if (state) {
+    state->OnNewProfile();
+  }
   info.GetReturnValue().Set(TranslateAllocationProfile(
       root, allocations ? &allocation_stats : nullptr));
 }
@@ -573,7 +630,11 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
     return Nan::ThrowError("Heap profiler is not enabled.");
   }
 
-  state->OnNewProfile();
+  // As in GetAllocationProfile: V8's profiler may be running without us having
+  // started it, so there may be no per-isolate state to update.
+  if (state) {
+    state->OnNewProfile();
+  }
 
   auto root = AllocationProfileNodeView::New(profile->GetRootNode());
   v8::Local<v8::Value> argv[] = {root};
@@ -668,7 +729,9 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
 void InterruptCallback(v8::Isolate* isolate, void* data) {
   v8::HandleScope scope(isolate);
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
-  if (!state->profile) {
+  // The interrupt is requested from NearHeapLimit but runs later, so
+  // StopSamplingHeapProfiler() may have dropped the state in between.
+  if (!state || !state->profile) {
     return;
   }
   v8::Local<v8::Value> argv[1] = {

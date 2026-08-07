@@ -330,6 +330,52 @@ describe('HeapProfiler', () => {
   });
 });
 
+describe('foreign heap sampler', () => {
+  // Regression test: V8's sampling heap profiler can be enabled by something
+  // other than pprof (inspector, DevTools, another agent). getAllocationProfile
+  // and mapAllocationProfile then see a live V8 profile with no per-isolate
+  // state, and used to dereference an empty shared_ptr. Forked because the
+  // failure is a SIGSEGV.
+  it('should not crash when V8 heap sampling was enabled outside of pprof', async function () {
+    this.timeout(30000);
+
+    const proc = fork(path.join(__dirname, 'heap-foreign-sampler.js'), {
+      silent: true,
+      // Under the asan CI job the child inherits LD_PRELOAD=libasan and runs
+      // LeakSanitizer at exit. The child ends on process.exit(), so V8's heap
+      // is never torn down and every live object is reported as leaked,
+      // failing the child for reasons that have nothing to do with what this
+      // test checks. ASAN itself stays on, so a genuine memory error in the
+      // code under test is still caught.
+      env: {...process.env, LSAN_OPTIONS: 'detect_leaks=0'},
+    });
+    let output = '';
+    proc.stdout?.on('data', chunk => {
+      output += chunk;
+    });
+    proc.stderr?.on('data', chunk => {
+      output += chunk;
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      proc.on('error', reject);
+      // 'close' rather than 'exit': it fires once the piped stdio has been
+      // drained, so `output` is complete when it lands in the failure message.
+      proc.on('close', (code, signal) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              `heap-foreign-sampler exited with code=${code} signal=${signal}\n${output}`,
+            ),
+          );
+        }
+      });
+    });
+  });
+});
+
 describe('OOMMonitoring', () => {
   it('should restore heap limit after v8 recovers from OOM', async function () {
     this.timeout(30000);
