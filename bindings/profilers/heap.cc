@@ -67,12 +67,17 @@ struct HeapProfilerState {
   explicit HeapProfilerState(v8::Isolate* isolate) : isolate(isolate) {}
 
   ~HeapProfilerState() {
+    // Uninstall first. By the time we run, the shared_ptr in PerIsolateData is
+    // already empty (that is what destroyed us), so NearHeapLimit would find no
+    // state to work with; anything below that can trigger a GC must not be able
+    // to reach it.
+    UninstallNearHeapLimitCallback();
+
     auto profiler = isolate->GetHeapProfiler();
     if (profiler) {
       profiler->StopSamplingHeapProfiler();
     }
 
-    UninstallNearHeapLimitCallback();
     if (async) {
       // defer deletion of async when uv_close callback is invoked
       uv_close(reinterpret_cast<uv_handle_t*>(async), [](uv_handle_t* handle) {
@@ -365,15 +370,6 @@ size_t NearHeapLimit(void* data,
   auto isolate = v8::Isolate::GetCurrent();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
-  if (!state) {
-    // StopSamplingHeapProfiler() resets the state but cannot uninstall this
-    // callback — the object that tracked its installation is what it just
-    // dropped. Remove ourselves so we aren't called again, and leave the heap
-    // limit alone so V8 proceeds with its normal OOM handling.
-    isolate->RemoveNearHeapLimitCallback(&NearHeapLimit, 0);
-    return current_heap_limit;
-  }
-
   if (state->insideCallback) {
     // Reentrant call detected, try to increase heap limit a bit so that
     // previous callback can proceed
@@ -410,26 +406,38 @@ size_t NearHeapLimit(void* data,
               stats.object_count());
     }
   }
+  // GetAllocationProfile returns null when V8's sampling heap profiler isn't
+  // running, and that can happen while this callback is still installed:
+  // HeapProfilerCleanupHook stops V8's sampler without touching our state, so
+  // between that hook and the isolate actually going away we stay registered
+  // with nothing to sample. The heap-limit bookkeeping below still has to run,
+  // so skip only the profile-dependent work.
   std::unique_ptr<v8::AllocationProfile> profile{
       isolate->GetHeapProfiler()->GetAllocationProfile()};
-  state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
-  if (state->dumpProfileOnStderr) {
-    dumpAllocationProfile(stderr, state->profile.get());
-  }
-
-  if (!state->export_command.empty()) {
-    ExportProfile(*state);
-  }
-
-  if (!state->callback.IsEmpty()) {
-    if (state->callbackMode & kInterruptCallback) {
-      isolate->RequestInterrupt(InterruptCallback, nullptr);
+  if (profile) {
+    state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
+    if (state->dumpProfileOnStderr) {
+      dumpAllocationProfile(stderr, state->profile.get());
     }
-    if (state->callbackMode & kAsyncCallback) {
-      uv_async_send(state->async);
+
+    if (!state->export_command.empty()) {
+      ExportProfile(*state);
+    }
+
+    if (!state->callback.IsEmpty()) {
+      if (state->callbackMode & kInterruptCallback) {
+        isolate->RequestInterrupt(InterruptCallback, nullptr);
+      }
+      if (state->callbackMode & kAsyncCallback) {
+        uv_async_send(state->async);
+      }
+    } else {
+      state->profile.reset();
     }
   } else {
-    state->profile.reset();
+    fprintf(stderr,
+            "NearHeapLimit: heap profiler is not enabled, no allocation "
+            "profile to report\n");
   }
 
   if (!state->isMainThread) {
