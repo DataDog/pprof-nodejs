@@ -1,15 +1,32 @@
-import {execFile} from 'child_process';
+import {execFile, ChildProcess} from 'child_process';
 import {promisify} from 'util';
 import {Worker} from 'worker_threads';
 
 const exec = promisify(execFile);
 
 describe('Worker Threads', () => {
+  let child: ChildProcess | undefined;
+
+  afterEach(() => {
+    // A mocha timeout rejects the test but leaves the spawned process running,
+    // and `npm test` runs mocha without --exit, so mocha waits for the event
+    // loop to drain before exiting. A live child keeps its process handle on
+    // the loop, so a child that outlives its test holds the entire run open —
+    // if that child is itself wedged, until the CI job limit rather than until
+    // the test times out. Hooks still run after a timeout, so reap it here.
+    if (child?.exitCode === null && child.signalCode === null) {
+      child.kill();
+    }
+    child = undefined;
+  });
+
   // eslint-ignore-next-line prefer-array-callback
   it('should work', function () {
     this.timeout(20000);
     const nbWorkers = 2;
-    return exec('node', ['./out/test/worker.js', String(nbWorkers)]);
+    const running = exec('node', ['./out/test/worker.js', String(nbWorkers)]);
+    child = running.child;
+    return running;
   });
 
   it('should not crash when worker is terminated', async function () {
