@@ -161,7 +161,7 @@ class PersistentContextPtr {
 
   // Weak handle on the holder object. Owns this PCP: when V8 collects the
   // holder, WeakCallback deletes us.
-  v8::Persistent<v8::Object> handle_;
+  v8::Global<v8::Object> handle_;
 
   friend class WallProfiler;
 
@@ -214,11 +214,6 @@ PersistentContextPtr::~PersistentContextPtr() {
     if (next_ != nullptr) next_->pprev_ = pprev_;
     profiler_->recordContextRelease();
   }
-  // Cancels the weak callback when we're deleted by ~WallProfiler rather than
-  // by V8; a no-op when we got here from WeakCallback itself. The holder
-  // object's internal field is left dangling either way, but nothing reads it
-  // once the owning profiler is gone.
-  handle_.Reset();
 }
 
 // Maximum number of rounds in the GetV8ToEpochOffset
