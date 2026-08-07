@@ -61,6 +61,20 @@ export interface ThreadContext {
   appendAttributes(
     attributes: Array<string | null | undefined> | undefined,
   ): void;
+
+  /**
+   * Mark this context's underlying record `valid` byte as 0 in place.
+   * Every async-context frame that still holds this `ThreadContext`
+   * reference (including those that inherited it verbatim from a
+   * parent frame) will subsequently present a record with `valid = 0`
+   * to a reader, so this one call drops the record out of scope for
+   * every such frame at once. Intended for the span-finish path, where
+   * clearing only the current frame's context via {@link clearContext}
+   * would leave sibling and detached-continuation frames still exposing
+   * the finished span's trace / span IDs. Idempotent.
+   */
+  invalidate(): void;
+
   isTruncated(): boolean;
   /** Debug-only: returns the on-the-wire record bytes. Not stable. */
   debugBytes(): Uint8Array;
@@ -224,6 +238,7 @@ if (process.platform === 'linux') {
   // AsyncLocalStorage.
   class NoopThreadContext implements ThreadContext {
     appendAttributes(): void {}
+    invalidate(): void {}
     isTruncated(): boolean {
       return false;
     }

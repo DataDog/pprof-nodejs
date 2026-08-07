@@ -190,6 +190,7 @@ class CtxWrap : public ObjectWrap {
   static void New(const FunctionCallbackInfo<Value>& args);
   static void DebugBytes(const FunctionCallbackInfo<Value>& args);
   static void Append(const FunctionCallbackInfo<Value>& args);
+  static void Invalidate(const FunctionCallbackInfo<Value>& args);
   static void IsTruncated(const FunctionCallbackInfo<Value>& args);
 
   // Encode the JS array at `attrs_val` into `out` as packed (key, len, value)
@@ -543,6 +544,25 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   free(old_rec);
 }
 
+// Mark this record's `valid` byte as 0 in place. Every async-context
+// frame that holds this ThreadContext reference — including those that
+// merely inherited it verbatim from a parent frame — will subsequently
+// present the same shared record to a reader, so this one write drops
+// the record out of scope for every such frame at once. Intended for
+// span-finish, where clearing the current frame's context via
+// `clearContext()` alone leaves sibling / detached-continuation frames
+// still exposing the finished span. Idempotent; safe to call multiple
+// times.
+void CtxWrap::Invalidate(const FunctionCallbackInfo<Value>& args) {
+  CtxWrap* self = ObjectWrap::Unwrap<CtxWrap>(args.This());
+  if (!self) {
+    args.GetIsolate()->ThrowError("not a ThreadContext");
+    return;
+  }
+  std::atomic_signal_fence(std::memory_order_release);
+  *reinterpret_cast<volatile uint8_t*>(&self->record_->valid) = 0;
+}
+
 // Returns true if any attribute was ever dropped from this wrapper's
 // record because it would have pushed attrs_data past the cap — set during
 // CtxWrap::New() if the initial set didn't fit, or by any subsequent
@@ -587,6 +607,9 @@ void CtxWrap::Init(Local<Object> exports) {
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "appendAttributes"),
       FunctionTemplate::New(isolate, Append));
+  tpl->PrototypeTemplate()->Set(
+      String::NewFromUtf8Literal(isolate, "invalidate"),
+      FunctionTemplate::New(isolate, Invalidate));
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "isTruncated"),
       FunctionTemplate::New(isolate, IsTruncated));
