@@ -370,6 +370,21 @@ size_t NearHeapLimit(void* data,
   auto isolate = v8::Isolate::GetCurrent();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
+  if (!state) {
+    // StopSamplingHeapProfiler uninstalls us before dropping the state, so
+    // normally this cannot happen. The gap is the other destruction path: a
+    // shared_ptr copy taken by an in-flight NearHeapLimit or InterruptCallback
+    // can outlive the per-isolate slot — the OOM JS callback calling
+    // process.exit() erases PerIsolateData while InterruptCallback still holds
+    // a reference, so ~HeapProfilerState never runs to uninstall us. Decline
+    // and let V8 do its normal OOM handling.
+    //
+    // Deliberately no RemoveNearHeapLimitCallback here: the state that tracked
+    // the installation is already unreachable, so callbackInstalled cannot be
+    // cleared, and the only way to get here is a process on its way out.
+    return current_heap_limit;
+  }
+
   if (state->insideCallback) {
     // Reentrant call detected, try to increase heap limit a bit so that
     // previous callback can proceed
