@@ -26,7 +26,7 @@
 
 import assert from 'assert';
 import {strict as strictAssert} from 'assert';
-import {spawnSync} from 'node:child_process';
+import {fork, spawnSync} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
@@ -151,6 +151,43 @@ function captureBytes(opts: {
 (isLinux && isAsyncContextFrameAvailable ? describe : describe.skip)(
   'OTEP-4947 thread context (Linux-only)',
   () => {
+    describe('isolate teardown', () => {
+      // Regression test: CtxWrap used to derive from node::ObjectWrap, whose
+      // destructor calls RemoveEnvironmentCleanupHook. A CtxWrap collected
+      // during isolate teardown hit that function's CHECK that an Environment
+      // is current and aborted the process. Forked, because the failure is a
+      // SIGABRT rather than a test failure.
+      it('should not abort when contexts are collected during teardown', async function () {
+        this.timeout(60000);
+
+        const proc = fork(join(__dirname, 'otel-ctx-teardown.js'), {
+          silent: true,
+        });
+        let output = '';
+        proc.stdout?.on('data', chunk => {
+          output += chunk;
+        });
+        proc.stderr?.on('data', chunk => {
+          output += chunk;
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          proc.on('error', reject);
+          proc.on('close', (code, signal) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(
+                new Error(
+                  `otel-ctx-teardown exited with code=${code} signal=${signal}\n${output}`,
+                ),
+              );
+            }
+          });
+        });
+      });
+    });
+
     describe('ThreadContext construction', () => {
       it('accepts Uint8Array trace and span IDs', () => {
         const bytes = captureBytes({
@@ -770,7 +807,7 @@ function captureBytes(opts: {
         strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
         strictAssert.equal(pca['threadlocal.wrapped_object_offset'], 24);
         strictAssert.equal(pca['threadlocal.tagged_size'], 8);
-        strictAssert.equal(pca['threadlocal.native_wrap_fields_offset'], 24);
+        strictAssert.equal(pca['threadlocal.native_wrap_fields_offset'], 0);
         strictAssert.equal(pca['threadlocal.js_map_table_offset'], 0x18);
         strictAssert.equal(
           pca['threadlocal.ordered_hash_map_header_size'],
