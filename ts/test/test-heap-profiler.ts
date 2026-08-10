@@ -377,13 +377,15 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
-  it('should restore heap limit after v8 recovers from OOM', async function () {
-    this.timeout(30000);
-
-    const proc = fork(path.join(__dirname, 'oom-restore-heap-limit.js'), {
-      execArgv: ['--expose-gc', '--max-old-space-size=64'],
-      silent: true,
-    });
+  async function assertHeapLimitIsRestored(heapLimitExtensionSize: number) {
+    const proc = fork(
+      path.join(__dirname, 'oom-restore-heap-limit.js'),
+      [String(heapLimitExtensionSize)],
+      {
+        execArgv: ['--expose-gc', '--max-old-space-size=64'],
+        silent: true,
+      },
+    );
     let output = '';
 
     proc.stdout?.on('data', chunk => {
@@ -405,6 +407,16 @@ describe('OOMMonitoring', () => {
         }
       });
     });
+  }
+
+  it('should restore an automatic heap limit extension', async function () {
+    this.timeout(30000);
+    await assertHeapLimitIsRestored(0);
+  });
+
+  it('should restore a configured heap limit extension', async function () {
+    this.timeout(30000);
+    await assertHeapLimitIsRestored(64 * 1024 * 1024);
   });
 
   it('should call external process upon OOM', async function () {

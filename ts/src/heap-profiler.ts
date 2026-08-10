@@ -245,24 +245,26 @@ export const CallbackMode = {
 /**
  * Add monitoring for v8 heap, heap profiler must already be started.
  * When an out of heap memory event occurs:
- *  - an extension of heap memory of |heapLimitExtensionSize| bytes is
- *    requested to v8. This extension can occur |maxHeapLimitExtensionCount|
- *    number of times. If the extension amount is not enough to satisfy
- *    memory allocation that triggers GC and OOM, process will abort.
+ *  - an extension of |heapLimitExtensionSize| bytes is requested from v8. If
+ *    the size is zero, an automatic extension of one maximum-sized young
+ *    generation is used, with a 10 MiB fallback if it cannot be detected.
+ *    This top-level extension can occur |maxHeapLimitExtensionCount| times.
+ *    Reentrant rescue extensions used to finish an in-progress capture are
+ *    additional and are not included in that count.
  *  - heap profile is dumped as folded stacks on stderr if
  *    |dumpHeapProfileOnSdterr| is true
  *  - heap profile is dumped in temporary file and a new process is spawned
  *    with |exportCommand| arguments and profile path appended at the end.
- *  - |callback| is called. Callback can be invoked only if
- *    heapLimitExtensionSize is enough for the process to continue. Invocation
- *    will be done by a RequestInterrupt if |callbackMode| is Interrupt or Both,
- *    this might be unsafe since Isolate should not be reentered
- *    from RequestInterrupt, but this allows to interrupt synchronous code.
- *    Otherwise the callback is scheduled to be called asynchronously.
+ *  - |callback| is called. Invocation will be done by a RequestInterrupt if
+ *    |callbackMode| is Interrupt or Both, this might be unsafe since Isolate
+ *    should not be reentered from RequestInterrupt, but this allows to
+ *    interrupt synchronous code. Otherwise the callback is scheduled to be
+ *    called asynchronously.
  * @param heapLimitExtensionSize - amount of bytes heap should be expanded
- *  with upon OOM
+ *  with upon OOM, or zero to select an automatic young-generation-sized
+ *  extension
  * @param maxHeapLimitExtensionCount - maximum number of times heap size
- *  extension can occur
+ *  can be extended after a top-level profile capture
  * @param dumpHeapProfileOnSdterr - dump heap profile on stderr upon OOM
  * @param exportCommand - command to execute upon OOM, filepath of a
  *  temporary file containing heap profile will be appended

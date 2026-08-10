@@ -23,6 +23,7 @@ import {heap} from '../src/index';
 const MB = 1024 * 1024;
 const LIMIT_TOLERANCE = 16 * MB;
 const CHUNK_SIZE = 4 * MB;
+const heapLimitExtensionSize = Number(process.argv[2] || 0);
 const gc = (global as typeof globalThis & {gc?: () => void}).gc;
 
 function heapLimit() {
@@ -44,7 +45,7 @@ async function main() {
 
   heap.start(MB, 64);
   try {
-    heap.monitorOutOfMemory(64 * MB, 1, false);
+    heap.monitorOutOfMemory(heapLimitExtensionSize, 1, false);
 
     const initialLimit = heapLimit();
     const retained: number[][] = [];
