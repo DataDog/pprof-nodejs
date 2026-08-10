@@ -292,29 +292,34 @@ static_assert(offsetof(CtxWrap, record_) == 0,
 // wall profiler uses for its active-profiler pointer.
 // `otel_thread_ctx_nodejs_v1` above is thread-local for the same reason.
 thread_local CtxWrap* g_live_ctx_wraps = nullptr;
-// Whether DrainLiveCtxWraps is registered for the current isolate. Cleared by
-// the drain itself so an isolate torn down and re-created on the same thread
-// re-registers, matching how `undefined_addr` gates ResetDiscoveryStruct.
-thread_local bool g_drain_hook_registered = false;
 
-// Delete every CtxWrap V8 has not collected yet. This is the teardown
-// deletion that node::ObjectWrap's per-instance cleanup hook used to provide;
-// without it the records would simply leak at exit. Registered once per
-// isolate from Wrap(), which runs inside a JS constructor call where a
-// context is entered, so AddEnvironmentCleanupHook's own CHECK is satisfied,
-// and never removed — it fires exactly once, at teardown, while the
-// Environment is still alive.
-void DrainLiveCtxWraps(void* /*arg*/) {
+// Delete every CtxWrap V8 has not collected yet. This is the teardown deletion
+// that node::ObjectWrap's per-instance cleanup hook used to provide; without it
+// the records would simply leak at exit. Registered once per isolate from
+// Init(), which runs at module initialisation with a context entered, so
+// AddEnvironmentCleanupHook's own CHECK is satisfied, and never removed — it
+// fires exactly once, at teardown, while the Environment is still alive.
+void DrainLiveCtxWraps(void* arg) {
+  auto* isolate = static_cast<Isolate*>(arg);
+  v8::HandleScope scope(isolate);
   CtxWrap* p = g_live_ctx_wraps;
   while (p != nullptr) {
     CtxWrap* next = p->next_;
     p->pprev_ = nullptr;
     p->next_ = nullptr;
+    // Clear the holder's internal field (containing p as pointer value), so
+    // nothing can reach a dangling CtxWrap through it including the
+    // out-of-process reader, which walks this slot. Being on the live list
+    // means V8 has not collected the holder, so the handle is safe to read
+    // here; the WeakCallback path cannot do this and does not need to,
+    // since there the holder is the thing being collected.
+    if (!p->handle_.IsEmpty()) {
+      SetAlignedPointerInInternalField(p->handle_.Get(isolate), 0, nullptr);
+    }
     delete p;
     p = next;
   }
   g_live_ctx_wraps = nullptr;
-  g_drain_hook_registered = false;
 }
 
 CtxWrap::~CtxWrap() {
@@ -334,10 +339,6 @@ void CtxWrap::WeakCallback(const v8::WeakCallbackInfo<CtxWrap>& data) {
 
 void CtxWrap::Wrap(Local<Object> holder) {
   Isolate* isolate = Isolate::GetCurrent();
-  if (!g_drain_hook_registered) {
-    node::AddEnvironmentCleanupHook(isolate, DrainLiveCtxWraps, nullptr);
-    g_drain_hook_registered = true;
-  }
   SetAlignedPointerInInternalField(holder, 0, this);
   handle_.Reset(isolate, holder);
   handle_.SetWeak(this, &WeakCallback, v8::WeakCallbackType::kParameter);
@@ -690,6 +691,7 @@ void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value>& args) {
 
 void CtxWrap::Init(Local<Object> exports) {
   Isolate* isolate = Isolate::GetCurrent();
+  node::AddEnvironmentCleanupHook(isolate, DrainLiveCtxWraps, isolate);
   Local<Context> context = isolate->GetCurrentContext();
 
   Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);

@@ -27,6 +27,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "internal-field.hh"
 #include "map-get.hh"
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
@@ -104,26 +105,6 @@ void SetContextPtr(ContextPtr& contextPtr,
   } else {
     contextPtr.reset();
   }
-}
-
-inline void* GetAlignedPointerFromInternalField(Object* object, int index) {
-#if NODE_MAJOR_VERSION >= 26
-  return object->GetAlignedPointerFromInternalField(
-      index, kEmbedderDataTypeTagDefault);
-#else
-  return object->GetAlignedPointerFromInternalField(index);
-#endif
-}
-
-inline void SetAlignedPointerInInternalField(Local<Object> object,
-                                             int index,
-                                             void* value) {
-#if NODE_MAJOR_VERSION >= 26
-  object->SetAlignedPointerInInternalField(
-      index, value, kEmbedderDataTypeTagDefault);
-#else
-  object->SetAlignedPointerInInternalField(index, value);
-#endif
 }
 
 // Deliberately not a node::ObjectWrap. That base registers a per-instance
