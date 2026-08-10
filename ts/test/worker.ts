@@ -6,6 +6,7 @@ import {getAndVerifyPresence, getAndVerifyString} from './profiles-for-tests';
 import {satisfies} from 'semver';
 
 import assert from 'assert';
+import {appendFileSync} from 'fs';
 
 const DURATION_MILLIS = 1000;
 const intervalMicros = 10000;
@@ -20,23 +21,64 @@ const useCPED =
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
 
+// Phase instrumentation for the intermittent stall this test hits on CI:
+// `should work` times out at 20s while the workload is almost entirely
+// wall-clock deadline work that finishes in ~4-5s regardless of machine speed
+// (with the deadline cut to 1ms the whole thing runs in ~60ms), so a run that
+// reaches 20s is wedged rather than slow. Reproduces on Linux Node 22 at
+// roughly one job in four, as well as on darwin-arm64 and win32.
+//
+// Collecting the marks costs a string and an array push; leaving them in means
+// anyone hunting the stall can see which phase it died in rather than
+// reconstructing it. Set DD_WORKER_TRACE_FILE to also append each mark to a
+// file as it happens — a file rather than stdout because execFile buffers a
+// child's output and only delivers it when the child closes, so a wedged child
+// produces nothing, and appending as we go means the trail survives the child
+// being killed.
+//
+// Deliberately no timer, no diagnostic-report call and no process.exit here.
+// An earlier version armed a watchdog that did all three and wedged CI jobs
+// for 40+ minutes; bisection pinned it to arming the timer, though the
+// mechanism was never identified. Nothing below runs on a schedule.
+const TRACE_FILE = process.env.DD_WORKER_TRACE_FILE;
+const START = Date.now();
+const progress: string[] = [];
+
+function mark(msg: string): void {
+  const line = `+${Date.now() - START}ms ${msg}`;
+  progress.push(line);
+  if (TRACE_FILE) {
+    // Synchronous: the point is that the line is on disk before whatever
+    // happens next, including the process being killed.
+    appendFileSync(TRACE_FILE, `${line}\n`);
+  }
+}
+
+let nextWorkerId = 0;
+
 function createWorker(durationMs: number): Promise<Profile[]> {
   return new Promise((resolve, reject) => {
     const profiles: Profile[] = [];
+    const chain = nextWorkerId++;
+    mark(`chain ${chain}: spawning first worker`);
     new Worker(__filename, {workerData: {durationMs}})
       .on('exit', exitCode => {
+        mark(`chain ${chain}: first worker exited (${exitCode})`);
         if (exitCode !== 0) reject();
         setTimeout(
           () => {
             // Run a second worker after the first one exited to test for proper
             // cleanup after first worker. This used to segfault.
+            mark(`chain ${chain}: spawning second worker`);
             new Worker(__filename, {workerData: {durationMs}})
               .on('exit', exitCode => {
+                mark(`chain ${chain}: second worker exited (${exitCode})`);
                 if (exitCode !== 0) reject();
                 resolve(profiles);
               })
               .on('error', reject)
               .on('message', profile => {
+                mark(`chain ${chain}: second worker sent a profile`);
                 profiles.push(profile);
               });
           },
@@ -45,6 +87,7 @@ function createWorker(durationMs: number): Promise<Profile[]> {
       })
       .on('error', reject)
       .on('message', profile => {
+        mark(`chain ${chain}: first worker sent a profile`);
         profiles.push(profile);
       });
   });
@@ -64,6 +107,7 @@ function getCpuUsage() {
 }
 
 async function main(durationMs: number) {
+  mark('main: starting profiler');
   time.start({
     durationMillis: durationMs * 3,
     intervalMicros,
@@ -80,15 +124,20 @@ async function main(durationMs: number) {
   const nbWorkers = Number(process.argv[2] ?? 2);
 
   // start workers
+  mark(`main: spawning ${nbWorkers} worker chains`);
   const workers = executeWorkers(nbWorkers, durationMs);
 
   const deadline = Date.now() + durationMs;
   // wait for all work to finish
+  mark('main: awaiting first bar/foo round');
   await Promise.all([bar(deadline), foo(deadline)]);
+  mark('main: first bar/foo round done, awaiting worker chains');
   const workerProfiles = await workers;
+  mark('main: worker chains done');
 
   // restart and check profile
   const profile1 = time.stop(true);
+  mark('main: stop(restart=true) returned');
   const cpu1 = getCpuUsage();
 
   workerProfiles.forEach(checkProfile);
@@ -97,14 +146,18 @@ async function main(durationMs: number) {
     checkCpuTime(profile1, cpu1 - cpu0, workerProfiles);
   }
   const newDeadline = Date.now() + durationMs;
+  mark('main: awaiting second bar/foo round');
   await Promise.all([bar(newDeadline), foo(newDeadline)]);
+  mark('main: second bar/foo round done');
 
   const profile2 = time.stop();
+  mark('main: stop() returned');
   const cpu2 = getCpuUsage();
   checkProfile(profile2);
   if (withContexts) {
     checkCpuTime(profile2, cpu2 - cpu1);
   }
+  mark('main: done');
 }
 
 async function worker(durationMs: number) {
