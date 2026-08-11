@@ -614,14 +614,21 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("allocation failed");
     return;
   }
+  // Capture before the copy: the point of the assert below is that the memcpy
+  // carried the header across intact, not that the record is valid. It used to
+  // assert `valid == 1`, which invalidate() legitimately makes false — and
+  // since NDEBUG is not defined for this addon, that aborted release builds
+  // too, not just debug ones.
+  const uint8_t src_valid = self->record_->valid;
   // Copy the existing record (header + already-written attrs_data).
   memcpy(
       new_rec.get(), self->record_, sizeof(OtelThreadCtxRecord) + current_used);
   // Append the new entries and update attrs_data_size.
   memcpy(&new_rec->attrs_data[current_used], appended.data(), appended.size());
   new_rec->attrs_data_size = static_cast<uint16_t>(new_used);
-  // The copy should've preserved valid=1 from the source record.
-  assert(new_rec->valid == 1);
+  // The copy should've carried the source record's header across verbatim,
+  // whatever its validity was.
+  assert(new_rec->valid == src_valid);
 
   // Publish: the pointer swap is the atomic boundary the reader sees. The
   // first fence keeps the new_rec content writes ordered before the pointer
