@@ -701,10 +701,14 @@ WallProfiler::~WallProfiler() {
   // internal-field pointer in the wrap object stays inert even if V8 later
   // GCs the wrap.)
   auto* p = liveContextPtrHead_;
+  auto isolate = Isolate::GetCurrent();
   while (p != nullptr) {
     auto* next = p->next_;
     p->pprev_ = nullptr;
     p->next_ = nullptr;
+    if (isolate != nullptr && !p->handle_.IsEmpty()) {
+      SetAlignedPointerInInternalField(p->handle_.Get(isolate), 0, nullptr);
+    }
     delete p;
     p = next;
   }
