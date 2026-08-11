@@ -770,6 +770,45 @@ function captureBytes(opts: {
       });
     });
 
+    describe('invalidate then grow', () => {
+      // Regression test: Append's reallocate path asserted that the copied
+      // record had valid == 1, which invalidate() legitimately makes false, so
+      // an append too large to fit in place aborted the process. NDEBUG is not
+      // defined for this addon, so that hit release builds too. The sibling
+      // test above appends 6 bytes, which fits the initial 36-byte capacity and
+      // is written in place, so it never reached the copy. Forked, because the
+      // failure is an abort rather than a test failure.
+      it('should survive an append that reallocates after invalidate', async function () {
+        this.timeout(30000);
+
+        const proc = fork(join(__dirname, 'otel-invalidate-append.js'), {
+          silent: true,
+        });
+        let output = '';
+        proc.stdout?.on('data', chunk => {
+          output += chunk;
+        });
+        proc.stderr?.on('data', chunk => {
+          output += chunk;
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          proc.on('error', reject);
+          proc.on('close', (code, signal) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(
+                new Error(
+                  `otel-invalidate-append exited with code=${code} signal=${signal}\n${output}`,
+                ),
+              );
+            }
+          });
+        });
+      });
+    });
+
     describe('getProcessContextAttributes', () => {
       it('rejects non-array keys', () => {
         strictAssert.throws(
