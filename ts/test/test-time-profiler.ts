@@ -15,6 +15,7 @@
  */
 
 import * as sinon from 'sinon';
+import {isAsyncContextFrameActive} from '../src/async-context-frame';
 import {time, getNativeThreadId} from '../src';
 import {profileV2, stopV2} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
@@ -32,10 +33,7 @@ import {fork} from 'child_process';
 import assert from 'assert';
 
 const useCPED =
-  (satisfies(process.versions.node, '>=24.0.0') &&
-    !process.execArgv.includes('--no-async-context-frame')) ||
-  (satisfies(process.versions.node, '>=22.7.0') &&
-    process.execArgv.includes('--experimental-async-context-frame'));
+  isAsyncContextFrameActive() && satisfies(process.versions.node, '>=22.7.0');
 
 const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
 

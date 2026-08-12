@@ -30,6 +30,7 @@ import {fork, spawnSync} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
+import {isAsyncContextFrameActive} from '../src/async-context-frame';
 import {
   ThreadContext,
   getContext,
@@ -61,21 +62,12 @@ function tcIsTruncated(): boolean {
 }
 
 const isLinux = process.platform === 'linux';
-// AsyncContextFrame (the writer's discovery substrate) is opt-in on Node
-// 22/23 (via --experimental-async-context-frame) and on by default in
-// Node 24+ (disable-able via --no-async-context-frame). The TS layer
-// refuses to install the hook when ACF isn't available, so the entire
-// describe block is skipped in that case. Mirrors the source-side
-// asyncContextFrameError logic.
-const isAsyncContextFrameAvailable = (() => {
-  if (process.execArgv.includes('--no-async-context-frame')) return false;
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major >= 24) return true;
-  if (major >= 22) {
-    return process.execArgv.includes('--experimental-async-context-frame');
-  }
-  return false;
-})();
+// AsyncContextFrame is the writer's discovery substrate: opt-in on Node 22/23
+// (via --experimental-async-context-frame) and on by default from Node 24
+// (disable-able via --no-async-context-frame). The TS layer refuses to install
+// the hook when it isn't active, so the entire describe block is skipped then.
+// Asks the same question the source side asks, the same way.
+const isAsyncContextFrameAvailable = isAsyncContextFrameActive();
 
 // Returns a plain Uint8Array (not a Buffer) so assert.deepStrictEqual against
 // other Uint8Arrays — including the one the addon returns — succeeds.
