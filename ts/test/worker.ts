@@ -4,6 +4,7 @@ import {time} from '../src/index';
 import {Profile, ValueType} from 'pprof-format';
 import {getAndVerifyPresence, getAndVerifyString} from './profiles-for-tests';
 import {satisfies} from 'semver';
+import {isAsyncContextFrameActive} from '../src/async-context-frame';
 
 import assert from 'assert';
 
@@ -13,10 +14,8 @@ const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
 const useCPED =
   withContexts &&
-  ((satisfies(process.versions.node, '>=24.0.0') &&
-    !process.execArgv.includes('--no-async-context-frame')) ||
-    (satisfies(process.versions.node, '>=22.7.0') &&
-      process.execArgv.includes('--experimental-async-context-frame')));
+  isAsyncContextFrameActive() &&
+  satisfies(process.versions.node, '>=22.7.0');
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
 
