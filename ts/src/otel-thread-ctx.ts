@@ -19,6 +19,11 @@
 // as a near-verbatim copy: edits should ideally land upstream first and
 // be ported here, so the two stay in sync. We plan to drop this vendored
 // copy once the upstream package is suitable to depend on directly.
+//
+// Known divergence from upstream: AsyncContextFrame availability is
+// feature-detected via ./async-context-frame instead of being inferred from
+// `process.execArgv`, which is wrong in both directions — see that module. Keep
+// the divergence across re-syncs until upstream does the same.
 
 // Node.js writer for the OpenTelemetry Thread Local Context Record
 // (OTEP-4947), discoverable from an out-of-process reader via the
@@ -29,6 +34,11 @@
 
 import {join} from 'path';
 import {AsyncLocalStorage} from 'node:async_hooks';
+
+import {
+  asyncContextFrameHint,
+  isAsyncContextFrameActive,
+} from './async-context-frame';
 
 /**
  * OTEP-4719 process-context attributes corresponding to a particular
@@ -171,27 +181,12 @@ if (process.platform === 'linux') {
 
   let als: AsyncLocalStorage<ThreadContext> | undefined;
 
-  function asyncContextFrameError(): string | undefined {
-    const [major] = process.versions.node.split('.').map(Number);
-    if (process.execArgv.includes('--no-async-context-frame')) {
-      return 'Node explicitly launched with --no-async-context-frame';
-    }
-    if (major >= 24) return undefined;
-    if (process.execArgv.includes('--experimental-async-context-frame')) {
-      return undefined;
-    }
-    if (major >= 22) {
-      return 'Node versions prior to v24 must be launched with --experimental-async-context-frame';
-    }
-    return 'Node major versions prior to v22 do not support the feature at all';
-  }
-
   function ensureHook(): AsyncLocalStorage<ThreadContext> {
     if (als) return als;
-    const err = asyncContextFrameError();
-    if (err) {
+    if (!isAsyncContextFrameActive()) {
       throw new Error(
-        `otel thread-ctx writer requires async_context_frame support, which is unavailable: ${err}.`,
+        'otel thread-ctx writer requires async_context_frame support, which is ' +
+          `unavailable: ${asyncContextFrameHint()}.`,
       );
     }
     als = new AsyncLocalStorage<ThreadContext>();

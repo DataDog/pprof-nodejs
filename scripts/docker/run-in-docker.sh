@@ -31,7 +31,11 @@ exec docker run --rm \
         set -euo pipefail
         cp -R /work/. /tmp/work/
         # Drop any host-built artifacts so we get a clean build inside.
-        rm -rf /tmp/work/node_modules /tmp/work/build /tmp/work/out
+        # tsconfig.tsbuildinfo has to go with out/: left behind, tsc trusts it,
+        # emits nothing for the deleted out/, and the run ends in "No test files
+        # found" having tested nothing.
+        rm -rf /tmp/work/node_modules /tmp/work/build /tmp/work/out \
+            /tmp/work/tsconfig.tsbuildinfo
         npm install --no-audit --no-fund
         npm test
     '

@@ -1,6 +1,7 @@
 import {parentPort} from 'node:worker_threads';
 import {time} from '../src/index';
 import {satisfies} from 'semver';
+import {isAsyncContextFrameActive} from '../src/async-context-frame';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
@@ -11,10 +12,8 @@ const withContexts =
 
 const useCPED =
   withContexts &&
-  ((satisfies(process.versions.node, '>=24.0.0') &&
-    !process.execArgv.includes('--no-async-context-frame')) ||
-    (satisfies(process.versions.node, '>=22.7.0') &&
-      process.execArgv.includes('--experimental-async-context-frame')));
+  isAsyncContextFrameActive() &&
+  satisfies(process.versions.node, '>=22.7.0');
 
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
