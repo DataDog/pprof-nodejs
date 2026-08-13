@@ -756,7 +756,7 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
 #else
   // Node < 22 lacks ContinuationPreservedEmbedderData entirely (and the
   // associated V8 internal offset). The TS layer refuses to install the
-  // hook on these versions via asyncContextFrameError, so StoreAls is
+  // hook on these versions via isAsyncContextFrameActive, so StoreAls is
   // never called from JS — this null assignment is just here so the
   // addon compiles on the older Node versions the package supports.
   otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
