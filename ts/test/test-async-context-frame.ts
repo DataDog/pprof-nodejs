@@ -15,14 +15,23 @@
  */
 
 import {strict as assert} from 'assert';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {fork} from 'node:child_process';
 import {join} from 'node:path';
 
+import {satisfies} from 'semver';
+
 import {isAsyncContextFrameActive} from '../src/async-context-frame';
+
+const addon = require('node-gyp-build')(join(__dirname, '..', '..')) as {
+  cpedMapContains(key?: unknown, value?: unknown): boolean;
+};
 
 const CHILD = join(__dirname, 'async-context-frame-child.js');
 
 const major = Number(process.versions.node.split('.')[0]);
+// ACF landed in 22.7.0, so the opt-in routes are gated on that, not on major 22.
+const hasAcfSupport = satisfies(process.versions.node, '>=22.7.0');
 
 interface ChildReport {
   active: boolean;
@@ -79,7 +88,7 @@ describe('isAsyncContextFrameActive', () => {
   });
 
   it('reports it inactive when Node has no support for it', async function () {
-    if (major >= 22) return this.skip();
+    if (hasAcfSupport) return this.skip();
     const {active} = await probeChild();
     assert.equal(active, false);
   });
@@ -107,15 +116,83 @@ describe('isAsyncContextFrameActive', () => {
   });
 
   it('reports it active when NODE_OPTIONS turns it on', async function () {
-    // The mirror image, on the other Node line: 22 and 23 accept the flag in
+    // The mirror image, on the other Node line: 22.7.0 through 23 accept the flag in
     // NODE_OPTIONS (24 rejects it outright), again without it reaching execArgv,
     // so inferring from execArgv concludes ACF is off when it is on — and the
     // caller refuses to run in a process that would have worked.
-    if (major < 22 || major >= 24) return this.skip();
+    if (!hasAcfSupport || major >= 24) return this.skip();
     const {active, execArgv} = await probeChild({
       nodeOptions: '--experimental-async-context-frame',
     });
     assert.deepEqual(execArgv, []);
     assert.equal(active, true);
+  });
+});
+
+// The detection asks whether the running storage is bound to its own store,
+// not merely whether the CPED slot holds a Map. These pin that difference:
+// without them, weakening the helper to a bare IsMap check would still pass
+// every test above.
+describe('cpedMapContains', () => {
+  beforeEach(function () {
+    // With ACF off nothing writes the slot, so every answer here is false for
+    // an uninteresting reason. The routes that discriminate on/off are covered
+    // by the child-process cases above.
+    if (!isAsyncContextFrameActive()) this.skip();
+  });
+
+  it('finds the running storage bound to its store', () => {
+    const als = new AsyncLocalStorage<object>();
+    const store = {};
+    let found = false;
+    als.run(store, () => {
+      found = addon.cpedMapContains(als, store);
+    });
+    als.disable();
+    assert.equal(found, true);
+  });
+
+  it('does not match a foreign key', () => {
+    // CPED is a general embedder slot. Another native addon storing a Map there
+    // must not be able to answer for us, which is the false positive an IsMap
+    // check would admit.
+    const als = new AsyncLocalStorage<object>();
+    const store = {};
+    let found = true;
+    als.run(store, () => {
+      found = addon.cpedMapContains(new AsyncLocalStorage<object>(), store);
+    });
+    als.disable();
+    assert.equal(found, false);
+  });
+
+  it('does not match a different value for the right key', () => {
+    const als = new AsyncLocalStorage<object>();
+    let found = true;
+    als.run({}, () => {
+      found = addon.cpedMapContains(als, {});
+    });
+    als.disable();
+    assert.equal(found, false);
+  });
+
+  it('is false outside any run', () => {
+    const als = new AsyncLocalStorage<object>();
+    const store = {};
+    als.run(store, () => {});
+    als.disable();
+    assert.equal(addon.cpedMapContains(als, store), false);
+  });
+
+  it('is false when called without a key and value', () => {
+    // An absent key reads as undefined; so would a missing expected value, so
+    // a malformed call must not compare the two and report success.
+    const als = new AsyncLocalStorage<object>();
+    let found = true;
+    als.run({}, () => {
+      found = addon.cpedMapContains();
+    });
+    als.disable();
+    assert.equal(found, false);
   });
 });
