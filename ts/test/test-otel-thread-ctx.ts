@@ -62,8 +62,9 @@ function tcIsTruncated(): boolean {
 }
 
 const isLinux = process.platform === 'linux';
-// AsyncContextFrame is the writer's discovery substrate: opt-in on Node 22/23
-// (via --experimental-async-context-frame) and on by default from Node 24
+// AsyncContextFrame is the writer's discovery substrate: opt-in from Node
+// 22.7.0 through 23 (via --experimental-async-context-frame) and on by
+// default from Node 24
 // (disable-able via --no-async-context-frame). The TS layer refuses to install
 // the hook when it isn't active, so the entire describe block is skipped then.
 // Asks the same question the source side asks, the same way.
