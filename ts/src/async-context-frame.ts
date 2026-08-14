@@ -15,6 +15,23 @@
  */
 
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {join} from 'path';
+
+interface Addon {
+  cpedMapContains(key: unknown, value: unknown): boolean;
+}
+
+let addon: Addon | undefined;
+
+// Required lazily so importing this module doesn't force the addon to load;
+// memoized by isAsyncContextFrameActive, so this runs at most once per thread.
+function bindings(): Addon {
+  if (!addon) {
+    const findBinding = require('node-gyp-build');
+    addon = findBinding(join(__dirname, '..', '..')) as Addon;
+  }
+  return addon;
+}
 
 let active: boolean | undefined;
 
@@ -39,19 +56,34 @@ let active: boolean | undefined;
  *   main thread's command line either, and tooling sometimes rewrites
  *   `process.execArgv` outright.
  *
- * With ACF, `run()` is implemented in terms of `enterWith()`; without it, it
- * isn't. Memoized: the answer is fixed for the life of the thread.
+ * Detected by asking the addon what is in the CPED slot during a `run()`. With
+ * ACF, Node installs an AsyncContextFrame — a JS Map keyed by the
+ * `AsyncLocalStorage` instance, valued by its store — as the running
+ * continuation's CPED; without it, nothing writes the slot. So a probe storage
+ * whose own store is visible there is direct evidence, and it is evidence about
+ * the exact slot both consumers read: `WallProfiler::SetContext` requires that
+ * Map, and the thread-ctx reader looks this very key up by the identity hash
+ * published as `als_identity_hash`.
+ *
+ * Observing whether `run()` delegates to `enterWith()` would be an indirect
+ * proxy for the same thing: it holds today, but it depends on `run()`
+ * dispatching through the instance property, which is unspecified and which
+ * anything patching `AsyncLocalStorage` can break — and the failure would be
+ * silent and in the dangerous direction.
+ *
+ * Memoized: the answer is fixed for the life of the thread.
  */
 export function isAsyncContextFrameActive(): boolean {
   if (active === undefined) {
-    const probe = new AsyncLocalStorage<number>();
-    let delegated = false;
-    probe.enterWith = () => {
-      delegated = true;
-    };
-    probe.run(0, () => {});
+    const probe = new AsyncLocalStorage<object>();
+    // Object identity, so a stray equal-valued binding can't answer for us.
+    const sentinel = {};
+    let bound = false;
+    probe.run(sentinel, () => {
+      bound = bindings().cpedMapContains(probe, sentinel);
+    });
     probe.disable();
-    active = delegated;
+    active = bound;
   }
   return active;
 }
