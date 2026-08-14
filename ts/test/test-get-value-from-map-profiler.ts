@@ -29,15 +29,13 @@
 import assert from 'assert';
 import {join} from 'path';
 import {AsyncLocalStorage} from 'async_hooks';
-import {satisfies} from 'semver';
 
 import {isAsyncContextFrameActive} from '../src/async-context-frame';
 
 const findBinding = require('node-gyp-build');
 const profiler = findBinding(join(__dirname, '..', '..'));
 
-const useCPED =
-  isAsyncContextFrameActive() && satisfies(process.versions.node, '>=22.7.0');
+const useCPED = isAsyncContextFrameActive();
 
 const supportedPlatform =
   process.platform === 'darwin' || process.platform === 'linux';

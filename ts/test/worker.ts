@@ -12,10 +12,7 @@ const DURATION_MILLIS = 1000;
 const intervalMicros = 10000;
 const withContexts =
   process.platform === 'darwin' || process.platform === 'linux';
-const useCPED =
-  withContexts &&
-  isAsyncContextFrameActive() &&
-  satisfies(process.versions.node, '>=22.7.0');
+const useCPED = withContexts && isAsyncContextFrameActive();
 const collectAsyncId =
   withContexts && satisfies(process.versions.node, '>=24.0.0');
 

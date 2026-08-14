@@ -29,6 +29,40 @@
 #include <unistd.h>
 #endif
 
+// Whether the isolate's ContinuationPreservedEmbedderData is a JS Map that
+// currently binds `key` to `value`.
+//
+// This exists for AsyncContextFrame feature detection. With ACF active, Node
+// implements AsyncLocalStorage#run by installing an AsyncContextFrame — a JS
+// Map keyed by the AsyncLocalStorage instance — as the CPED of the running
+// continuation. Calling this from inside a run() with the storage and its
+// store therefore observes the property this addon actually depends on,
+// instead of inferring it from the Node version, process.execArgv, or whether
+// run() happens to dispatch through the instance's enterWith.
+static NAN_METHOD(CpedMapContains) {
+#if NODE_MAJOR_VERSION >= 22
+  // A malformed call must not accidentally answer true by comparing an absent
+  // key's undefined against an undefined expected value.
+  if (info.Length() >= 2) {
+    auto isolate = info.GetIsolate();
+    auto cped = isolate->GetContinuationPreservedEmbedderData();
+    if (!cped.IsEmpty() && cped->IsMap()) {
+      auto context = isolate->GetCurrentContext();
+      if (!context.IsEmpty()) {
+        v8::Local<v8::Value> found;
+        if (cped.As<v8::Map>()->Get(context, info[0]).ToLocal(&found)) {
+          info.GetReturnValue().Set(found->StrictEquals(info[1]));
+          return;
+        }
+      }
+    }
+  }
+#endif
+  // Either code above didn't reach the innermost if statement, or
+  // we're compiling for Node.js < 22.
+  info.GetReturnValue().Set(false);
+}
+
 static NAN_METHOD(GetNativeThreadId) {
 #ifdef __APPLE__
   uint64_t native_id;
@@ -56,4 +90,5 @@ NODE_MODULE_INIT(/* exports, module, context */) {
   dd::WallProfiler::Init(exports);
   dd::OtelThreadCtx::Init(exports);
   Nan::SetMethod(exports, "getNativeThreadId", GetNativeThreadId);
+  Nan::SetMethod(exports, "cpedMapContains", CpedMapContains);
 }

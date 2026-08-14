@@ -32,8 +32,7 @@ import {fork} from 'child_process';
 
 import assert from 'assert';
 
-const useCPED =
-  isAsyncContextFrameActive() && satisfies(process.versions.node, '>=22.7.0');
+const useCPED = isAsyncContextFrameActive();
 
 const collectAsyncId = satisfies(process.versions.node, '>=24.0.0');
 
