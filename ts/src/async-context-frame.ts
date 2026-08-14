@@ -44,9 +44,10 @@ let active: boolean | undefined;
  * `process.execArgv`, because the two disagree in both directions and each
  * combination is reachable today:
  *
- * - `NODE_OPTIONS=--experimental-async-context-frame` is accepted on Node 22
- *   and 23 and turns ACF on without appearing in `execArgv`. Inferring "off"
- *   there makes callers refuse to run in a process that would have worked.
+ * - `NODE_OPTIONS=--experimental-async-context-frame` is accepted from Node
+ *   22.7.0 through 23 and turns ACF on without appearing in `execArgv`.
+ *   Inferring "off" there makes callers refuse to run in a process that would
+ *   have worked.
  * - `NODE_OPTIONS=--no-async-context-frame` is accepted on Node 24 and turns
  *   ACF off without appearing in `execArgv`. Inferring "on" there is the worse
  *   error: the CPED slot is never written, so a writer that starts anyway keeps
@@ -97,8 +98,10 @@ export function isAsyncContextFrameActive(): boolean {
  */
 export function asyncContextFrameHint(): string {
   const version = process.versions.node;
-  const major = Number(version.split('.')[0]);
-  if (major < 22) {
+  const [major, minor] = version.split('.').map(Number);
+  // Hand-rolled rather than semver.satisfies: semver is a devDependency, and
+  // this module ships.
+  if (major < 22 || (major === 22 && minor < 7)) {
     return `Node ${version} does not support it at all; Node 24 and later enable it by default`;
   }
   if (major < 24) {

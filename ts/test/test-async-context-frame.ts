@@ -19,6 +19,8 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {fork} from 'node:child_process';
 import {join} from 'node:path';
 
+import {satisfies} from 'semver';
+
 import {isAsyncContextFrameActive} from '../src/async-context-frame';
 
 const addon = require('node-gyp-build')(join(__dirname, '..', '..')) as {
@@ -28,6 +30,8 @@ const addon = require('node-gyp-build')(join(__dirname, '..', '..')) as {
 const CHILD = join(__dirname, 'async-context-frame-child.js');
 
 const major = Number(process.versions.node.split('.')[0]);
+// ACF landed in 22.7.0, so the opt-in routes are gated on that, not on major 22.
+const hasAcfSupport = satisfies(process.versions.node, '>=22.7.0');
 
 interface ChildReport {
   active: boolean;
@@ -84,7 +88,7 @@ describe('isAsyncContextFrameActive', () => {
   });
 
   it('reports it inactive when Node has no support for it', async function () {
-    if (major >= 22) return this.skip();
+    if (hasAcfSupport) return this.skip();
     const {active} = await probeChild();
     assert.equal(active, false);
   });
@@ -112,11 +116,11 @@ describe('isAsyncContextFrameActive', () => {
   });
 
   it('reports it active when NODE_OPTIONS turns it on', async function () {
-    // The mirror image, on the other Node line: 22 and 23 accept the flag in
+    // The mirror image, on the other Node line: 22.7.0 through 23 accept the flag in
     // NODE_OPTIONS (24 rejects it outright), again without it reaching execArgv,
     // so inferring from execArgv concludes ACF is off when it is on — and the
     // caller refuses to run in a process that would have worked.
-    if (major < 22 || major >= 24) return this.skip();
+    if (!hasAcfSupport || major >= 24) return this.skip();
     const {active, execArgv} = await probeChild({
       nodeOptions: '--experimental-async-context-frame',
     });
