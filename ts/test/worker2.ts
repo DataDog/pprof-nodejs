@@ -24,8 +24,22 @@ time.start({
   useCPED: useCPED,
 });
 
-parentPort?.on('message', () => {
-  void delay(50).then(() => {
-    parentPort?.postMessage('hello');
+function listen() {
+  parentPort?.on('message', () => {
+    void delay(50).then(() => {
+      parentPort?.postMessage('hello');
+    });
   });
-});
+}
+
+// Establish a sample context, and do it around the listener registration so
+// the async context frame holding it stays reachable until we are terminated.
+// That leaves a live PersistentContextPtr for ~WallProfiler to walk when it
+// runs from the environment cleanup hook; with an empty list the walk is a
+// no-op and the teardown path goes untested.
+if (useCPED) {
+  time.runWithContext({worker: 'worker2'}, listen);
+} else {
+  time.setContext({worker: 'worker2'});
+  listen();
+}
