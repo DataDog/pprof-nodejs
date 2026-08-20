@@ -1,6 +1,6 @@
 {
   "name": "@datadog/pprof",
-  "version": "5.18.0",
+  "version": "5.18.1",
   "description": "pprof support for Node.js",
   "repository": {
     "type": "git",
