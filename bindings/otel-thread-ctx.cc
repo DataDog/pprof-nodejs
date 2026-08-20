@@ -301,7 +301,12 @@ thread_local CtxWrap* g_live_ctx_wraps = nullptr;
 // fires exactly once, at teardown, while the Environment is still alive.
 void DrainLiveCtxWraps(void* arg) {
   auto* isolate = static_cast<Isolate*>(arg);
+  // We must allocate our own HandleScope here as node::FreeEnvironment wraps
+  // RunCleanup in a SealHandleScope, so handle_.Get() below has to allocate
+  // inside a scope of our own or V8 aborts with "Cannot create a handle without
+  // a HandleScope".
   v8::HandleScope scope(isolate);
+
   CtxWrap* p = g_live_ctx_wraps;
   while (p != nullptr) {
     CtxWrap* next = p->next_;

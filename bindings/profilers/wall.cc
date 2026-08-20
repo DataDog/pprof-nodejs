@@ -700,15 +700,19 @@ WallProfiler::~WallProfiler() {
   // unlink. (~PCP still resets its weak handle during delete, so the dangling
   // internal-field pointer in the wrap object stays inert even if V8 later
   // GCs the wrap.)
+  //
+  // While it'd be tempting to do the same "zero out internal field logic" here
+  // as in otel-thread-ctx.cc's DrainLiveCtxWraps, we shouldn't. That one only
+  // ever runs as an environment cleanup hook, while this can also get here from
+  // Nan::ObjectWrap's weak callback, and V8 forbids the API in a first-pass
+  // weak callback. The holders' internal fields therefore keep pointing at the
+  // PCPs we free, but since they are only ever read back through our own
+  // cpedKey_ that dies with us it is not an issue.
   auto* p = liveContextPtrHead_;
-  auto isolate = Isolate::GetCurrent();
   while (p != nullptr) {
     auto* next = p->next_;
     p->pprev_ = nullptr;
     p->next_ = nullptr;
-    if (isolate != nullptr && !p->handle_.IsEmpty()) {
-      SetAlignedPointerInInternalField(p->handle_.Get(isolate), 0, nullptr);
-    }
     delete p;
     p = next;
   }
