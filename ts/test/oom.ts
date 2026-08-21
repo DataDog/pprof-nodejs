@@ -6,7 +6,9 @@ import path from 'path';
 
 const nworkers = Number(process.argv[2] || 0);
 const workerMaxOldGenerationSizeMb = process.argv[3];
-const maxCount = Number(process.argv[4] || 12);
+// Keep the default leak larger than V8's dynamic young-generation allowance so
+// the process still reaches its intentional terminal OOM on every Node version.
+const maxCount = Number(process.argv[4] || 100);
 const sleepMs = Number(process.argv[5] || 50);
 const sizeQuantum = Number(process.argv[6] || 5 * 1024 * 1024);
 

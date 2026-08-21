@@ -23,8 +23,10 @@
 #include "translate-heap-profile.hh"
 
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -132,6 +134,7 @@ struct HeapProfilerState {
 
   v8::Isolate* isolate = nullptr;
   uint32_t heap_extension_size = 0;
+  std::optional<size_t> automatic_heap_extension_size;
   uint32_t max_heap_extension_count = 0;
   uint32_t current_heap_extension_count = 0;
   uv_async_t* async = nullptr;
@@ -370,29 +373,36 @@ size_t NearHeapLimit(void* data,
   auto isolate = v8::Isolate::GetCurrent();
   auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
 
-  if (!state) {
-    // StopSamplingHeapProfiler uninstalls us before dropping the state, so
-    // normally this cannot happen. The gap is the other destruction path: a
-    // shared_ptr copy taken by an in-flight NearHeapLimit or InterruptCallback
-    // can outlive the per-isolate slot — the OOM JS callback calling
-    // process.exit() erases PerIsolateData while InterruptCallback still holds
-    // a reference, so ~HeapProfilerState never runs to uninstall us. Decline
-    // and let V8 do its normal OOM handling.
-    //
-    // Deliberately no RemoveNearHeapLimitCallback here: the state that tracked
-    // the installation is already unreachable, so callbackInstalled cannot be
-    // cleared, and the only way to get here is a process on its way out.
-    return current_heap_limit;
+  constexpr size_t kFallbackExtension = 10 * 1024 * 1024;
+  size_t extension = state->heap_extension_size;
+  if (extension == 0) {
+    if (!state->automatic_heap_extension_size.has_value()) {
+      // GetAllocationProfile() can allocate and re-enter this callback. Give
+      // the capture enough room for at most one young generation, as Node.js
+      // does for its near-OOM heap snapshot callback. In current V8,
+      // heap_size_limit() is the current old-generation limit plus the maximum
+      // young-generation size. Cache the delta so nested callbacks do not
+      // repeatedly collect heap statistics.
+      v8::HeapStatistics heap_statistics;
+      isolate->GetHeapStatistics(&heap_statistics);
+      const size_t total_heap_limit = heap_statistics.heap_size_limit();
+      state->automatic_heap_extension_size =
+          total_heap_limit > current_heap_limit
+              ? total_heap_limit - current_heap_limit
+              : kFallbackExtension;
+    }
+    extension = *state->automatic_heap_extension_size;
   }
 
+  // V8 requires a value greater than current_heap_limit to continue. Saturate
+  // instead of overflowing in the defensive extreme case.
+  const size_t new_heap_limit =
+      extension > std::numeric_limits<size_t>::max() - current_heap_limit
+          ? std::numeric_limits<size_t>::max()
+          : current_heap_limit + extension;
+
   if (state->insideCallback) {
-    // Reentrant call detected, try to increase heap limit a bit so that
-    // previous callback can proceed
-    const uint32_t default_heap_extension_size = 10 * 1024 * 1024;
-    auto extension_size = state->heap_extension_size
-                              ? state->heap_extension_size
-                              : default_heap_extension_size;
-    return current_heap_limit + extension_size;
+    return new_heap_limit;
   }
   state->insideCallback = true;
   defer {
@@ -472,18 +482,15 @@ size_t NearHeapLimit(void* data,
     return current_heap_limit + kExtraHeapAllowance + 1;
   }
 
-  size_t new_heap_limit =
-      current_heap_limit +
-      ((state->current_heap_extension_count <= state->max_heap_extension_count)
-           ? state->heap_extension_size
-           : 0);
   if (state->current_heap_extension_count >= state->max_heap_extension_count) {
     // On Node 14, NearLimitCallback is sometimes called many times, without the
     // process aborting, even when returned limit is not increased. Disable
     // callback until next call to GetAllocationProfile()
     state->UninstallNearHeapLimitCallback();
   }
-  return new_heap_limit;
+  return state->current_heap_extension_count <= state->max_heap_extension_count
+             ? new_heap_limit
+             : current_heap_limit;
 }
 
 NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
