@@ -21,8 +21,12 @@ import * as v8 from 'v8';
 import {heap, HeapLimitExtensionSize} from '../src/index';
 
 const MB = 1024 * 1024;
-const CHUNK_SIZE = 4 * MB;
-const MAX_CHUNKS = 64;
+// Allocate in chunks far smaller than any young generation v8 will pick. A
+// chunk bigger than the granted extension is fatal inside the very allocation
+// that triggers the callback, so the loop would never regain control to
+// observe the new limit.
+const CHUNK_SIZE = 256 * 1024;
+const MAX_BYTES = 512 * MB;
 const heapLimitExtensionSize: HeapLimitExtensionSize =
   process.argv[2] === 'auto' ? 'auto' : Number(process.argv[2] || 0);
 
@@ -35,31 +39,25 @@ heap.monitorOutOfMemory(heapLimitExtensionSize, 1, false);
 
 const initialLimit = heapLimit();
 const retained: number[][] = [];
-let chunks = 0;
 
-// Report every heap limit the process observes so the parent can tell whether
-// a top-level extension was granted even if v8 aborts us mid-leak. A near-heap
-// limit event is not necessarily fatal - v8 may free enough and carry on - so
-// the limit is the only reliable signal here, not survival.
+// Report the heap limit the process observes so the parent can tell whether a
+// top-level extension was granted. A near-heap limit event is not necessarily
+// fatal - v8 may free enough and carry on - so the limit is the only reliable
+// signal here, not survival. The loop is synchronous on purpose: nothing here
+// needs the event loop, and timers would make the test timing-sensitive under
+// asan and valgrind.
 console.log(`limit ${initialLimit}`);
 
-function leak() {
-  const limit = heapLimit();
-  if (limit !== initialLimit) {
-    console.log(`limit ${limit}`);
-    process.exit(0);
-  }
-  if (chunks >= MAX_CHUNKS) {
-    process.exit(0);
-  }
-
+for (let allocated = 0; allocated < MAX_BYTES; allocated += CHUNK_SIZE) {
   const chunk = new Array<number>(CHUNK_SIZE / 8);
   for (let i = 0; i < chunk.length; i++) {
     chunk[i] = i + 0.1;
   }
   retained.push(chunk);
-  chunks++;
-  setTimeout(leak, 5);
-}
 
-leak();
+  const limit = heapLimit();
+  if (limit !== initialLimit) {
+    console.log(`limit ${limit}`);
+    break;
+  }
+}
