@@ -30,6 +30,7 @@ import {fork, spawnSync} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 
+import {isAsyncContextFrameActive} from '../src/async-context-frame';
 import {
   ThreadContext,
   getContext,
@@ -61,21 +62,13 @@ function tcIsTruncated(): boolean {
 }
 
 const isLinux = process.platform === 'linux';
-// AsyncContextFrame (the writer's discovery substrate) is opt-in on Node
-// 22/23 (via --experimental-async-context-frame) and on by default in
-// Node 24+ (disable-able via --no-async-context-frame). The TS layer
-// refuses to install the hook when ACF isn't available, so the entire
-// describe block is skipped in that case. Mirrors the source-side
-// asyncContextFrameError logic.
-const isAsyncContextFrameAvailable = (() => {
-  if (process.execArgv.includes('--no-async-context-frame')) return false;
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major >= 24) return true;
-  if (major >= 22) {
-    return process.execArgv.includes('--experimental-async-context-frame');
-  }
-  return false;
-})();
+// AsyncContextFrame is the writer's discovery substrate: opt-in from Node
+// 22.7.0 through 23 (via --experimental-async-context-frame) and on by
+// default from Node 24
+// (disable-able via --no-async-context-frame). The TS layer refuses to install
+// the hook when it isn't active, so the entire describe block is skipped then.
+// Asks the same question the source side asks, the same way.
+const isAsyncContextFrameAvailable = isAsyncContextFrameActive();
 
 // Returns a plain Uint8Array (not a Buffer) so assert.deepStrictEqual against
 // other Uint8Arrays — including the one the addon returns — succeeds.
@@ -766,6 +759,45 @@ function captureBytes(opts: {
           const hdr = decodeHeader(_currentRecordBytes()!);
           strictAssert.equal(hdr.valid, 0);
           strictAssert.equal(hdr.attrsDataSize, 6); // key(1) + len(1) + 'late'(4)
+        });
+      });
+    });
+
+    describe('invalidate then grow', () => {
+      // Regression test: Append's reallocate path asserted that the copied
+      // record had valid == 1, which invalidate() legitimately makes false, so
+      // an append too large to fit in place aborted the process. NDEBUG is not
+      // defined for this addon, so that hit release builds too. The sibling
+      // test above appends 6 bytes, which fits the initial 36-byte capacity and
+      // is written in place, so it never reached the copy. Forked, because the
+      // failure is an abort rather than a test failure.
+      it('should survive an append that reallocates after invalidate', async function () {
+        this.timeout(30000);
+
+        const proc = fork(join(__dirname, 'otel-invalidate-append.js'), {
+          silent: true,
+        });
+        let output = '';
+        proc.stdout?.on('data', chunk => {
+          output += chunk;
+        });
+        proc.stderr?.on('data', chunk => {
+          output += chunk;
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          proc.on('error', reject);
+          proc.on('close', (code, signal) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(
+                new Error(
+                  `otel-invalidate-append exited with code=${code} signal=${signal}\n${output}`,
+                ),
+              );
+            }
+          });
         });
       });
     });

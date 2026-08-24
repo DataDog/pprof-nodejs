@@ -292,29 +292,39 @@ static_assert(offsetof(CtxWrap, record_) == 0,
 // wall profiler uses for its active-profiler pointer.
 // `otel_thread_ctx_nodejs_v1` above is thread-local for the same reason.
 thread_local CtxWrap* g_live_ctx_wraps = nullptr;
-// Whether DrainLiveCtxWraps is registered for the current isolate. Cleared by
-// the drain itself so an isolate torn down and re-created on the same thread
-// re-registers, matching how `undefined_addr` gates ResetDiscoveryStruct.
-thread_local bool g_drain_hook_registered = false;
 
-// Delete every CtxWrap V8 has not collected yet. This is the teardown
-// deletion that node::ObjectWrap's per-instance cleanup hook used to provide;
-// without it the records would simply leak at exit. Registered once per
-// isolate from Wrap(), which runs inside a JS constructor call where a
-// context is entered, so AddEnvironmentCleanupHook's own CHECK is satisfied,
-// and never removed — it fires exactly once, at teardown, while the
-// Environment is still alive.
-void DrainLiveCtxWraps(void* /*arg*/) {
+// Delete every CtxWrap V8 has not collected yet. This is the teardown deletion
+// that node::ObjectWrap's per-instance cleanup hook used to provide; without it
+// the records would simply leak at exit. Registered once per isolate from
+// Init(), which runs at module initialisation with a context entered, so
+// AddEnvironmentCleanupHook's own CHECK is satisfied, and never removed — it
+// fires exactly once, at teardown, while the Environment is still alive.
+void DrainLiveCtxWraps(void* arg) {
+  auto* isolate = static_cast<Isolate*>(arg);
+  // We must allocate our own HandleScope here as node::FreeEnvironment wraps
+  // RunCleanup in a SealHandleScope, so handle_.Get() below has to allocate
+  // inside a scope of our own or V8 aborts with "Cannot create a handle without
+  // a HandleScope".
+  v8::HandleScope scope(isolate);
+
   CtxWrap* p = g_live_ctx_wraps;
   while (p != nullptr) {
     CtxWrap* next = p->next_;
     p->pprev_ = nullptr;
     p->next_ = nullptr;
+    // Clear the holder's internal field (containing p as pointer value), so
+    // nothing can reach a dangling CtxWrap through it including the
+    // out-of-process reader, which walks this slot. Being on the live list
+    // means V8 has not collected the holder, so the handle is safe to read
+    // here; the WeakCallback path cannot do this and does not need to,
+    // since there the holder is the thing being collected.
+    if (!p->handle_.IsEmpty()) {
+      SetAlignedPointerInInternalField(p->handle_.Get(isolate), 0, nullptr);
+    }
     delete p;
     p = next;
   }
   g_live_ctx_wraps = nullptr;
-  g_drain_hook_registered = false;
 }
 
 CtxWrap::~CtxWrap() {
@@ -334,10 +344,6 @@ void CtxWrap::WeakCallback(const v8::WeakCallbackInfo<CtxWrap>& data) {
 
 void CtxWrap::Wrap(Local<Object> holder) {
   Isolate* isolate = Isolate::GetCurrent();
-  if (!g_drain_hook_registered) {
-    node::AddEnvironmentCleanupHook(isolate, DrainLiveCtxWraps, nullptr);
-    g_drain_hook_registered = true;
-  }
   SetAlignedPointerInInternalField(holder, 0, this);
   handle_.Reset(isolate, holder);
   handle_.SetWeak(this, &WeakCallback, v8::WeakCallbackType::kParameter);
@@ -614,14 +620,21 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("allocation failed");
     return;
   }
+  // Capture before the copy: the point of the assert below is that the memcpy
+  // carried the header across intact, not that the record is valid. It used to
+  // assert `valid == 1`, which invalidate() legitimately makes false — and
+  // since NDEBUG is not defined for this addon, that aborted release builds
+  // too, not just debug ones.
+  const uint8_t src_valid = self->record_->valid;
   // Copy the existing record (header + already-written attrs_data).
   memcpy(
       new_rec.get(), self->record_, sizeof(OtelThreadCtxRecord) + current_used);
   // Append the new entries and update attrs_data_size.
   memcpy(&new_rec->attrs_data[current_used], appended.data(), appended.size());
   new_rec->attrs_data_size = static_cast<uint16_t>(new_used);
-  // The copy should've preserved valid=1 from the source record.
-  assert(new_rec->valid == 1);
+  // The copy should've carried the source record's header across verbatim,
+  // whatever its validity was.
+  assert(new_rec->valid == src_valid);
 
   // Publish: the pointer swap is the atomic boundary the reader sees. The
   // first fence keeps the new_rec content writes ordered before the pointer
@@ -690,6 +703,7 @@ void CtxWrap::DebugBytes(const FunctionCallbackInfo<Value>& args) {
 
 void CtxWrap::Init(Local<Object> exports) {
   Isolate* isolate = Isolate::GetCurrent();
+  node::AddEnvironmentCleanupHook(isolate, DrainLiveCtxWraps, isolate);
   Local<Context> context = isolate->GetCurrentContext();
 
   Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -747,7 +761,7 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
 #else
   // Node < 22 lacks ContinuationPreservedEmbedderData entirely (and the
   // associated V8 internal offset). The TS layer refuses to install the
-  // hook on these versions via asyncContextFrameError, so StoreAls is
+  // hook on these versions via isAsyncContextFrameActive, so StoreAls is
   // never called from JS — this null assignment is just here so the
   // addon compiles on the older Node versions the package supports.
   otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
