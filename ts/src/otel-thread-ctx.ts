@@ -50,7 +50,6 @@ export interface ProcessContextAttributes {
   readonly 'threadlocal.attribute_key_map': readonly string[];
   readonly 'threadlocal.wrapped_object_offset': number;
   readonly 'threadlocal.tagged_size': number;
-  readonly 'threadlocal.native_wrap_fields_offset': number;
   readonly 'threadlocal.js_map_table_offset': number;
   readonly 'threadlocal.ordered_hash_map_header_size': number;
 }
@@ -63,9 +62,9 @@ export interface ProcessContextAttributes {
  *
  * `appendAttributes` mutates the context's record in place. Because every
  * async-context frame that holds the same `ThreadContext` reference observes
- * the same native record buffer, an append is visible across all those
- * frames even when the reallocate path runs (the context's internal
- * pointer is updated, the JS object is not replaced).
+ * the same native record, an append is visible across all those frames even
+ * when the reallocate path runs (the record is re-published on the same JS
+ * object, which is never replaced).
  */
 export interface ThreadContext {
   appendAttributes(
@@ -130,7 +129,6 @@ interface Addon {
   otelThreadCtxGetStoredAlsHash(): number;
   otelThreadCtxWrappedObjectOffset: number;
   otelThreadCtxTaggedSize: number;
-  otelThreadCtxNativeWrapFieldsOffset: number;
   otelThreadCtxJsMapTableOffset: number;
   otelThreadCtxOrderedHashMapHeaderSize: number;
 }
@@ -144,7 +142,6 @@ const SCHEMA_VERSION = 'nodejs_v1_dev';
 // consistent in shape.
 let WRAPPED_OBJECT_OFFSET = 24;
 let TAGGED_SIZE = 8;
-let NATIVE_WRAP_FIELDS_OFFSET = 0;
 let JS_MAP_TABLE_OFFSET = 0x18;
 let ORDERED_HASH_MAP_HEADER_SIZE = 0x10;
 
@@ -173,7 +170,6 @@ if (process.platform === 'linux') {
   const addon: Addon = findBinding(join(__dirname, '..', '..'));
   WRAPPED_OBJECT_OFFSET = addon.otelThreadCtxWrappedObjectOffset;
   TAGGED_SIZE = addon.otelThreadCtxTaggedSize;
-  NATIVE_WRAP_FIELDS_OFFSET = addon.otelThreadCtxNativeWrapFieldsOffset;
   JS_MAP_TABLE_OFFSET = addon.otelThreadCtxJsMapTableOffset;
   ORDERED_HASH_MAP_HEADER_SIZE = addon.otelThreadCtxOrderedHashMapHeaderSize;
 
@@ -288,7 +284,6 @@ export function getProcessContextAttributes(
     'threadlocal.attribute_key_map': Object.freeze(keys.slice()),
     'threadlocal.wrapped_object_offset': WRAPPED_OBJECT_OFFSET,
     'threadlocal.tagged_size': TAGGED_SIZE,
-    'threadlocal.native_wrap_fields_offset': NATIVE_WRAP_FIELDS_OFFSET,
     'threadlocal.js_map_table_offset': JS_MAP_TABLE_OFFSET,
     'threadlocal.ordered_hash_map_header_size': ORDERED_HASH_MAP_HEADER_SIZE,
   }) as ProcessContextAttributes;

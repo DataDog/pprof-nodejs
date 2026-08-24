@@ -839,7 +839,6 @@ function captureBytes(opts: {
         strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
         strictAssert.equal(pca['threadlocal.wrapped_object_offset'], 24);
         strictAssert.equal(pca['threadlocal.tagged_size'], 8);
-        strictAssert.equal(pca['threadlocal.native_wrap_fields_offset'], 0);
         strictAssert.equal(pca['threadlocal.js_map_table_offset'], 0x18);
         strictAssert.equal(
           pca['threadlocal.ordered_hash_map_header_size'],
@@ -848,7 +847,6 @@ function captureBytes(opts: {
         strictAssert.deepEqual(Object.keys(pca).sort(), [
           'threadlocal.attribute_key_map',
           'threadlocal.js_map_table_offset',
-          'threadlocal.native_wrap_fields_offset',
           'threadlocal.ordered_hash_map_header_size',
           'threadlocal.schema_version',
           'threadlocal.tagged_size',
