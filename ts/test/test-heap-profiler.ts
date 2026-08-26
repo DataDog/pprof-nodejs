@@ -377,10 +377,8 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
-  it('should restore heap limit after v8 recovers from OOM', async function () {
-    this.timeout(30000);
-
-    const proc = fork(path.join(__dirname, 'oom-restore-heap-limit.js'), {
+  async function runOomFixture(script: string, heapLimitExtensionSize: string) {
+    const proc = fork(path.join(__dirname, script), [heapLimitExtensionSize], {
       execArgv: ['--expose-gc', '--max-old-space-size=64'],
       silent: true,
     });
@@ -393,18 +391,88 @@ describe('OOMMonitoring', () => {
       output += chunk;
     });
 
-    await new Promise<void>((resolve, reject) => {
-      proc.on('error', reject);
-      proc.on('exit', code => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(
-            new Error(`oom-restore-heap-limit exited with ${code}\n${output}`),
-          );
-        }
-      });
-    });
+    return new Promise<{code: number | null; output: string}>(
+      (resolve, reject) => {
+        proc.on('error', reject);
+        proc.on('exit', code => {
+          resolve({code, output});
+        });
+      },
+    );
+  }
+
+  async function assertHeapLimitIsRestored(heapLimitExtensionSize: string) {
+    const {code, output} = await runOomFixture(
+      'oom-restore-heap-limit.js',
+      heapLimitExtensionSize,
+    );
+    assert.strictEqual(
+      code,
+      0,
+      `oom-restore-heap-limit exited with ${code}\n${output}`,
+    );
+  }
+
+  it('should restore an automatic heap limit extension', async function () {
+    this.timeout(30000);
+    await assertHeapLimitIsRestored('auto');
+  });
+
+  it('should restore a configured heap limit extension', async function () {
+    this.timeout(30000);
+    await assertHeapLimitIsRestored(String(64 * 1024 * 1024));
+  });
+
+  // The fixture runs under --max-old-space-size=64, and v8 reports
+  // heap_size_limit as the old generation limit plus one maximum young
+  // generation, so the young generation the automatic mode should grant is
+  // recoverable from the first limit the fixture reports.
+  const MAX_OLD_SPACE = 64 * 1024 * 1024;
+
+  async function grantedHeapLimitExtension(heapLimitExtensionSize: string) {
+    const {output} = await runOomFixture(
+      'oom-heap-limit-extension.js',
+      heapLimitExtensionSize,
+    );
+    const limits = [...output.matchAll(/^limit (\d+)$/gm)].map(match =>
+      Number(match[1]),
+    );
+    assert.ok(
+      output.includes('NearHeapLimit(count='),
+      `the near heap limit callback never ran\n${output}`,
+    );
+    assert.ok(limits.length > 0, `no heap limit was reported\n${output}`);
+    return {
+      granted: Math.max(...limits) - limits[0],
+      youngGeneration: limits[0] - MAX_OLD_SPACE,
+      output,
+    };
+  }
+
+  it('should grant exactly one young generation when set to auto', async function () {
+    this.timeout(30000);
+    const {granted, youngGeneration, output} =
+      await grantedHeapLimitExtension('auto');
+    assert.strictEqual(
+      granted,
+      youngGeneration,
+      `expected one young generation of headroom\n${output}`,
+    );
+  });
+
+  // A size of 0 must keep meaning "grant no top-level extension" so that
+  // upgrading does not silently start extending the heap of callers already
+  // passing 0. Only the reentrant rescue grant that lets an in-progress
+  // capture finish may raise the limit, and it is far below a young
+  // generation.
+  it('should not grant a top-level extension when the size is 0', async function () {
+    this.timeout(30000);
+    const {granted, youngGeneration, output} =
+      await grantedHeapLimitExtension('0');
+    assert.ok(
+      granted < youngGeneration,
+      `expected no young-generation extension, got ${granted}\n${output}`,
+    );
   });
 
   it('should call external process upon OOM', async function () {

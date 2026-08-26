@@ -23,8 +23,10 @@
 #include "translate-heap-profile.hh"
 
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -132,6 +134,10 @@ struct HeapProfilerState {
 
   v8::Isolate* isolate = nullptr;
   uint32_t heap_extension_size = 0;
+  // When true, heap_extension_size is ignored in favour of one maximum-sized
+  // young generation, sampled once into automatic_heap_extension_size.
+  bool automatic_heap_extension = false;
+  std::optional<size_t> automatic_heap_extension_size;
   uint32_t max_heap_extension_count = 0;
   uint32_t current_heap_extension_count = 0;
   uv_async_t* async = nullptr;
@@ -364,6 +370,15 @@ static void ExportProfile(HeapProfilerState& state) {
   uv_fs_req_cleanup(&fs_req);
 }
 
+// V8 only raises the limit when the returned value is strictly greater than
+// current_heap_limit, and clamps it to its own allocator maximum, so
+// saturating is enough to stay well-defined in the extreme case.
+static size_t ExtendedHeapLimit(size_t current_heap_limit, size_t extension) {
+  return extension > std::numeric_limits<size_t>::max() - current_heap_limit
+             ? std::numeric_limits<size_t>::max()
+             : current_heap_limit + extension;
+}
+
 size_t NearHeapLimit(void* data,
                      size_t current_heap_limit,
                      size_t initial_heap_limit) {
@@ -385,14 +400,35 @@ size_t NearHeapLimit(void* data,
     return current_heap_limit;
   }
 
+  size_t extension = state->heap_extension_size;
+  if (state->automatic_heap_extension) {
+    if (!state->automatic_heap_extension_size.has_value()) {
+      // Grant at most one young generation, as Node.js does for its near-OOM
+      // heap snapshot callback. In current V8, heap_size_limit() is the
+      // old-generation limit this callback was handed plus the maximum
+      // young-generation size, so the delta is that young generation. It is
+      // fixed for the isolate, so sample it once and reuse it.
+      v8::HeapStatistics heap_statistics;
+      isolate->GetHeapStatistics(&heap_statistics);
+      const size_t total_heap_limit = heap_statistics.heap_size_limit();
+      // Only cache a usable sample: a degenerate one must not disable
+      // automatic sizing for the rest of the isolate's lifetime.
+      if (total_heap_limit > current_heap_limit) {
+        state->automatic_heap_extension_size =
+            total_heap_limit - current_heap_limit;
+      }
+    }
+    extension = state->automatic_heap_extension_size.value_or(0);
+  }
+
   if (state->insideCallback) {
-    // Reentrant call detected, try to increase heap limit a bit so that
-    // previous callback can proceed
-    const uint32_t default_heap_extension_size = 10 * 1024 * 1024;
-    auto extension_size = state->heap_extension_size
-                              ? state->heap_extension_size
-                              : default_heap_extension_size;
-    return current_heap_limit + extension_size;
+    // Reentrant call: GetAllocationProfile() allocated its way back into us.
+    // The in-progress capture still needs room to finish, so rescue it even
+    // when the caller asked for no top-level extension at all.
+    constexpr size_t kReentrantRescueExtension = 10 * 1024 * 1024;
+    return ExtendedHeapLimit(
+        current_heap_limit,
+        extension != 0 ? extension : kReentrantRescueExtension);
   }
   state->insideCallback = true;
   defer {
@@ -472,18 +508,15 @@ size_t NearHeapLimit(void* data,
     return current_heap_limit + kExtraHeapAllowance + 1;
   }
 
-  size_t new_heap_limit =
-      current_heap_limit +
-      ((state->current_heap_extension_count <= state->max_heap_extension_count)
-           ? state->heap_extension_size
-           : 0);
   if (state->current_heap_extension_count >= state->max_heap_extension_count) {
     // On Node 14, NearLimitCallback is sometimes called many times, without the
     // process aborting, even when returned limit is not increased. Disable
     // callback until next call to GetAllocationProfile()
     state->UninstallNearHeapLimitCallback();
   }
-  return new_heap_limit;
+  return state->current_heap_extension_count <= state->max_heap_extension_count
+             ? ExtendedHeapLimit(current_heap_limit, extension)
+             : current_heap_limit;
 }
 
 NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
@@ -646,8 +679,8 @@ NAN_METHOD(HeapProfiler::MapAllocationProfile) {
 }
 
 NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
-  if (info.Length() != 7) {
-    return Nan::ThrowTypeError("MonitorOOMCondition must have 7 arguments.");
+  if (info.Length() != 8) {
+    return Nan::ThrowTypeError("MonitorOOMCondition must have 8 arguments.");
   }
   if (!info[0]->IsUint32()) {
     return Nan::ThrowTypeError("Heap limit extension size must be a uint32.");
@@ -671,6 +704,10 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   if (!info[6]->IsBoolean()) {
     return Nan::ThrowTypeError("IsMainThread must be a boolean.");
   }
+  if (!info[7]->IsBoolean()) {
+    return Nan::ThrowTypeError(
+        "AutomaticHeapLimitExtension must be a boolean.");
+  }
 
   auto isolate = v8::Isolate::GetCurrent();
 
@@ -684,6 +721,7 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   }
 
   state->current_heap_extension_count = 0;
+  state->automatic_heap_extension_size.reset();
   state->profile.reset();
   state->export_command.clear();
   state->callback.Reset();
@@ -693,6 +731,7 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   state->dumpProfileOnStderr = info[2].As<v8::Boolean>()->Value();
   state->callbackMode = info[5].As<v8::Integer>()->Value();
   state->isMainThread = info[6].As<v8::Boolean>()->Value();
+  state->automatic_heap_extension = info[7].As<v8::Boolean>()->Value();
   state->InstallNearHeapLimitCallback();
   if (!info[4]->IsNullOrUndefined() && state->callbackMode != kNoCallback) {
     state->callback.Reset(Nan::To<v8::Function>(info[4]).ToLocalChecked());
