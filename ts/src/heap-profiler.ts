@@ -243,24 +243,38 @@ export const CallbackMode = {
 };
 
 /**
+ * How much the heap limit is raised when v8 signals it is near the limit.
+ *
+ * A number is an exact byte count, and 0 means "grant no extension and let v8
+ * run its normal OOM handling". `'auto'` instead sizes the extension to one
+ * maximum young generation - the same budget Node.js grants its own near-OOM
+ * heap snapshot callback - which is what v8 actually needs to finish one more
+ * GC while the profile is captured.
+ */
+export type HeapLimitExtensionSize = number | 'auto';
+
+/**
  * Add monitoring for v8 heap, heap profiler must already be started.
  * When an out of heap memory event occurs:
- *  - an extension of heap memory of |heapLimitExtensionSize| bytes is
- *    requested to v8. This extension can occur |maxHeapLimitExtensionCount|
- *    number of times. If the extension amount is not enough to satisfy
- *    memory allocation that triggers GC and OOM, process will abort.
+ *  - the heap limit is extended by |heapLimitExtensionSize| so a profile can
+ *    be captured before the process dies. If the extension amount is not
+ *    enough to satisfy the memory allocation that triggers GC and OOM, the
+ *    process will abort, so prefer 'auto' over a hand-picked constant. This
+ *    top-level extension can occur |maxHeapLimitExtensionCount| times.
+ *    Reentrant rescue extensions used to finish an in-progress capture are
+ *    additional and are not included in that count.
  *  - heap profile is dumped as folded stacks on stderr if
  *    |dumpHeapProfileOnSdterr| is true
  *  - heap profile is dumped in temporary file and a new process is spawned
  *    with |exportCommand| arguments and profile path appended at the end.
- *  - |callback| is called. Callback can be invoked only if
- *    heapLimitExtensionSize is enough for the process to continue. Invocation
- *    will be done by a RequestInterrupt if |callbackMode| is Interrupt or Both,
- *    this might be unsafe since Isolate should not be reentered
- *    from RequestInterrupt, but this allows to interrupt synchronous code.
- *    Otherwise the callback is scheduled to be called asynchronously.
+ *  - |callback| is called. Callback can be invoked only if the extension is
+ *    enough for the process to continue. Invocation will be done by a
+ *    RequestInterrupt if |callbackMode| is Interrupt or Both, this might be
+ *    unsafe since Isolate should not be reentered from RequestInterrupt, but
+ *    this allows to interrupt synchronous code. Otherwise the callback is
+ *    scheduled to be called asynchronously.
  * @param heapLimitExtensionSize - amount of bytes heap should be expanded
- *  with upon OOM
+ *  with upon OOM, or 'auto' to size it to one maximum young generation
  * @param maxHeapLimitExtensionCount - maximum number of times heap size
  *  extension can occur
  * @param dumpHeapProfileOnSdterr - dump heap profile on stderr upon OOM
@@ -270,7 +284,7 @@ export const CallbackMode = {
  * @param callbackMode
  */
 export function monitorOutOfMemory(
-  heapLimitExtensionSize: number,
+  heapLimitExtensionSize: HeapLimitExtensionSize,
   maxHeapLimitExtensionCount: number,
   dumpHeapProfileOnSdterr: boolean,
   exportCommand?: Array<string>,
@@ -288,13 +302,15 @@ export function monitorOutOfMemory(
       callback(convertProfile(profile));
     };
   }
+  const automatic = heapLimitExtensionSize === 'auto';
   monitorOutOfMemoryImported(
-    heapLimitExtensionSize,
+    automatic ? 0 : heapLimitExtensionSize,
     maxHeapLimitExtensionCount,
     dumpHeapProfileOnSdterr,
     exportCommand || [],
     newCallback,
     typeof callbackMode !== 'undefined' ? callbackMode : CallbackMode.Async,
     isMainThread,
+    automatic,
   );
 }

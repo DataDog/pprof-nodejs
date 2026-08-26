@@ -26,6 +26,8 @@ export {
   LabelSet,
 } from './v8-types';
 
+export {HeapLimitExtensionSize} from './heap-profiler';
+
 export {encode, encodeSync} from './profile-encoder';
 export {SourceMapper} from './sourcemapper/sourcemapper';
 export {setLogger} from './logger';
