@@ -214,6 +214,14 @@ class CtxWrap {
                           std::vector<uint8_t>* out,
                           bool* out_truncated);
 
+  // Splice `appended` onto the end of the record: in place if it fits in the
+  // current allocation's slack, otherwise by moving the whole wrap to a larger
+  // one and repointing `holder`'s internal field at the new record. In that
+  // case `this` is destroyed before returning, so the caller must not touch it
+  // afterwards. Returns false if the allocation fails.
+  bool AppendEncoded(Local<Object> holder,
+                     const std::vector<uint8_t>& appended);
+
   explicit CtxWrap(size_t capacity);
   ~CtxWrap();
 
@@ -258,8 +266,8 @@ class CtxWrap {
   // attribute value, which can execute user JS (e.g. a custom
   // `toString`) that in turn calls `appendAttributes` on the same
   // ThreadContext. A reentrant Append would mutate attrs_data_size out
-  // from under the outer call's `current_used` snapshot, causing the
-  // outer memcpy to overwrite the reentrant call's bytes and the outer
+  // from under the outer call's snapshot of it, causing the outer memcpy
+  // to overwrite the reentrant call's bytes and the outer
   // attrs_data_size write to shrink the record. We reject the reentrant
   // call instead. New() doesn't need the guard because a freshly constructed
   // CtxWrap isn't observable to JS until New() returns.
@@ -554,10 +562,8 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(args.This());
 }
 
-// Append entries to the active record. Either modifies the record in place
-// (if the appended bytes fit in the current allocation's slack) or moves the
-// whole wrap to a larger allocation (grown geometrically), keeping invariant
-// `record()->attrs_data_size <= capacity_`.
+// `appendAttributes(attributes)`: validate and encode the attributes, then
+// hand the encoded bytes to AppendEncoded to splice onto the active record.
 void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = args.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -575,21 +581,24 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   // Reject reentrant Append on the same wrap. EncodeAttrs' element getters
   // and `ToString` below can execute user JS, and if that JS calls
   // `appendAttributes` on this same ThreadContext, the reentrant call would
-  // grow attrs_data_size out from under the outer call's `current_used`
-  // snapshot, causing the outer memcpy to overwrite the reentrant call's
-  // bytes and the outer attrs_data_size write to shrink the record.
+  // grow attrs_data_size out from under the outer call's snapshot of it,
+  // causing the outer memcpy to overwrite the reentrant call's bytes and
+  // the outer attrs_data_size write to shrink the record.
   if (self->encoding_) {
     isolate->ThrowError(
         "reentrant appendAttributes on the same ThreadContext is not allowed");
     return;
   }
 
-  const size_t current_used = self->record()->attrs_data_size;
   std::vector<uint8_t> appended;
   bool truncated = false;
   self->encoding_ = true;
-  const bool encoded = EncodeAttrs(
-      isolate, context, args[0], current_used, &appended, &truncated);
+  const bool encoded = EncodeAttrs(isolate,
+                                   context,
+                                   args[0],
+                                   self->record()->attrs_data_size,
+                                   &appended,
+                                   &truncated);
   // EncodeAttrs was the only thing that can run user JS, so the
   // reentrancy guard had to span only it.
   self->encoding_ = false;
@@ -603,10 +612,23 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   // already at the cap.
   if (appended.empty()) return;
 
+  if (!self->AppendEncoded(args.This(), appended)) {
+    isolate->ThrowError("allocation failed");
+  }
+}
+
+// Splice `appended` onto the end of the record: in place if the bytes fit in
+// the current allocation's slack, otherwise by moving the whole wrap to a
+// larger allocation (grown geometrically), keeping invariant
+// `record()->attrs_data_size <= capacity_`. See the declaration for the
+// `this`-is-destroyed caveat on the growing path.
+bool CtxWrap::AppendEncoded(Local<Object> holder,
+                            const std::vector<uint8_t>& appended) {
+  const size_t current_used = record()->attrs_data_size;
   const size_t new_used = current_used + appended.size();
   // EncodeAttrs already enforced the cap; new_used <= MAX_ATTRS_DATA_SIZE.
 
-  if (new_used <= self->capacity_) {
+  if (new_used <= capacity_) {
     // In-place: write the new entries past the current attrs_data_size,
     // then bump attrs_data_size with a release fence + volatile store so
     // the content writes are visible before the size store from the
@@ -618,13 +640,12 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     // mid-append sees either the old size (old extent, ignores the
     // half-written tail) or the new size (full new extent, all bytes
     // written). Either is consistent.
-    memcpy(&self->record()->attrs_data[current_used],
-           appended.data(),
-           appended.size());
+    memcpy(
+        &record()->attrs_data[current_used], appended.data(), appended.size());
     std::atomic_signal_fence(std::memory_order_release);
-    *reinterpret_cast<volatile uint16_t*>(&self->record()->attrs_data_size) =
+    *reinterpret_cast<volatile uint16_t*>(&record()->attrs_data_size) =
         static_cast<uint16_t>(new_used);
-    return;
+    return true;
   }
 
   // Doesn't fit. Reallocate with geometric growth with cap. The record lives
@@ -632,18 +653,14 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   // too: build a replacement, hand it the same holder object, and retire the
   // old one.
   size_t new_cap =
-      std::min(std::max(self->capacity_ * 2, new_used), MAX_ATTRS_DATA_SIZE);
+      std::min(std::max(capacity_ * 2, new_used), MAX_ATTRS_DATA_SIZE);
 
   CtxWrap* new_self = CtxWrap::Create(new_cap);
-  if (new_self == nullptr) {
-    isolate->ThrowError("allocation failed");
-    return;
-  }
-  new_self->truncated_ = self->truncated_;
+  if (new_self == nullptr) return false;
+  new_self->truncated_ = truncated_;
   // Copy the existing record (header + already-written attrs_data).
-  memcpy(new_self->record(),
-         self->record(),
-         sizeof(OtelThreadCtxRecord) + current_used);
+  memcpy(
+      new_self->record(), record(), sizeof(OtelThreadCtxRecord) + current_used);
   // Append the new entries and update attrs_data_size.
   memcpy(&new_self->record()->attrs_data[current_used],
          appended.data(),
@@ -660,12 +677,13 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   // reads) take care of CPU-side ordering and make immediate freeing of the
   // old block safe.
   std::atomic_signal_fence(std::memory_order_release);
-  new_self->Wrap(args.This());
+  new_self->Wrap(holder);
   std::atomic_signal_fence(std::memory_order_acq_rel);
   // Destroying the old wrap runs ~Global on its handle_, which resets the
   // weak handle and so cancels the WeakCallback V8 would otherwise fire on
   // the freed block.
-  CtxWrap::Destroy(self);
+  CtxWrap::Destroy(this);
+  return true;
 }
 
 // Mark this record's `valid` byte as 0 in place. Every async-context
