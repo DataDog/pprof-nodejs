@@ -64,6 +64,7 @@ export function monitorOutOfMemory(
   callback: NearHeapLimitCallback | undefined,
   callbackMode: number,
   isMainThread: boolean,
+  automaticHeapLimitExtension: boolean,
 ) {
   profiler.heapProfiler.monitorOutOfMemory(
     heapLimitExtensionSize,
@@ -73,5 +74,6 @@ export function monitorOutOfMemory(
     callback,
     callbackMode,
     isMainThread,
+    automaticHeapLimitExtension,
   );
 }
