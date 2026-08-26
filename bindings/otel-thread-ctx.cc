@@ -33,7 +33,6 @@
 
 #include "otel-thread-ctx.hh"
 
-#include "defer.hh"
 #include "internal-field.hh"
 
 #include <node.h>
@@ -573,10 +572,10 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     return;
   }
 
-  // Reject reentrant Append on the same wrap. EncodeAttrs' `ToString`
-  // below can execute user JS, and if that JS calls `appendAttributes`
-  // on this same ThreadContext, the reentrant call would grow
-  // attrs_data_size out from under the outer call's `current_used`
+  // Reject reentrant Append on the same wrap. EncodeAttrs' element getters
+  // and `ToString` below can execute user JS, and if that JS calls
+  // `appendAttributes` on this same ThreadContext, the reentrant call would
+  // grow attrs_data_size out from under the outer call's `current_used`
   // snapshot, causing the outer memcpy to overwrite the reentrant call's
   // bytes and the outer attrs_data_size write to shrink the record.
   if (self->encoding_) {
@@ -584,16 +583,17 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
         "reentrant appendAttributes on the same ThreadContext is not allowed");
     return;
   }
-  self->encoding_ = true;
-  defer {
-    self->encoding_ = false;
-  };
 
   const size_t current_used = self->record()->attrs_data_size;
   std::vector<uint8_t> appended;
   bool truncated = false;
-  if (!EncodeAttrs(
-          isolate, context, args[0], current_used, &appended, &truncated)) {
+  self->encoding_ = true;
+  const bool encoded = EncodeAttrs(
+      isolate, context, args[0], current_used, &appended, &truncated);
+  // EncodeAttrs was the only thing that can run user JS, so the
+  // reentrancy guard had to span only it.
+  self->encoding_ = false;
+  if (!encoded) {
     return;
   }
   if (truncated) self->truncated_ = true;
@@ -640,9 +640,6 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
     return;
   }
   new_self->truncated_ = self->truncated_;
-  // We are still inside the outer Append; keep the guard set on the object
-  // the `defer` above will clear it on.
-  new_self->encoding_ = true;
   // Copy the existing record (header + already-written attrs_data).
   memcpy(new_self->record(),
          self->record(),
@@ -669,7 +666,6 @@ void CtxWrap::Append(const FunctionCallbackInfo<Value>& args) {
   // weak handle and so cancels the WeakCallback V8 would otherwise fire on
   // the freed block.
   CtxWrap::Destroy(self);
-  self = new_self;
 }
 
 // Mark this record's `valid` byte as 0 in place. Every async-context
