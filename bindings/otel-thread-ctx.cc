@@ -66,7 +66,7 @@
 //    JSObject / internal-field-0 dereference when no ThreadContext is
 //    currently attached; without it, a reader walking through undefined
 //    would have to rely on structural validation of the bytes at
-//    undefined+wrapped_object_offset to detect the absence.
+//    undefined+js_object_record_offset to detect the absence.
 //
 // Layout is part of the reader ABI: see the README "Discovery contract"
 // section and the static_asserts below.
@@ -837,7 +837,7 @@ void GetStoredAlsHash(const FunctionCallbackInfo<Value>& args) {
 // describes our own wrapper: internal field 0 points straight at the
 // record, so the reader needs no offset of ours to reach it.
 #if NODE_MAJOR_VERSION >= 22
-constexpr int WRAPPED_OBJECT_OFFSET =
+constexpr int JS_OBJECT_RECORD_OFFSET =
     v8::internal::Internals::kJSObjectHeaderSize +
     v8::internal::Internals::kEmbedderDataSlotExternalPointerOffset;
 #else
@@ -846,7 +846,7 @@ constexpr int WRAPPED_OBJECT_OFFSET =
 // either — see StoreAls), so this value is published only to keep the
 // addon's exported surface consistent across Node majors. A would-be
 // reader cannot reach a live record through it.
-constexpr int WRAPPED_OBJECT_OFFSET = 0;
+constexpr int JS_OBJECT_RECORD_OFFSET = 0;
 #endif
 constexpr int TAGGED_SIZE = v8::internal::kApiTaggedSize;
 
@@ -884,7 +884,7 @@ void OtelThreadCtx::Init(Local<Object> exports) {
   publish_int("otelThreadCtxOrderedHashMapHeaderSize",
               ORDERED_HASH_MAP_HEADER_SIZE);
   publish_int("otelThreadCtxTaggedSize", TAGGED_SIZE);
-  publish_int("otelThreadCtxWrappedObjectOffset", WRAPPED_OBJECT_OFFSET);
+  publish_int("otelThreadCtxJsObjectRecordOffset", JS_OBJECT_RECORD_OFFSET);
 }
 
 }  // namespace dd
