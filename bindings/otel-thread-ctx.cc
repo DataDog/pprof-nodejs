@@ -289,6 +289,10 @@ class CtxWrap {
 constexpr size_t RECORD_OFFSET = sizeof(CtxWrap);
 static_assert(RECORD_OFFSET % alignof(OtelThreadCtxRecord) == 0,
               "record must land on its natural alignment");
+// Most likely subsumed in the previous assert, but still call out directly
+// that record must be 2-aligned as that's a requirement for storing it
+// with v8::Object::SetAlignedPointerInInternalField().
+static_assert(RECORD_OFFSET % 2 == 0, "record must land on 2 boundary");
 
 inline OtelThreadCtxRecord* CtxWrap::record() {
   return reinterpret_cast<OtelThreadCtxRecord*>(
