@@ -147,10 +147,9 @@ static_assert(offsetof(OtelThreadCtxRecord, attrs_data_size) == 26,
 static_assert(offsetof(OtelThreadCtxRecord, attrs_data) == 28,
               "attrs_data offset");
 
-// Floor on the attrs_data capacity of a freshly allocated record. Sized so
-// the record itself is one 64-byte cache line — matching the OTEP-4947
-// "frugal writer" guidance ("a frugal writer may aim to keep the entire
-// record under 64 bytes") — and giving small records some slack so the
+// Floor on the attrs_data capacity of a freshly allocated record. Matching the
+// OTEP-4947 "frugal writer" guidance ("a frugal writer may aim to keep the
+// entire record under 64 bytes") — and giving small records some slack so the
 // first few appends (if any) can be in-place. The CtxWrap fields preceding
 // the record in the same block are writer bookkeeping the reader never
 // sees, so they don't count against that budget.
