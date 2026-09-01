@@ -13,6 +13,7 @@
                         "target_name": "dd_pprof",
                         "sources": [
                             "bindings/profilers/heap.cc",
+                            "bindings/profilers/near-oom.cc",
                             "bindings/profilers/wall.cc",
                             "bindings/per-isolate-data.cc",
                             "bindings/thread-cpu-clock.cc",
@@ -40,6 +41,7 @@
                         "target_name": "test_dd_pprof",
                         "sources": [
                             "bindings/profilers/heap.cc",
+                            "bindings/profilers/near-oom.cc",
                             "bindings/profilers/wall.cc",
                             "bindings/per-isolate-data.cc",
                             "bindings/thread-cpu-clock.cc",
