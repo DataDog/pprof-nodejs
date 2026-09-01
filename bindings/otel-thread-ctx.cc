@@ -132,7 +132,7 @@ struct OtelThreadCtxRecord {
   uint8_t trace_id[16];      // offset 0
   uint8_t span_id[8];        // offset 16
   uint8_t valid;             // offset 24
-  uint8_t reserved;          // offset 25
+  uint8_t trace_flags;       // offset 25
   uint16_t attrs_data_size;  // offset 26
   uint8_t attrs_data[];      // offset 28; length is attrs_data_size
 };
@@ -141,7 +141,8 @@ static_assert(sizeof(OtelThreadCtxRecord) == 28,
 static_assert(offsetof(OtelThreadCtxRecord, trace_id) == 0, "trace_id offset");
 static_assert(offsetof(OtelThreadCtxRecord, span_id) == 16, "span_id offset");
 static_assert(offsetof(OtelThreadCtxRecord, valid) == 24, "valid offset");
-static_assert(offsetof(OtelThreadCtxRecord, reserved) == 25, "reserved offset");
+static_assert(offsetof(OtelThreadCtxRecord, trace_flags) == 25,
+              "trace_flags offset");
 static_assert(offsetof(OtelThreadCtxRecord, attrs_data_size) == 26,
               "attrs_data_size offset");
 static_assert(offsetof(OtelThreadCtxRecord, attrs_data) == 28,
@@ -198,6 +199,7 @@ class CtxWrap {
   static void DebugBytes(const FunctionCallbackInfo<Value>& args);
   static void Append(const FunctionCallbackInfo<Value>& args);
   static void Invalidate(const FunctionCallbackInfo<Value>& args);
+  static void SetTraceFlags(const FunctionCallbackInfo<Value>& args);
   static void IsTruncated(const FunctionCallbackInfo<Value>& args);
 
   // Encode the JS array at `attrs_val` into `out` as packed (key, len, value)
@@ -405,6 +407,35 @@ bool CopyBytes(Local<Value> value, size_t expected_bytes, uint8_t* out) {
   return true;
 }
 
+// Read a trace-flags argument: the W3C trace-flags byte that accompanies the
+// trace and span ids. Absent, undefined or null means zero, which is what
+// OTEP-4947 prescribes when no flags are known. Every value in 0..255 is
+// accepted rather than masked to the currently defined bits: W3C requires
+// unknown flag bits to be propagated, so they are not ours to drop.
+bool ToTraceFlags(Isolate* isolate, Local<Value> value, uint8_t* out) {
+  if (value.IsEmpty() || value->IsUndefined() || value->IsNull()) {
+    *out = 0;
+    return true;
+  }
+  if (!value->IsNumber()) {
+    isolate->ThrowError("traceFlags must be an integer in 0..255");
+    return false;
+  }
+  // NaN fails this comparison too, so the cast below is always in range.
+  const double d = value.As<v8::Number>()->Value();
+  if (!(d >= 0 && d <= 255)) {
+    isolate->ThrowError("traceFlags must be an integer in 0..255");
+    return false;
+  }
+  const uint8_t byte = static_cast<uint8_t>(d);
+  if (static_cast<double>(byte) != d) {
+    isolate->ThrowError("traceFlags must be an integer in 0..255");
+    return false;
+  }
+  *out = byte;
+  return true;
+}
+
 // Encode the JS array `attrs_val` (positional, index N = uint8 key N) into
 // `*out` as packed `(key:u8, len:u8, value:u8[len])` entries.
 // `existing_size` is the number of bytes already in any pre-existing
@@ -498,10 +529,10 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("ThreadContext must be called with `new`");
     return;
   }
-  if (args.Length() < 2 || args.Length() > 3) {
+  if (args.Length() < 2 || args.Length() > 4) {
     isolate->ThrowError(
-        "ThreadContext expects 2 or 3 arguments: traceId, spanId, "
-        "attributes?");
+        "ThreadContext expects 2 to 4 arguments: traceId, spanId, "
+        "traceFlags?, attributes?");
     return;
   }
 
@@ -517,6 +548,8 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
     isolate->ThrowError("spanId must be an 8-byte Uint8Array");
     return;
   }
+  uint8_t trace_flags = 0;
+  if (!ToTraceFlags(isolate, args[2], &trace_flags)) return;
 
   // Encode attributes into a transient buffer first so we can size the
   // record allocation correctly. The 612-byte attrs_data cap mirrors the
@@ -526,7 +559,7 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
   // truncated flag below.
   std::vector<uint8_t> attrs_buf;
   bool truncated = false;
-  if (!EncodeAttrs(isolate, context, args[2], 0, &attrs_buf, &truncated)) {
+  if (!EncodeAttrs(isolate, context, args[3], 0, &attrs_buf, &truncated)) {
     return;
   }
 
@@ -546,6 +579,7 @@ void CtxWrap::New(const FunctionCallbackInfo<Value>& args) {
   OtelThreadCtxRecord* record = self->record();
   memcpy(record->trace_id, trace_id, sizeof(trace_id));
   memcpy(record->span_id, span_id, sizeof(span_id));
+  record->trace_flags = trace_flags;
   record->attrs_data_size = static_cast<uint16_t>(attrs_buf.size());
   if (!attrs_buf.empty()) {
     memcpy(record->attrs_data, attrs_buf.data(), attrs_buf.size());
@@ -708,6 +742,29 @@ void CtxWrap::Invalidate(const FunctionCallbackInfo<Value>& args) {
   *reinterpret_cast<volatile uint8_t*>(&self->record()->valid) = 0;
 }
 
+// Overwrite the record's trace-flags byte in place. The W3C flags are not
+// always known when a context is built: an SDK whose sampling decision is
+// deferred only learns the sampled bit later, and a decision already made can
+// still be overridden. So this mirrors invalidate() — one byte, a fence and a
+// volatile store, visible at once to every frame sharing the record.
+void CtxWrap::SetTraceFlags(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
+  CtxWrap* self = CtxWrap::Unwrap(args.This());
+  if (!self) {
+    isolate->ThrowError("not a ThreadContext");
+    return;
+  }
+  if (args.Length() != 1) {
+    isolate->ThrowError("setTraceFlags expects 1 argument: traceFlags");
+    return;
+  }
+  uint8_t trace_flags = 0;
+  if (!ToTraceFlags(isolate, args[0], &trace_flags)) return;
+  std::atomic_signal_fence(std::memory_order_release);
+  *reinterpret_cast<volatile uint8_t*>(&self->record()->trace_flags) =
+      trace_flags;
+}
+
 // Returns true if any attribute was ever dropped from this wrapper's
 // record because it would have pushed attrs_data past the cap — set during
 // CtxWrap::New() if the initial set didn't fit, or by any subsequent
@@ -756,6 +813,9 @@ void CtxWrap::Init(Local<Object> exports) {
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "invalidate"),
       FunctionTemplate::New(isolate, Invalidate));
+  tpl->PrototypeTemplate()->Set(
+      String::NewFromUtf8Literal(isolate, "setTraceFlags"),
+      FunctionTemplate::New(isolate, SetTraceFlags));
   tpl->PrototypeTemplate()->Set(
       String::NewFromUtf8Literal(isolate, "isTruncated"),
       FunctionTemplate::New(isolate, IsTruncated));

@@ -46,7 +46,7 @@ function id(n: number, len: number): Uint8Array {
 const retained: unknown[] = [];
 
 for (let i = 0; i < N; i++) {
-  const ctx = new otelThreadCtx.ThreadContext(id(i, 16), id(i, 8), [
+  const ctx = new otelThreadCtx.ThreadContext(id(i, 16), id(i, 8), 0, [
     'k',
     String(i),
   ]);
