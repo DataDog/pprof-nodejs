@@ -44,13 +44,24 @@ import {
 interface PosOpts {
   traceId: Uint8Array;
   spanId: Uint8Array;
+  traceFlags?: number;
   attributes?: Array<string | null | undefined>;
 }
 function tcRun<T>(fn: () => T, opts: PosOpts): T {
-  return new ThreadContext(opts.traceId, opts.spanId, opts.attributes).run(fn);
+  return new ThreadContext(
+    opts.traceId,
+    opts.spanId,
+    opts.traceFlags,
+    opts.attributes,
+  ).run(fn);
 }
 function tcEnter(opts: PosOpts): void {
-  new ThreadContext(opts.traceId, opts.spanId, opts.attributes).enter();
+  new ThreadContext(
+    opts.traceId,
+    opts.spanId,
+    opts.traceFlags,
+    opts.attributes,
+  ).enter();
 }
 function tcAppend(
   attributes: Array<string | null | undefined> | undefined,
@@ -83,7 +94,7 @@ interface Header {
   traceId: Uint8Array;
   spanId: Uint8Array;
   valid: number;
-  reserved: number;
+  traceFlags: number;
   attrsDataSize: number;
 }
 
@@ -102,7 +113,7 @@ function decodeHeader(bytes: Uint8Array): Header {
     traceId: bytes.slice(0, 16),
     spanId: bytes.slice(16, 24),
     valid: bytes[24],
-    reserved: bytes[25],
+    traceFlags: bytes[25],
     attrsDataSize,
   };
 }
@@ -191,7 +202,7 @@ function captureBytes(opts: {
         strictAssert.deepEqual(hdr.traceId, TRACE_ID_BYTES);
         strictAssert.deepEqual(hdr.spanId, SPAN_ID_BYTES);
         strictAssert.equal(hdr.valid, 1);
-        strictAssert.equal(hdr.reserved, 0);
+        strictAssert.equal(hdr.traceFlags, 0);
         strictAssert.equal(hdr.attrsDataSize, 0);
       });
 
@@ -723,6 +734,98 @@ function captureBytes(opts: {
             attributes: ['a', 'b'],
           },
         );
+      });
+    });
+
+    describe('traceFlags', () => {
+      it('defaults to 0 when not supplied', () => {
+        const bytes = tcRun(() => _currentRecordBytes()!, {
+          traceId: TRACE_ID_BYTES,
+          spanId: SPAN_ID_BYTES,
+        });
+        strictAssert.equal(decodeHeader(bytes).traceFlags, 0);
+      });
+
+      it('writes the byte given at construction', () => {
+        const bytes = tcRun(() => _currentRecordBytes()!, {
+          traceId: TRACE_ID_BYTES,
+          spanId: SPAN_ID_BYTES,
+          traceFlags: 0x01,
+        });
+        strictAssert.equal(decodeHeader(bytes).traceFlags, 0x01);
+      });
+
+      it('keeps bits W3C has not defined rather than masking them off', () => {
+        const bytes = tcRun(() => _currentRecordBytes()!, {
+          traceId: TRACE_ID_BYTES,
+          spanId: SPAN_ID_BYTES,
+          traceFlags: 0xff,
+        });
+        strictAssert.equal(decodeHeader(bytes).traceFlags, 0xff);
+      });
+
+      it('coexists with attributes in the fourth argument', () => {
+        const bytes = tcRun(() => _currentRecordBytes()!, {
+          traceId: TRACE_ID_BYTES,
+          spanId: SPAN_ID_BYTES,
+          traceFlags: 0x03,
+          attributes: ['v0'],
+        });
+        const hdr = decodeHeader(bytes);
+        strictAssert.equal(hdr.traceFlags, 0x03);
+        strictAssert.deepEqual(decodeAttrs(bytes), ['v0']);
+      });
+
+      it('rejects non-integers and out-of-range values', () => {
+        for (const bad of [-1, 256, 1.5, NaN, '1' as unknown as number]) {
+          strictAssert.throws(
+            () => new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES, bad),
+            /traceFlags must be an integer in 0\.\.255/,
+            `expected ${String(bad)} to be rejected`,
+          );
+        }
+      });
+
+      it('setTraceFlags overwrites in place, visible on the shared record', () => {
+        // The deferred-sampling case: the record is built before the sampled
+        // bit is known, and every frame holding this context must see the
+        // update, not just the one that made it.
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES);
+        ctx.run(() => {
+          strictAssert.equal(
+            decodeHeader(_currentRecordBytes()!).traceFlags,
+            0,
+          );
+          ctx.setTraceFlags(0x01);
+          strictAssert.equal(
+            decodeHeader(_currentRecordBytes()!).traceFlags,
+            0x01,
+          );
+        });
+      });
+
+      it('survives an append that reallocates the record', () => {
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES, 0x01);
+        ctx.run(() => {
+          // Overflow the initial 36-byte slack so the wrap has to move.
+          ctx.appendAttributes([undefined, 'x'.repeat(200)]);
+          ctx.appendAttributes([undefined, undefined, 'y'.repeat(200)]);
+          const hdr = decodeHeader(_currentRecordBytes()!);
+          strictAssert.equal(hdr.traceFlags, 0x01);
+          strictAssert.equal(hdr.valid, 1);
+        });
+      });
+
+      it('setTraceFlags still reaches the record after a reallocation', () => {
+        const ctx = new ThreadContext(TRACE_ID_BYTES, SPAN_ID_BYTES);
+        ctx.run(() => {
+          ctx.appendAttributes([undefined, 'x'.repeat(300)]);
+          ctx.setTraceFlags(0x03);
+          strictAssert.equal(
+            decodeHeader(_currentRecordBytes()!).traceFlags,
+            0x03,
+          );
+        });
       });
     });
 

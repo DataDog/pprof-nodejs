@@ -84,6 +84,20 @@ export interface ThreadContext {
    */
   invalidate(): void;
 
+  /**
+   * Overwrite this context's W3C trace-flags byte in place, for the case
+   * where the flags are not yet known when the context is built — an SDK
+   * whose sampling decision is deferred learns the sampled bit later, and a
+   * decision already taken can still be overridden. Like {@link invalidate},
+   * the write is seen at once by every async-context frame holding this
+   * context, because they all share one record.
+   *
+   * Must be an integer in 0..255. Bits beyond those W3C currently defines are
+   * stored as given rather than masked off, since W3C requires unknown flag
+   * bits to be propagated.
+   */
+  setTraceFlags(traceFlags: number): void;
+
   isTruncated(): boolean;
   /** Debug-only: returns the on-the-wire record bytes. Not stable. */
   debugBytes(): Uint8Array;
@@ -118,6 +132,7 @@ export interface ThreadContextCtor {
   new (
     traceId: Uint8Array,
     spanId: Uint8Array,
+    traceFlags?: number,
     attributes?: Array<string | null | undefined>,
   ): ThreadContext;
   readonly prototype: ThreadContext;
@@ -230,6 +245,7 @@ if (process.platform === 'linux') {
   class NoopThreadContext implements ThreadContext {
     appendAttributes(): void {}
     invalidate(): void {}
+    setTraceFlags(): void {}
     isTruncated(): boolean {
       return false;
     }
