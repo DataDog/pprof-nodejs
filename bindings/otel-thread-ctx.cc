@@ -835,7 +835,12 @@ void CtxWrap::Init(Local<Object> exports) {
 // this as a per-isolate cleanup hook the first time StoreAls is called
 // keeps the handle safely scoped to the isolate.
 void ResetDiscoveryStruct(void* /*arg*/) {
-  otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
+  // Clear cped_slot with volatile + signal fence so a reader that stops this
+  // thread mid-teardown either sees a null cped_slot and bails, or sees the
+  // struct still whole.
+  *reinterpret_cast<v8::internal::Address* volatile*>(
+      &otel_thread_ctx_nodejs_v1.cped_slot) = nullptr;
+  std::atomic_signal_fence(std::memory_order_release);
   otel_thread_ctx_nodejs_v1.als_handle.Reset();
   otel_thread_ctx_nodejs_v1.als_identity_hash = 0;
   otel_thread_ctx_nodejs_v1.undefined_addr = 0;
@@ -851,25 +856,23 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   otel_thread_ctx_nodejs_v1.als_identity_hash = obj->GetIdentityHash();
   otel_thread_ctx_nodejs_v1.als_handle = Global<Object>(isolate, obj);
 #if NODE_MAJOR_VERSION >= 22
-  otel_thread_ctx_nodejs_v1.cped_slot =
-      reinterpret_cast<v8::internal::Address*>(
-          reinterpret_cast<char*>(isolate) +
-          v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
+  v8::internal::Address* slot = reinterpret_cast<v8::internal::Address*>(
+      reinterpret_cast<char*>(isolate) +
+      v8::internal::Internals::kContinuationPreservedEmbedderDataOffset);
 #else
   // Node < 22 lacks ContinuationPreservedEmbedderData entirely (and the
   // associated V8 internal offset). The TS layer refuses to install the
   // hook on these versions via isAsyncContextFrameActive, so StoreAls is
-  // never called from JS — this null assignment is just here so the
-  // addon compiles on the older Node versions the package supports.
-  otel_thread_ctx_nodejs_v1.cped_slot = nullptr;
+  // never called from JS — this null assignment is here so the addon
+  // compiles on the older Node versions the package supports and also
+  // cped_slot == nullptr serves as the reader gate.
+  v8::internal::Address* slot = nullptr;
 #endif
-  // `undefined_addr == 0` doubles as the "not yet initialized on this
-  // isolate" flag: it starts at zero (thread-local zero-init), any real
-  // V8 undefined singleton address is non-zero, and ResetDiscoveryStruct
-  // clears it back to zero — so a subsequent StoreAls (e.g. isolate
-  // tear-down then re-init on the same thread) re-registers the cleanup
-  // hook. Register BEFORE the write so the flag transition is the last
-  // observable step.
+  // `undefined_addr == 0` marks "no cleanup hook registered for this thread
+  // yet": it starts at zero (thread-local zero-init) and ResetDiscoveryStruct
+  // clears it back to zero, so an isolate re-initialized on this thread
+  // registers a fresh hook. This is bookkeeping for us, not the reader's
+  // gate, we use cped_slot for that.
   if (otel_thread_ctx_nodejs_v1.undefined_addr == 0) {
     node::AddEnvironmentCleanupHook(isolate, ResetDiscoveryStruct, nullptr);
   }
@@ -878,6 +881,14 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   // address is fine — no Global<> tracking needed.
   otel_thread_ctx_nodejs_v1.undefined_addr =
       reinterpret_cast<v8::internal::Address>(*v8::Undefined(isolate));
+
+  // Write `cped_slot` last with signal fence + volatile. It is what a reader
+  // tests before it dereferences anything, so publishing it after every other
+  // field means a reader either sees null and bails or sees a fully populated
+  // struct.
+  std::atomic_signal_fence(std::memory_order_release);
+  *reinterpret_cast<v8::internal::Address* volatile*>(
+      &otel_thread_ctx_nodejs_v1.cped_slot) = slot;
 }
 
 // Without a function that explicitly reads the TLS variable, on x86 the
