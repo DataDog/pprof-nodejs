@@ -348,6 +348,7 @@ void CtxWrap::DrainLive(void* arg) {
     if (!p->handle_.IsEmpty()) {
       SetAlignedPointerInInternalField(p->handle_.Get(isolate), 0, nullptr);
     }
+    std::atomic_signal_fence(std::memory_order_acq_rel);
     Destroy(p);
     p = next;
   }
