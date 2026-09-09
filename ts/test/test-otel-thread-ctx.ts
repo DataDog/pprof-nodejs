@@ -940,7 +940,7 @@ function captureBytes(opts: {
         const pca = getProcessContextAttributes(keys);
         strictAssert.equal(pca['threadlocal.schema_version'], 'nodejs_v1_dev');
         strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
-        strictAssert.equal(pca['threadlocal.js_object_record_offset'], 24);
+        strictAssert.equal(pca['threadlocal.js_object_record_offset'], 0x18);
         strictAssert.equal(pca['threadlocal.tagged_size'], 8);
         strictAssert.equal(pca['threadlocal.js_map_table_offset'], 0x18);
         strictAssert.equal(
