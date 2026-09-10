@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <cassert>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -63,5 +64,23 @@ Nan::Global<v8::Function>& PerIsolateData::TimeProfileNodeConstructor() {
 std::shared_ptr<HeapProfilerState>& PerIsolateData::GetHeapProfilerState() {
   return heap_profiler_state;
 }
+
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+v8::Local<v8::DictionaryTemplate> PerIsolateData::GetDictionaryTemplate(
+    v8::Isolate* isolate,
+    DictionaryTemplateId id,
+    v8::MemorySpan<const std::string_view> names) {
+  const size_t index = static_cast<size_t>(id);
+  auto& tmpl = dictionary_templates[index];
+  auto& arity = dictionary_template_arities[index];
+  if (tmpl.IsEmpty()) {
+    arity = names.size();
+    tmpl.Reset(v8::DictionaryTemplate::New(isolate, names));
+  } else {
+    assert(arity == names.size());
+  }
+  return Nan::New(tmpl);
+}
+#endif
 
 }  // namespace dd
