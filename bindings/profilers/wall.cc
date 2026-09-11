@@ -20,9 +20,11 @@
 #include <v8-profiler.h>
 #include <cinttypes>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -32,6 +34,12 @@
 #include "per-isolate-data.hh"
 #include "translate-time-profile.hh"
 #include "wall.hh"
+
+// #if on an undefined macro is 0, which would silently drop the fast path.
+#ifndef DD_V8_HAS_DICTIONARY_TEMPLATE
+#error                                                                         \
+    "DD_V8_HAS_DICTIONARY_TEMPLATE undefined; per-isolate-data.hh not included"
+#endif
 
 #ifndef _WIN32
 #define DD_WALL_USE_SIGPROF true
@@ -493,6 +501,14 @@ void WallProfiler::Cleanup(Isolate* isolate) {
   }
 }
 
+// NewInstance matches values to names by position; generating both from this
+// one list keeps them in sync.
+#define DD_SAMPLE_CONTEXT_FIELDS                                               \
+  X(timestamp)                                                                 \
+  X(cpuTime)                                                                   \
+  X(context)                                                                   \
+  X(asyncId)
+
 ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
                                                ContextBuffer& contexts,
                                                int64_t startCpuTime) {
@@ -511,10 +527,30 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
   // iteration index
   int deltaIdx = 0;
 
-  auto contextKey = String::NewFromUtf8Literal(isolate, "context");
-  auto timestampKey = String::NewFromUtf8Literal(isolate, "timestamp");
-  auto cpuTimeKey = String::NewFromUtf8Literal(isolate, "cpuTime");
-  auto asyncIdKey = String::NewFromUtf8Literal(isolate, "asyncId");
+  Local<Value> undefined = Undefined(isolate);
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+#define X(name) #name,
+  static constexpr std::string_view kNames[] = {DD_SAMPLE_CONTEXT_FIELDS};
+#undef X
+  auto tmpl = PerIsolateData::For(isolate)->GetDictionaryTemplate(
+      isolate, DictionaryTemplateId::kWallSampleContext, kNames);
+
+  auto newSampleContext = [&](auto& values) {
+    return tmpl->NewInstance(v8Context, values);
+  };
+#else
+#define X(name) String::NewFromUtf8Literal(isolate, #name),
+  Local<String> keys[] = {DD_SAMPLE_CONTEXT_FIELDS};
+#undef X
+
+  auto newSampleContext = [&](auto& values) {
+    auto object = Object::New(isolate);
+    for (size_t i = 0; i < std::size(values); i++) {
+      object->Set(v8Context, keys[i], values[i].ToLocalChecked()).Check();
+    }
+    return object;
+  };
+#endif
   auto V8toEpochOffset = GetV8ToEpochOffset();
   auto lastCpuTime = startCpuTime;
 
@@ -565,44 +601,36 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
           array = it->second.contexts;
           ++it->second.hitcount;
         }
-        // Conforms to TimeProfileNodeContext defined in v8-types.ts
-        Local<Object> timedContext = Object::New(isolate);
-        timedContext
-            ->Set(v8Context,
-                  timestampKey,
-                  BigInt::New(isolate, sampleTimestamp + V8toEpochOffset))
-            .Check();
+        Local<Value> timestamp =
+            BigInt::New(isolate, sampleTimestamp + V8toEpochOffset);
+        Local<Value> cpuTime = undefined;
+        Local<Value> context = undefined;
+        Local<Value> asyncId = undefined;
+
         auto* function_name = sample->GetFunctionNameStr();
         // If current sample is program, reports its cpu time to the next sample
         if (strcmp(function_name, "(program)") != 0) {
           if (collectCpuTime_) {
-            timedContext
-                ->Set(
-                    v8Context,
-                    cpuTimeKey,
-                    Number::New(isolate, sampleContext.cpu_time - lastCpuTime))
-                .Check();
+            cpuTime =
+                Number::New(isolate, sampleContext.cpu_time - lastCpuTime);
             lastCpuTime = sampleContext.cpu_time;
           }
           // If current sample is neither program nor idle, associate a sampling
           // context and async ID
           if (strcmp(function_name, "(idle)") != 0) {
             if (sampleContext.context) {
-              timedContext
-                  ->Set(v8Context,
-                        contextKey,
-                        sampleContext.context.get()->Get(isolate))
-                  .Check();
+              context = sampleContext.context.get()->Get(isolate);
             }
             if (collectAsyncId_) {
-              timedContext
-                  ->Set(v8Context,
-                        asyncIdKey,
-                        Number::New(isolate, sampleContext.async_id))
-                  .Check();
+              asyncId = Number::New(isolate, sampleContext.async_id);
             }
           }
         }
+
+#define X(name) name,
+        MaybeLocal<Value> values[] = {DD_SAMPLE_CONTEXT_FIELDS};
+#undef X
+        auto timedContext = newSampleContext(values);
         array->Set(v8Context, array->Length(), timedContext).Check();
 
         // Sample context was consumed, fetch the next one
@@ -614,6 +642,7 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
 
   return contextsByNode;
 }
+#undef DD_SAMPLE_CONTEXT_FIELDS
 
 void GCPrologueCallback(Isolate* isolate,
                         GCType type,
