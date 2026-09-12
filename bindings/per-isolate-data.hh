@@ -39,6 +39,10 @@ struct HeapProfilerState;
 #if DD_V8_HAS_DICTIONARY_TEMPLATE
 enum class DictionaryTemplateId : size_t {
   kWallSampleContext,
+  kTimeProfileNode,
+  kHeapProfileNode,
+  kHeapAllocation,
+  kHeapAllocationStats,
   kCount,
 };
 

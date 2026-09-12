@@ -28,6 +28,8 @@ class ProfileTranslator {
  protected:
   v8::Local<v8::Object> NewObject() { return v8::Object::New(isolate); }
 
+  v8::Local<v8::Context> Context() { return context; }
+
   v8::Local<v8::Integer> NewInteger(int x) {
     return v8::Integer::New(isolate, x);
   }

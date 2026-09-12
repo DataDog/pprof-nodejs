@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <nan.h>
 #include <v8-profiler.h>
 
 #include <cstddef>
@@ -40,9 +39,5 @@ using AllocationProfileNodeStatsMap =
 
 AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     const std::vector<v8::AllocationProfile::Sample>& samples);
-
-v8::Local<v8::Array> TranslateAllocationStats(
-    v8::Isolate* isolate,
-    const AllocationProfileSizeStatsMap* allocation_stats);
 
 }  // namespace dd

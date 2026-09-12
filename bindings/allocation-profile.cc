@@ -16,33 +16,11 @@
 
 #include "allocation-profile.hh"
 
-#include <algorithm>
-
 #include <node_version.h>
 
 using namespace v8;
 
 namespace dd {
-namespace {
-Local<Object> CreateAllocationObject(Isolate* isolate,
-                                     const AllocationProfileNodeStats& stats) {
-  Local<Object> alloc_obj = Object::New(isolate);
-  Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "inuseObjects"),
-           Number::New(isolate, static_cast<double>(stats.inuse_objects)));
-  Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "inuseSpaceBytes"),
-           Number::New(isolate, static_cast<double>(stats.inuse_space_bytes)));
-  Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "allocObjects"),
-           Number::New(isolate, static_cast<double>(stats.alloc_objects)));
-  Nan::Set(alloc_obj,
-           String::NewFromUtf8Literal(isolate, "allocSpaceBytes"),
-           Number::New(isolate, static_cast<double>(stats.alloc_space_bytes)));
-  return alloc_obj;
-}
-}  // namespace
-
 AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     const std::vector<AllocationProfile::Sample>& samples) {
   AllocationProfileNodeStatsMap stats_by_node_id;
@@ -72,31 +50,6 @@ AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
   }
 
   return stats_by_node_id;
-}
-
-Local<Array> TranslateAllocationStats(
-    Isolate* isolate, const AllocationProfileSizeStatsMap* allocation_stats) {
-  auto context = isolate->GetCurrentContext();
-
-  if (!allocation_stats || allocation_stats->empty()) {
-    return Array::New(isolate, 0);
-  }
-
-  std::vector<size_t> sizes;
-  sizes.reserve(allocation_stats->size());
-  for (const auto& allocation : *allocation_stats) {
-    sizes.push_back(allocation.first);
-  }
-  std::sort(sizes.begin(), sizes.end());
-
-  Local<Array> arr = Array::New(isolate, sizes.size());
-  for (size_t i = 0; i < sizes.size(); i++) {
-    const auto size = sizes[i];
-    const auto& stats = allocation_stats->at(size);
-    arr->Set(context, i, CreateAllocationObject(isolate, stats)).Check();
-  }
-
-  return arr;
 }
 
 }  // namespace dd

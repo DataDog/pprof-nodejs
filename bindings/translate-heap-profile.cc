@@ -16,6 +16,9 @@
 
 #include "translate-heap-profile.hh"
 #include <nan.h>
+#include <algorithm>
+#include <string_view>
+#include "per-isolate-data.hh"
 #include "profile-translator.hh"
 
 namespace dd {
@@ -35,10 +38,41 @@ class HeapProfileTranslator : ProfileTranslator {
   X(sizeBytes)                                                                 \
   X(count)
 
+#define ALLOCATION_STATS_FIELDS                                                \
+  X(inuseObjects, inuse_objects)                                               \
+  X(inuseSpaceBytes, inuse_space_bytes)                                        \
+  X(allocObjects, alloc_objects)                                               \
+  X(allocSpaceBytes, alloc_space_bytes)
+
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+  // NewInstance binds names and values by position, so both come from the same
+  // field lists.
+#define X(name) #name,
+  static constexpr std::string_view kNodeNames[] = {NODE_FIELDS};
+  static constexpr std::string_view kAllocationNames[] = {ALLOCATION_FIELDS};
+#undef X
+#define X(name, member) #name,
+  static constexpr std::string_view kAllocationStatsNames[] = {
+      ALLOCATION_STATS_FIELDS};
+#undef X
+  PerIsolateData* perIsolateData = PerIsolateData::For(isolate);
+  v8::Local<v8::DictionaryTemplate> nodeTemplate =
+      perIsolateData->GetDictionaryTemplate(
+          isolate, DictionaryTemplateId::kHeapProfileNode, kNodeNames);
+  v8::Local<v8::DictionaryTemplate> allocationTemplate =
+      perIsolateData->GetDictionaryTemplate(
+          isolate, DictionaryTemplateId::kHeapAllocation, kAllocationNames);
+  v8::Local<v8::DictionaryTemplate> allocationStatsTemplate =
+      perIsolateData->GetDictionaryTemplate(
+          isolate,
+          DictionaryTemplateId::kHeapAllocationStats,
+          kAllocationStatsNames);
+#else
 #define X(name) v8::Local<v8::String> str_##name = NewString(#name);
   NODE_FIELDS
   ALLOCATION_FIELDS
 #undef X
+#endif
 
  public:
   v8::Local<v8::Value> TranslateAllocationProfile(
@@ -53,7 +87,7 @@ class HeapProfileTranslator : ProfileTranslator {
       auto alloc = node->allocations[i];
       Set(allocations,
           i,
-          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
+          CreateAllocation(NewNumber(alloc.size), NewNumber(alloc.count)));
     }
 
     return CreateNode(node->name,
@@ -81,7 +115,6 @@ class HeapProfileTranslator : ProfileTranslator {
 
     auto node_stats = allocation_stats->find(node->node_id);
     v8::Local<v8::Array> allocations = TranslateAllocationStats(
-        isolate,
         node_stats == allocation_stats->end() ? nullptr : &node_stats->second);
 
     return CreateNode(node->name,
@@ -104,7 +137,7 @@ class HeapProfileTranslator : ProfileTranslator {
       auto alloc = node->allocations[i];
       Set(allocations,
           i,
-          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
+          CreateAllocation(NewNumber(alloc.size), NewNumber(alloc.count)));
     }
 
     return CreateNode(NewString(node->name.c_str()),
@@ -117,6 +150,45 @@ class HeapProfileTranslator : ProfileTranslator {
   }
 
  private:
+  v8::Local<v8::Array> TranslateAllocationStats(
+      const AllocationProfileSizeStatsMap* allocation_stats) {
+    if (!allocation_stats || allocation_stats->empty()) {
+      return v8::Array::New(isolate, 0);
+    }
+
+    std::vector<size_t> sizes;
+    sizes.reserve(allocation_stats->size());
+    for (const auto& allocation : *allocation_stats) {
+      sizes.push_back(allocation.first);
+    }
+    std::sort(sizes.begin(), sizes.end());
+
+    v8::Local<v8::Array> allocations = NewArray(sizes.size());
+    for (size_t i = 0; i < sizes.size(); i++) {
+      const auto& stats = allocation_stats->at(sizes[i]);
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+#define X(name, member) NewNumber(static_cast<double>(stats.member)),
+      v8::MaybeLocal<v8::Value> values[] = {ALLOCATION_STATS_FIELDS};
+#undef X
+      Set(allocations,
+          i,
+          allocationStatsTemplate->NewInstance(Context(), values));
+#else
+      v8::Local<v8::Object> allocation = NewObject();
+#define X(name, member)                                                        \
+  Set(allocation,                                                              \
+      NewString(#name),                                                        \
+      NewNumber(static_cast<double>(stats.member)));
+      ALLOCATION_STATS_FIELDS
+#undef X
+      Set(allocations, i, allocation);
+#endif
+    }
+
+    return allocations;
+  }
+#undef ALLOCATION_STATS_FIELDS
+
   v8::Local<v8::Object> CreateNode(v8::Local<v8::String> name,
                                    v8::Local<v8::String> scriptName,
                                    v8::Local<v8::Integer> scriptId,
@@ -124,22 +196,38 @@ class HeapProfileTranslator : ProfileTranslator {
                                    v8::Local<v8::Integer> columnNumber,
                                    v8::Local<v8::Array> children,
                                    v8::Local<v8::Array> allocations) {
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+#define X(name) name,
+    v8::MaybeLocal<v8::Value> values[] = {NODE_FIELDS};
+#undef X
+#undef NODE_FIELDS
+    return nodeTemplate->NewInstance(Context(), values);
+#else
     v8::Local<v8::Object> js_node = NewObject();
 #define X(name) Set(js_node, str_##name, name);
     NODE_FIELDS
 #undef X
 #undef NODE_FIELDS
     return js_node;
+#endif
   }
 
-  v8::Local<v8::Object> CreateAllocation(v8::Local<v8::Number> count,
-                                         v8::Local<v8::Number> sizeBytes) {
+  v8::Local<v8::Object> CreateAllocation(v8::Local<v8::Number> sizeBytes,
+                                         v8::Local<v8::Number> count) {
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+#define X(name) name,
+    v8::MaybeLocal<v8::Value> values[] = {ALLOCATION_FIELDS};
+#undef X
+#undef ALLOCATION_FIELDS
+    return allocationTemplate->NewInstance(Context(), values);
+#else
     v8::Local<v8::Object> js_alloc = NewObject();
 #define X(name) Set(js_alloc, str_##name, name);
     ALLOCATION_FIELDS
 #undef X
 #undef ALLOCATION_FIELDS
     return js_alloc;
+#endif
   }
 
  public:

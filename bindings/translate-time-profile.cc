@@ -16,6 +16,7 @@
 
 #include "translate-time-profile.hh"
 #include <v8-version.h>
+#include <string_view>
 #include "per-isolate-data.hh"
 #include "profile-translator.hh"
 
@@ -293,9 +294,19 @@ class TimeProfileTranslator : ProfileTranslator {
   X(children)                                                                  \
   X(contexts)
 
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+  // NewInstance binds names and values by position, so both come from FIELDS.
+#define X(name) #name,
+  static constexpr std::string_view kNames[] = {FIELDS};
+#undef X
+  v8::Local<v8::DictionaryTemplate> nodeTemplate =
+      PerIsolateData::For(isolate)->GetDictionaryTemplate(
+          isolate, DictionaryTemplateId::kTimeProfileNode, kNames);
+#else
 #define X(name) v8::Local<v8::String> str_##name = NewString(#name);
   FIELDS
 #undef X
+#endif
 
   v8::Local<v8::Array> getContextsForNode(const v8::CpuProfileNode* node,
                                           uint32_t& hitcount) {
@@ -328,12 +339,20 @@ class TimeProfileTranslator : ProfileTranslator {
                                        v8::Local<v8::Integer> hitCount,
                                        v8::Local<v8::Array> children,
                                        v8::Local<v8::Array> contexts) {
+#if DD_V8_HAS_DICTIONARY_TEMPLATE
+#define X(name) name,
+    v8::MaybeLocal<v8::Value> values[] = {FIELDS};
+#undef X
+#undef FIELDS
+    return nodeTemplate->NewInstance(Context(), values);
+#else
     v8::Local<v8::Object> js_node = NewObject();
 #define X(name) Set(js_node, str_##name, name);
     FIELDS
 #undef X
 #undef FIELDS
     return js_node;
+#endif
   }
 
   v8::Local<v8::Array> GetLineNumberTimeProfileChildren(
