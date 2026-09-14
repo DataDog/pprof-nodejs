@@ -27,7 +27,16 @@
 namespace dd {
 
 struct Node {
-  using Allocation = v8::AllocationProfile::Allocation;
+  struct Allocation {
+    size_t size = 0;
+    // v8's per-size count, which the stderr dump and the export render.
+    uint32_t count = 0;
+    // Rebuilt from the profile's samples, and equal to count outside
+    // allocation mode, where v8 reports no live/allocated split.
+    uint64_t inuse_objects = 0;
+    uint64_t alloc_objects = 0;
+  };
+
   std::string name;
   std::string script_name;
   int line_number;
@@ -35,14 +44,15 @@ struct Node {
   int script_id;
   std::vector<std::shared_ptr<Node>> children;
   std::vector<Allocation> allocations;
+  // Set on every node iff the profile was captured in allocation mode.
+  bool has_allocation_stats = false;
 };
 
 std::shared_ptr<Node> TranslateAllocationProfileToCpp(
-    v8::AllocationProfile::Node* node);
+    v8::AllocationProfile::Node* node,
+    const AllocationProfileNodeStatsMap* allocation_stats);
 
 v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
-v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node,
     const AllocationProfileNodeStatsMap* allocation_stats);
