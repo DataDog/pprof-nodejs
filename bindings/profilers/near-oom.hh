@@ -100,8 +100,13 @@ struct HeapProfilerState {
     uv_unref(reinterpret_cast<uv_handle_t*>(async));
   }
 
-  void OnNewProfile() {
+  void ResetProfile() {
     profile.reset();
+    profile_allocation_stats.reset();
+  }
+
+  void OnNewProfile() {
+    ResetProfile();
     // Only (re)install the NearHeapLimit callback when OOM monitoring is
     // configured. Otherwise a plain start()+profile() flow would silently
     // register a callback that the user never asked for.
@@ -120,6 +125,9 @@ struct HeapProfilerState {
   uint32_t current_heap_extension_count = 0;
   uv_async_t* async = nullptr;
   std::shared_ptr<Node> profile;
+  // Engaged iff |profile| was captured in allocation mode, so delivery reads
+  // the capture's own mode rather than |allocations|, which may have moved on.
+  std::optional<AllocationProfileNodeStatsMap> profile_allocation_stats;
   std::vector<std::string> export_command;
   bool allocations = false;
   bool dumpProfileOnStderr = false;

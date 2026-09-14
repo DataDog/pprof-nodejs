@@ -20,6 +20,7 @@
 
 #include <v8-profiler.h>
 #include <v8.h>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,18 +34,22 @@ struct Node {
   int line_number;
   int column_number;
   int script_id;
+  // Joins the retained AllocationProfileNodeStatsMap onto this tree.
+  uint32_t node_id = 0;
   std::vector<std::shared_ptr<Node>> children;
+  // v8 only decrements this on GC without the include-collected-objects flags:
+  // the live set in legacy mode, the cumulative allocated total with them.
   std::vector<Allocation> allocations;
 };
 
 std::shared_ptr<Node> TranslateAllocationProfileToCpp(
     v8::AllocationProfile::Node* node);
 
-v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node);
+    Node* node,
+    const AllocationProfileNodeStatsMap* allocation_stats = nullptr);
 v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node,
-    const AllocationProfileNodeStatsMap* allocation_stats);
+    const AllocationProfileNodeStatsMap* allocation_stats = nullptr);
 
 }  // namespace dd
