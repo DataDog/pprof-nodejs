@@ -377,8 +377,13 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
-  async function runOomFixture(script: string, heapLimitExtensionSize: string) {
-    const proc = fork(path.join(__dirname, script), [heapLimitExtensionSize], {
+  async function runOomFixture(
+    script: string,
+    heapLimitExtensionSize?: string,
+  ) {
+    const args =
+      heapLimitExtensionSize === undefined ? [] : [heapLimitExtensionSize];
+    const proc = fork(path.join(__dirname, script), args, {
       execArgv: ['--expose-gc', '--max-old-space-size=64'],
       silent: true,
     });
@@ -394,7 +399,8 @@ describe('OOMMonitoring', () => {
     return new Promise<{code: number | null; output: string}>(
       (resolve, reject) => {
         proc.on('error', reject);
-        proc.on('exit', code => {
+        // 'close', not 'exit': stdio is only drained by then.
+        proc.on('close', code => {
           resolve({code, output});
         });
       },
@@ -472,6 +478,19 @@ describe('OOMMonitoring', () => {
     assert.ok(
       granted < youngGeneration,
       `expected no young-generation extension, got ${granted}\n${output}`,
+    );
+  });
+
+  it('should report allocation stats in the near-OOM profile', async function () {
+    if (Number(process.versions.node.split('.')[0]) < 26) {
+      this.skip();
+    }
+    this.timeout(30000);
+    const {code, output} = await runOomFixture('oom-allocation-profile.js');
+    assert.strictEqual(code, 0, `fixture reported a failure\n${output}`);
+    assert.ok(
+      output.includes('allocationProfileChecked'),
+      `the OOM callback did not report a checked profile\n${output}`,
     );
   });
 

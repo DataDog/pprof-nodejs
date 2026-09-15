@@ -42,36 +42,8 @@ class HeapProfileTranslator : ProfileTranslator {
 
  public:
   v8::Local<v8::Value> TranslateAllocationProfile(
-      v8::AllocationProfile::Node* node) {
-    v8::Local<v8::Array> children = NewArray(node->children.size());
-    for (size_t i = 0; i < node->children.size(); i++) {
-      Set(children, i, TranslateAllocationProfile(node->children[i]));
-    }
-
-    v8::Local<v8::Array> allocations = NewArray(node->allocations.size());
-    for (size_t i = 0; i < node->allocations.size(); i++) {
-      auto alloc = node->allocations[i];
-      Set(allocations,
-          i,
-          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
-    }
-
-    return CreateNode(node->name,
-                      node->script_name,
-                      NewInteger(node->script_id),
-                      NewInteger(node->line_number),
-                      NewInteger(node->column_number),
-                      children,
-                      allocations);
-  }
-
-  v8::Local<v8::Value> TranslateAllocationProfile(
       v8::AllocationProfile::Node* node,
       const AllocationProfileNodeStatsMap* allocation_stats) {
-    if (!allocation_stats) {
-      return TranslateAllocationProfile(node);
-    }
-
     v8::Local<v8::Array> children = NewArray(node->children.size());
     for (size_t i = 0; i < node->children.size(); i++) {
       Set(children,
@@ -79,32 +51,24 @@ class HeapProfileTranslator : ProfileTranslator {
           TranslateAllocationProfile(node->children[i], allocation_stats));
     }
 
-    auto node_stats = allocation_stats->find(node->node_id);
-    v8::Local<v8::Array> allocations = TranslateAllocationStats(
-        isolate,
-        node_stats == allocation_stats->end() ? nullptr : &node_stats->second);
-
     return CreateNode(node->name,
                       node->script_name,
                       NewInteger(node->script_id),
                       NewInteger(node->line_number),
                       NewInteger(node->column_number),
                       children,
-                      allocations);
+                      TranslateAllocations(
+                          node->node_id, node->allocations, allocation_stats));
   }
 
-  v8::Local<v8::Value> TranslateAllocationProfile(Node* node) {
+  v8::Local<v8::Value> TranslateAllocationProfile(
+      Node* node, const AllocationProfileNodeStatsMap* allocation_stats) {
     v8::Local<v8::Array> children = NewArray(node->children.size());
     for (size_t i = 0; i < node->children.size(); i++) {
-      Set(children, i, TranslateAllocationProfile(node->children[i].get()));
-    }
-
-    v8::Local<v8::Array> allocations = NewArray(node->allocations.size());
-    for (size_t i = 0; i < node->allocations.size(); i++) {
-      auto alloc = node->allocations[i];
-      Set(allocations,
+      Set(children,
           i,
-          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
+          TranslateAllocationProfile(node->children[i].get(),
+                                     allocation_stats));
     }
 
     return CreateNode(NewString(node->name.c_str()),
@@ -113,10 +77,33 @@ class HeapProfileTranslator : ProfileTranslator {
                       NewInteger(node->line_number),
                       NewInteger(node->column_number),
                       children,
-                      allocations);
+                      TranslateAllocations(
+                          node->node_id, node->allocations, allocation_stats));
   }
 
  private:
+  v8::Local<v8::Array> TranslateAllocations(
+      uint32_t node_id,
+      const std::vector<v8::AllocationProfile::Allocation>& node_allocations,
+      const AllocationProfileNodeStatsMap* allocation_stats) {
+    if (allocation_stats) {
+      auto node_stats = allocation_stats->find(node_id);
+      return TranslateAllocationStats(isolate,
+                                      node_stats == allocation_stats->end()
+                                          ? nullptr
+                                          : &node_stats->second);
+    }
+
+    v8::Local<v8::Array> allocations = NewArray(node_allocations.size());
+    for (size_t i = 0; i < node_allocations.size(); i++) {
+      auto alloc = node_allocations[i];
+      Set(allocations,
+          i,
+          CreateAllocation(NewNumber(alloc.count), NewNumber(alloc.size)));
+    }
+    return allocations;
+  }
+
   v8::Local<v8::Object> CreateNode(v8::Local<v8::String> name,
                                    v8::Local<v8::String> scriptName,
                                    v8::Local<v8::Integer> scriptId,
@@ -153,6 +140,7 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
   new_node->line_number = node->line_number;
   new_node->column_number = node->column_number;
   new_node->script_id = node->script_id;
+  new_node->node_id = node->node_id;
   Nan::Utf8String name(node->name);
   new_node->name.assign(*name, name.length());
   Nan::Utf8String script_name(node->script_name);
@@ -171,19 +159,16 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
 }
 
 v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node) {
-  return HeapProfileTranslator().TranslateAllocationProfile(node);
-}
-
-v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node,
     const AllocationProfileNodeStatsMap* allocation_stats) {
   return HeapProfileTranslator().TranslateAllocationProfile(node,
                                                             allocation_stats);
 }
 
-v8::Local<v8::Value> TranslateAllocationProfile(Node* node) {
-  return HeapProfileTranslator().TranslateAllocationProfile(node);
+v8::Local<v8::Value> TranslateAllocationProfile(
+    Node* node, const AllocationProfileNodeStatsMap* allocation_stats) {
+  return HeapProfileTranslator().TranslateAllocationProfile(node,
+                                                            allocation_stats);
 }
 
 }  // namespace dd

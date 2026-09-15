@@ -16,6 +16,7 @@
 
 #include "near-oom.hh"
 
+#include "allocation-profile.hh"
 #include "defer.hh"
 #include "heap.hh"
 #include "per-isolate-data.hh"
@@ -259,6 +260,48 @@ static size_t ExtendedHeapLimit(size_t current_heap_limit, size_t extension) {
              : current_heap_limit + extension;
 }
 
+static void CaptureProfile(v8::Isolate* isolate,
+                           const std::shared_ptr<HeapProfilerState>& state,
+                           bool deliver_async_callback) {
+  // Release a superseded capture before asking v8 to allocate the next one.
+  state->ResetProfile();
+  std::unique_ptr<v8::AllocationProfile> profile{
+      isolate->GetHeapProfiler()->GetAllocationProfile()};
+  if (!profile) {
+    fprintf(stderr,
+            "NearHeapLimit: heap profiler is not enabled, no allocation "
+            "profile to report\n");
+    return;
+  }
+
+  state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
+  if (state->allocations) {
+    state->profile_allocation_stats =
+        BuildAllocationStatsByNodeId(profile->GetSamples());
+  }
+  if (state->dumpProfileOnStderr) {
+    dumpAllocationProfile(stderr, state->profile.get());
+  }
+  if (!state->export_command.empty()) {
+    ExportProfile(*state);
+  }
+
+  if (state->callback.IsEmpty()) {
+    state->ResetProfile();
+    return;
+  }
+  if (state->callbackMode & kInterruptCallback) {
+    isolate->RequestInterrupt(InterruptCallback, nullptr);
+  }
+  if (state->callbackMode & kAsyncCallback) {
+    if (deliver_async_callback) {
+      InterruptCallback(isolate, nullptr);
+    } else {
+      uv_async_send(state->async);
+    }
+  }
+}
+
 size_t NearHeapLimit(void* data,
                      size_t current_heap_limit,
                      size_t initial_heap_limit) {
@@ -337,41 +380,11 @@ size_t NearHeapLimit(void* data,
               stats.object_count());
     }
   }
-  // GetAllocationProfile returns null when V8's sampling heap profiler isn't
-  // running, and that can happen while this callback is still installed:
-  // HeapProfilerCleanupHook stops V8's sampler without touching our state, so
-  // between that hook and the isolate actually going away we stay registered
-  // with nothing to sample. The heap-limit bookkeeping below still has to run,
-  // so skip only the profile-dependent work.
-  std::unique_ptr<v8::AllocationProfile> profile{
-      isolate->GetHeapProfiler()->GetAllocationProfile()};
-  if (profile) {
-    state->profile = TranslateAllocationProfileToCpp(profile->GetRootNode());
-    if (state->dumpProfileOnStderr) {
-      dumpAllocationProfile(stderr, state->profile.get());
-    }
-
-    if (!state->export_command.empty()) {
-      ExportProfile(*state);
-    }
-
-    if (!state->callback.IsEmpty()) {
-      if (state->callbackMode & kInterruptCallback) {
-        isolate->RequestInterrupt(InterruptCallback, nullptr);
-      }
-      if (state->callbackMode & kAsyncCallback) {
-        uv_async_send(state->async);
-      }
-    } else {
-      state->profile.reset();
-    }
+  // kSamplingForceGC needs the extension returned below to already be active.
+  if (state->allocations) {
+    uv_async_send(state->async);
   } else {
-    // Drop any profile retained from an earlier invocation: it is stale, and
-    // nothing below is going to consume or replace it.
-    state->profile.reset();
-    fprintf(stderr,
-            "NearHeapLimit: heap profiler is not enabled, no allocation "
-            "profile to report\n");
+    CaptureProfile(isolate, state, false);
   }
 
   if (!state->isMainThread) {
@@ -443,7 +456,7 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
 
   state->current_heap_extension_count = 0;
   state->automatic_heap_extension_size.reset();
-  state->profile.reset();
+  state->ResetProfile();
   state->export_command.clear();
   state->callback.Reset();
 
@@ -453,7 +466,6 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
   state->callbackMode = info[5].As<v8::Integer>()->Value();
   state->isMainThread = info[6].As<v8::Boolean>()->Value();
   state->automatic_heap_extension = info[7].As<v8::Boolean>()->Value();
-  state->InstallNearHeapLimitCallback();
   if (!info[4]->IsNullOrUndefined() && state->callbackMode != kNoCallback) {
     state->callback.Reset(Nan::To<v8::Function>(info[4]).ToLocalChecked());
   }
@@ -467,9 +479,11 @@ NAN_METHOD(HeapProfiler::MonitorOutOfMemory) {
     }
   }
 
-  if (!state->callback.IsEmpty() && (state->callbackMode & kAsyncCallback)) {
+  if (state->allocations ||
+      (!state->callback.IsEmpty() && (state->callbackMode & kAsyncCallback))) {
     state->RegisterAsyncCallback();
   }
+  state->InstallNearHeapLimitCallback();
 }
 
 void InterruptCallback(v8::Isolate* isolate, void* data) {
@@ -480,16 +494,28 @@ void InterruptCallback(v8::Isolate* isolate, void* data) {
   if (!state || !state->profile) {
     return;
   }
-  v8::Local<v8::Value> argv[1] = {
-      dd::TranslateAllocationProfile(state->profile.get())};
+  // Own the capture locally before translating: translation and the JS
+  // callback both allocate in the v8 heap and can re-enter NearHeapLimit,
+  // which overwrites these fields and would dangle or lose that capture.
+  auto profile = std::move(state->profile);
+  auto allocation_stats = std::move(state->profile_allocation_stats);
+  state->ResetProfile();
+
+  v8::Local<v8::Value> argv[1] = {dd::TranslateAllocationProfile(
+      profile.get(), allocation_stats ? &*allocation_stats : nullptr)};
   Nan::AsyncResource resource("NearHeapLimit");
   state->callback.Call(1, argv, &resource);
-  // Release the retained native profile once the callback has been invoked.
-  state->profile.reset();
 }
 
 void AsyncCallback(uv_async_t* handle) {
-  InterruptCallback(v8::Isolate::GetCurrent(), nullptr);
+  auto isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
+  auto state = PerIsolateData::For(isolate)->GetHeapProfilerState();
+  if (state && state->allocations) {
+    CaptureProfile(isolate, state, true);
+    return;
+  }
+  InterruptCallback(isolate, nullptr);
 }
 
 }  // namespace dd
