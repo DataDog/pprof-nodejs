@@ -21,6 +21,12 @@ updates:
       # Re-enable once typescript-eslint ships TS >=7 support.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # mocha 12 is ESM-only and requires Node ^20.19 || >=22.12, but we still
+      # build and test on Node 18. Its lib/cli/options.cjs require()s an ESM
+      # module, which fails with ERR_REQUIRE_ESM on Node 18.
+      # Re-enable once we drop Node 18 support.
+      - dependency-name: "mocha"
+        update-types: ["version-update:semver-major"]
     versioning-strategy: "increase"
     labels:
       - dependabot
