@@ -42,8 +42,6 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
 
 v8::Local<v8::Value> TranslateAllocationProfile(Node* node);
 v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node);
-v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node,
     const AllocationProfileNodeStatsMap* allocation_stats);
 
