@@ -109,6 +109,30 @@
                     },
                 }
             ],
+            ["address_sanitizer != 'true' and thread_sanitizer != 'true'", {
+                'xcode_settings': {
+                    'GCC_GENERATE_DEBUGGING_SYMBOLS': 'NO',
+                    'GCC_SYMBOLS_PRIVATE_EXTERN': 'YES', # -fvisibility=hidden
+                    'GCC_INLINES_ARE_PRIVATE_EXTERN': 'YES',
+                    'DEAD_CODE_STRIPPING': 'YES', # -dead_strip
+                },
+                "conditions": [
+                    ["OS == 'linux'", {
+                        "cflags": [
+                            "-fvisibility=hidden",
+                            "-ffunction-sections",
+                            "-fdata-sections",
+                        ],
+                        "cflags_cc": ["-fvisibility-inlines-hidden"],
+                        "ldflags": [ "-Wl,--gc-sections" ],
+                    }],
+                    ["OS == 'win'", {
+                        'msvs_settings': {
+                            'VCLinkerTool': { 'OptimizeReferences': 2 }, # /OPT:REF
+                        },
+                    }],
+                ],
+            }],
             ["address_sanitizer == 'true' and OS == 'mac'", {
                 'xcode_settings': {
                     'OTHER_CFLAGS+': [
