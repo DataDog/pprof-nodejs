@@ -171,11 +171,6 @@ std::shared_ptr<Node> TranslateAllocationProfileToCpp(
 }
 
 v8::Local<v8::Value> TranslateAllocationProfile(
-    v8::AllocationProfile::Node* node) {
-  return HeapProfileTranslator().TranslateAllocationProfile(node);
-}
-
-v8::Local<v8::Value> TranslateAllocationProfile(
     v8::AllocationProfile::Node* node,
     const AllocationProfileNodeStatsMap* allocation_stats) {
   return HeapProfileTranslator().TranslateAllocationProfile(node,
