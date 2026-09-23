@@ -901,40 +901,38 @@ void GetStoredAlsHash(const FunctionCallbackInfo<Value>& args) {
       Integer::New(isolate, otel_thread_ctx_nodejs_v1.als_identity_hash));
 }
 
-// V8 layout constants captured at addon-compile time from the same V8
-// headers Node bundles. Published via the discovery contract so an
-// out-of-process reader can decode V8's JSObject / internal hashmap
-// layout without doing its own V8-internal-symbol lookups for the
-// pointer-compression / sandbox state. Note that nothing published here
-// describes our own wrapper: internal field 0 points straight at the
-// record, so the reader needs no offset of ours to reach it.
+// The nodejs_v1 discovery schema does not publish V8's object layout; it
+// fixes it, presuming the V8 Node.js builds by default: 64-bit, pointer
+// compression off, sandbox off. These assertions check that presumption
+// against the V8 headers we are compiled with, so a build not matching
+// the schema will fail to compile.
+//
+// Each value the reader needs equals one of V8's public constants:
+//   tagged size (8)            kApiTaggedSize
+//   JSMap table offset (0x18)  kJSObjectHeaderSize, because JSCollection
+//                              adds a single `table` field to JSObject
+//                              (deps/v8/src/objects/js-collection.h)
+//   OrderedHashMap header      kFixedArrayHeaderSize, because
+//   size (0x10)                OrderedHashTable derives from FixedArray
+//                              (deps/v8/src/objects/ordered-hash-table.h)
+//   record slot offset (0x18)  kJSObjectHeaderSize plus
+//                              kEmbedderDataSlotExternalPointerOffset,
+//                              which is 0 without the sandbox: internal
+//                              field 0 then holds the raw record pointer
+static_assert(v8::internal::kApiTaggedSize == 8,
+              "nodejs_v1 assumes a V8 built without pointer compression");
+static_assert(v8::internal::Internals::kJSObjectHeaderSize == 0x18,
+              "unexpected V8 JSObject header size");
+static_assert(v8::internal::Internals::kFixedArrayHeaderSize == 0x10,
+              "unexpected V8 FixedArray header size");
 #if NODE_MAJOR_VERSION >= 22
-constexpr int JS_OBJECT_RECORD_OFFSET =
-    v8::internal::Internals::kJSObjectHeaderSize +
+// Node < 22 lacks this constant; the contract is unusable there anyway,
+// as it has no ContinuationPreservedEmbedderData either (see StoreAls).
+constexpr int kEmbedderDataSlotExternalPtrOffset =
     v8::internal::Internals::kEmbedderDataSlotExternalPointerOffset;
-#else
-// Node < 22 lacks kEmbedderDataSlotExternalPointerOffset. The discovery
-// contract isn't usable on these versions (no ContinuationPreservedEmbedderData
-// either — see StoreAls), so this value is published only to keep the
-// addon's exported surface consistent across Node majors. A would-be
-// reader cannot reach a live record through it.
-constexpr int JS_OBJECT_RECORD_OFFSET = 0;
+static_assert(kEmbedderDataSlotExternalPtrOffset == 0,
+              "nodejs_v1 assumes a V8 built without the sandbox");
 #endif
-constexpr int TAGGED_SIZE = v8::internal::kApiTaggedSize;
-
-// V8 JSMap layout: kTableOffset within the JSMap object holds a tagged
-// pointer to the backing OrderedHashMap table. Not exposed in V8's
-// public headers; kept in sync with
-// deps/v8/src/objects/js-collection.h (JSCollection::kTableOffset)
-// and the torque-generated JSCollection layout.
-constexpr int JS_MAP_TABLE_OFFSET = 0x18;
-
-// V8 OrderedHashMap layout: the on-heap table starts with a 16-byte
-// header before the element_count / deleted_element_count /
-// number_of_buckets fields. Not exposed in V8's public headers; kept in
-// sync with deps/v8/src/objects/ordered-hash-table.h
-// (OrderedHashTable base layout).
-constexpr int ORDERED_HASH_MAP_HEADER_SIZE = 0x10;
 
 }  // namespace
 
@@ -942,21 +940,6 @@ void OtelThreadCtx::Init(Local<Object> exports) {
   CtxWrap::Init(exports);
   NODE_SET_METHOD(exports, "otelThreadCtxStoreAls", StoreAls);
   NODE_SET_METHOD(exports, "otelThreadCtxGetStoredAlsHash", GetStoredAlsHash);
-
-  Isolate* isolate = Isolate::GetCurrent();
-  Local<Context> ctx = isolate->GetCurrentContext();
-  auto publish_int = [&](const char* name, int value) {
-    exports
-        ->Set(ctx,
-              String::NewFromUtf8(isolate, name).ToLocalChecked(),
-              Integer::New(isolate, value))
-        .FromJust();
-  };
-  publish_int("otelThreadCtxJsMapTableOffset", JS_MAP_TABLE_OFFSET);
-  publish_int("otelThreadCtxOrderedHashMapHeaderSize",
-              ORDERED_HASH_MAP_HEADER_SIZE);
-  publish_int("otelThreadCtxTaggedSize", TAGGED_SIZE);
-  publish_int("otelThreadCtxJsObjectRecordOffset", JS_OBJECT_RECORD_OFFSET);
 }
 
 }  // namespace dd

@@ -940,20 +940,9 @@ function captureBytes(opts: {
         const pca = getProcessContextAttributes(keys);
         strictAssert.equal(pca['threadlocal.schema_version'], 'nodejs_v1_dev');
         strictAssert.deepEqual(pca['threadlocal.attribute_key_map'], keys);
-        strictAssert.equal(pca['threadlocal.js_object_record_offset'], 0x18);
-        strictAssert.equal(pca['threadlocal.tagged_size'], 8);
-        strictAssert.equal(pca['threadlocal.js_map_table_offset'], 0x18);
-        strictAssert.equal(
-          pca['threadlocal.ordered_hash_map_header_size'],
-          0x10,
-        );
         strictAssert.deepEqual(Object.keys(pca).sort(), [
           'threadlocal.attribute_key_map',
-          'threadlocal.js_map_table_offset',
-          'threadlocal.js_object_record_offset',
-          'threadlocal.ordered_hash_map_header_size',
           'threadlocal.schema_version',
-          'threadlocal.tagged_size',
         ]);
       });
 
