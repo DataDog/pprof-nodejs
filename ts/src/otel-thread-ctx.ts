@@ -48,10 +48,6 @@ import {
 export interface ProcessContextAttributes {
   readonly 'threadlocal.schema_version': 'nodejs_v1_dev';
   readonly 'threadlocal.attribute_key_map': readonly string[];
-  readonly 'threadlocal.js_object_record_offset': number;
-  readonly 'threadlocal.tagged_size': number;
-  readonly 'threadlocal.js_map_table_offset': number;
-  readonly 'threadlocal.ordered_hash_map_header_size': number;
 }
 
 /**
@@ -142,23 +138,9 @@ interface Addon {
   threadContext: ThreadContextCtor;
   otelThreadCtxStoreAls(als: AsyncLocalStorage<ThreadContext>): void;
   otelThreadCtxGetStoredAlsHash(): number;
-  otelThreadCtxJsObjectRecordOffset: number;
-  otelThreadCtxTaggedSize: number;
-  otelThreadCtxJsMapTableOffset: number;
-  otelThreadCtxOrderedHashMapHeaderSize: number;
 }
 
 const SCHEMA_VERSION = 'nodejs_v1_dev';
-
-// V8 layout constants the addon captured from the V8 headers Node bundles.
-// On non-Linux these fall back to values matching Node's standard build
-// (no V8 pointer compression, no sandbox); the reader is Linux-only per
-// the OTEP anyway, so the fallbacks just keep processContextAttributes
-// consistent in shape.
-let JS_OBJECT_RECORD_OFFSET = 0x18;
-let TAGGED_SIZE = 8;
-let JS_MAP_TABLE_OFFSET = 0x18;
-let ORDERED_HASH_MAP_HEADER_SIZE = 0x10;
 
 /** {@inheritDoc ThreadContextCtor} */
 export let ThreadContext: ThreadContextCtor;
@@ -183,10 +165,6 @@ if (process.platform === 'linux') {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const findBinding = require('node-gyp-build');
   const addon: Addon = findBinding(join(__dirname, '..', '..'));
-  JS_OBJECT_RECORD_OFFSET = addon.otelThreadCtxJsObjectRecordOffset;
-  TAGGED_SIZE = addon.otelThreadCtxTaggedSize;
-  JS_MAP_TABLE_OFFSET = addon.otelThreadCtxJsMapTableOffset;
-  ORDERED_HASH_MAP_HEADER_SIZE = addon.otelThreadCtxOrderedHashMapHeaderSize;
 
   ThreadContext = addon.threadContext;
 
@@ -298,9 +276,5 @@ export function getProcessContextAttributes(
   return Object.freeze({
     'threadlocal.schema_version': SCHEMA_VERSION,
     'threadlocal.attribute_key_map': Object.freeze(keys.slice()),
-    'threadlocal.js_object_record_offset': JS_OBJECT_RECORD_OFFSET,
-    'threadlocal.tagged_size': TAGGED_SIZE,
-    'threadlocal.js_map_table_offset': JS_MAP_TABLE_OFFSET,
-    'threadlocal.ordered_hash_map_header_size': ORDERED_HASH_MAP_HEADER_SIZE,
   }) as ProcessContextAttributes;
 }
