@@ -11,13 +11,14 @@ const work = Number(process.env.WORK || '1000')
 const lines = Number(process.env.LINES || '32')
 const iterations = Number(process.env.ITERATIONS || '9')
 const warmup = Number(process.env.WARMUP || '3')
+const nonAsciiNames = process.env.NON_ASCII_NAMES === '1'
 
 function compileScript (scriptIndex) {
   const handlers = []
   const calls = []
 
   for (let i = 0; i < functionsPerScript; i++) {
-    const name = `handler_${scriptIndex}_${i}`
+    const name = `${nonAsciiNames ? '处理器' : 'handler'}_${scriptIndex}_${i}`
     const statements = Array.from({ length: lines }, (_, line) =>
       `for (let k = 0; k < ${work}; k++) total += Math.sqrt(k * n + ${i + line})`
     )
@@ -33,13 +34,13 @@ function compileScript (scriptIndex) {
   return new Script(`
     (() => {
       ${handlers.join('\n')}
-      return function run_${scriptIndex}(n) {
+      return function ${nonAsciiNames ? '运行' : 'run'}_${scriptIndex}(n) {
         let total = 0
         ${calls.join('\n')}
         return total
       }
     })()
-  `, { filename: `/opt/service/dist/modules/module-${scriptIndex}.js` })
+  `, { filename: `/opt/${nonAsciiNames ? '服务' : 'service'}/dist/modules/module-${scriptIndex}.js` })
     .runInThisContext()
 }
 
@@ -96,7 +97,11 @@ console.log(JSON.stringify({
   scripts: scriptCount,
   functionsPerScript,
   lines,
+  nonAsciiNames,
+  rounds,
+  work,
   iterations,
+  warmup,
   medianNodes: median(nodeCounts),
   medianStopMicros: median(stopMicros),
   medianNanosPerNode: median(nanosPerNode)

@@ -389,17 +389,21 @@ class TimeProfileTranslator : ProfileTranslator {
     for (int32_t i = 0; i < count; i++) {
       Set(children,
           index++,
-          TranslateLineNumbersTimeProfileNode(node, node->GetChild(i)));
+          TranslateLineNumbersTimeProfileNode(
+              name, scriptName, scriptId, node->GetChild(i)));
     };
 
     return children;
   }
 
   v8::Local<v8::Object> TranslateLineNumbersTimeProfileNode(
-      const v8::CpuProfileNode* parent, const v8::CpuProfileNode* node) {
-    return CreateTimeNode(parent->GetFunctionName(),
-                          parent->GetScriptResourceName(),
-                          NewInteger(parent->GetScriptId()),
+      v8::Local<v8::String> name,
+      v8::Local<v8::String> scriptName,
+      v8::Local<v8::Integer> scriptId,
+      const v8::CpuProfileNode* node) {
+    return CreateTimeNode(name,
+                          scriptName,
+                          scriptId,
                           NewInteger(node->GetLineNumber()),
                           NewInteger(node->GetColumnNumber()),
                           zero,
