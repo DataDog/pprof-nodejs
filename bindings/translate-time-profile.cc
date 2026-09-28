@@ -344,6 +344,8 @@ class TimeProfileTranslator : ProfileTranslator {
 
     unsigned int hitLineCount = node->GetHitLineCount();
     unsigned int hitCount = node->GetHitCount();
+    auto name = node->GetFunctionName();
+    auto scriptName = node->GetScriptResourceName();
     auto scriptId = NewInteger(node->GetScriptId());
     if (hitLineCount > 0) {
       std::vector<v8::CpuProfileNode::LineTick> entries(hitLineCount);
@@ -352,8 +354,8 @@ class TimeProfileTranslator : ProfileTranslator {
       for (const v8::CpuProfileNode::LineTick entry : entries) {
         Set(children,
             index++,
-            CreateTimeNode(node->GetFunctionName(),
-                           node->GetScriptResourceName(),
+            CreateTimeNode(name,
+                           scriptName,
                            scriptId,
                            NewInteger(entry.line),
 // V8 14+ (Node.js 25+) added column field to LineTick struct
@@ -372,8 +374,8 @@ class TimeProfileTranslator : ProfileTranslator {
       children = NewArray(count + 1);
       Set(children,
           index++,
-          CreateTimeNode(node->GetFunctionName(),
-                         node->GetScriptResourceName(),
+          CreateTimeNode(name,
+                         scriptName,
                          scriptId,
                          NewInteger(node->GetLineNumber()),
                          NewInteger(node->GetColumnNumber()),
