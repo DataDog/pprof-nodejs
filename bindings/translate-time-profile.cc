@@ -344,6 +344,8 @@ class TimeProfileTranslator : ProfileTranslator {
 
     unsigned int hitLineCount = node->GetHitLineCount();
     unsigned int hitCount = node->GetHitCount();
+    auto name = node->GetFunctionName();
+    auto scriptName = node->GetScriptResourceName();
     auto scriptId = NewInteger(node->GetScriptId());
     if (hitLineCount > 0) {
       std::vector<v8::CpuProfileNode::LineTick> entries(hitLineCount);
@@ -352,8 +354,8 @@ class TimeProfileTranslator : ProfileTranslator {
       for (const v8::CpuProfileNode::LineTick entry : entries) {
         Set(children,
             index++,
-            CreateTimeNode(node->GetFunctionName(),
-                           node->GetScriptResourceName(),
+            CreateTimeNode(name,
+                           scriptName,
                            scriptId,
                            NewInteger(entry.line),
 // V8 14+ (Node.js 25+) added column field to LineTick struct
@@ -372,8 +374,8 @@ class TimeProfileTranslator : ProfileTranslator {
       children = NewArray(count + 1);
       Set(children,
           index++,
-          CreateTimeNode(node->GetFunctionName(),
-                         node->GetScriptResourceName(),
+          CreateTimeNode(name,
+                         scriptName,
                          scriptId,
                          NewInteger(node->GetLineNumber()),
                          NewInteger(node->GetColumnNumber()),
@@ -387,17 +389,21 @@ class TimeProfileTranslator : ProfileTranslator {
     for (int32_t i = 0; i < count; i++) {
       Set(children,
           index++,
-          TranslateLineNumbersTimeProfileNode(node, node->GetChild(i)));
+          TranslateLineNumbersTimeProfileNode(
+              name, scriptName, scriptId, node->GetChild(i)));
     };
 
     return children;
   }
 
   v8::Local<v8::Object> TranslateLineNumbersTimeProfileNode(
-      const v8::CpuProfileNode* parent, const v8::CpuProfileNode* node) {
-    return CreateTimeNode(parent->GetFunctionName(),
-                          parent->GetScriptResourceName(),
-                          NewInteger(parent->GetScriptId()),
+      v8::Local<v8::String> name,
+      v8::Local<v8::String> scriptName,
+      v8::Local<v8::Integer> scriptId,
+      const v8::CpuProfileNode* node) {
+    return CreateTimeNode(name,
+                          scriptName,
+                          scriptId,
                           NewInteger(node->GetLineNumber()),
                           NewInteger(node->GetColumnNumber()),
                           zero,
