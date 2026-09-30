@@ -906,8 +906,13 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   // Cache the per-isolate undefined singleton's tagged address. Undefined
   // is a read-only-roots heap object, never moves, so a cached numeric
   // address is fine — no Global<> tracking needed.
+#if NODE_MAJOR_VERSION >= 22
   otel_thread_ctx_nodejs_v1.undefined_addr =
-      reinterpret_cast<v8::internal::Address>(*v8::Undefined(isolate));
+      v8::internal::ValueHelper::ValueAsAddress(*v8::Undefined(isolate));
+#else
+  // Unreachable from JS; nonzero for the cleanup-hook bookkeeping.
+  otel_thread_ctx_nodejs_v1.undefined_addr = 1;
+#endif
 
   // Write `cped_slot` last with signal fence + volatile. It is what a reader
   // tests before it dereferences anything, so publishing it after every other
