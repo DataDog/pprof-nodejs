@@ -78,6 +78,13 @@ export interface NormalizedSample {
   /** One value for each of {@link ProfileMetadata.sampleTypes}. */
   values: number[];
   labels: SampleLabel[];
+  /**
+   * Time at which the sample was taken, in nanoseconds since epoch (with
+   * microsecond precision). Only set on samples that represent a single
+   * observation with a known time, i.e. time profile samples for a context.
+   * Undefined for aggregated samples.
+   */
+  timestamp?: bigint;
 }
 
 export interface SampleType {
@@ -146,6 +153,15 @@ export interface TimeProfileNormalizerOptions {
    */
   recomputeSamplingInterval?: boolean;
   generateLabels?: GenerateTimeLabelsFunction;
+  /**
+   * Emit a separate, timestamped sample for every context, even when it has
+   * no labels. By default, the hits and CPU time of contexts without labels
+   * are aggregated into a single sample per node, without a timestamp. Set
+   * this when every sample should have a timestamp, e.g. for OTel profiles,
+   * whose samples should all have the same shape. Hits without a context
+   * (e.g. when contexts are not collected) are still aggregated.
+   */
+  samplePerContext?: boolean;
 }
 
 export interface HeapProfileNormalizerOptions {
@@ -163,7 +179,11 @@ export interface HeapProfileNormalizerOptions {
 /**
  * Emits a sample for the node currently being visited.
  */
-type EmitSample = (values: number[], labels: SampleLabel[]) => void;
+type EmitSample = (
+  values: number[],
+  labels: SampleLabel[],
+  timestamp?: bigint,
+) => void;
 
 /**
  * Converts a node into zero or more samples and passes them to emit.
@@ -268,8 +288,13 @@ function visitTree<T extends ProfileNode>(
   const rootStacks = new Map<number, number>();
 
   let currentStack = -1;
-  const emit: EmitSample = (values, labels) => {
-    visitor.sample({stackId: getStackId(currentStack), values, labels});
+  const emit: EmitSample = (values, labels, timestamp) => {
+    visitor.sample({
+      stackId: getStackId(currentStack),
+      values,
+      labels,
+      timestamp,
+    });
   };
 
   const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
@@ -497,7 +522,12 @@ export function visitTimeProfile(
   visitor: ProfileVisitor,
   options: TimeProfileNormalizerOptions,
 ): VisitResult {
-  const {sourceMapper, recomputeSamplingInterval, generateLabels} = options;
+  const {
+    sourceMapper,
+    recomputeSamplingInterval,
+    generateLabels,
+    samplePerContext,
+  } = options;
   let intervalMicros = options.intervalMicros;
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -546,7 +576,7 @@ export function visitTimeProfile(
           ? generateLabels({node, context})
           : (context.context ?? {}),
       );
-      if (labels.length > 0) {
+      if (labels.length > 0 || samplePerContext) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
         // have zero hit count (since they do not count as wall time) and should not be assigned any
         // wall time. Also, `(idle)` nodes should be assigned zero wall time.
@@ -555,7 +585,12 @@ export function visitTimeProfile(
         if (prof.hasCpuTime) {
           values.push(context.cpuTime ?? 0);
         }
-        emit(values, labels);
+        // Context timestamps are in microseconds; 0 marks a synthetic context.
+        emit(
+          values,
+          labels,
+          context.timestamp ? BigInt(context.timestamp) * 1000n : undefined,
+        );
         unlabelledHits--;
       } else if (prof.hasCpuTime) {
         unlabelledCpuTime += context.cpuTime ?? 0;
