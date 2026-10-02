@@ -50,7 +50,7 @@ const assert = require('assert');
 function describeNormalizedSamples(prof: NormalizedProfile): string[] {
   return prof.samples.map(s =>
     JSON.stringify({
-      stack: s.stack.map(i => frameFunctionName(prof.frames[i])),
+      stack: prof.stacks[s.stackId].map(i => frameFunctionName(prof.frames[i])),
       values: s.values,
       labels: s.labels.map(([k, v]) => [k, String(v)]),
     }),
@@ -177,7 +177,9 @@ describe('profile-normalizer', () => {
       prof.nonJSThreadsCpuTime = 500;
       const normalized = normalizeTimeProfile(prof, {intervalMicros: 1000});
       const stacks = normalized.samples.map(s =>
-        s.stack.map(i => frameFunctionName(normalized.frames[i])),
+        normalized.stacks[s.stackId].map(i =>
+          frameFunctionName(normalized.frames[i]),
+        ),
       );
       assert.deepStrictEqual(stacks.sort(), [
         [GARBAGE_COLLECTION_FUNCTION_NAME, 'Node.js'],
@@ -186,7 +188,8 @@ describe('profile-normalizer', () => {
       ]);
       const nonJS = normalized.samples.find(
         s =>
-          normalized.frames[s.stack[0]].name === NON_JS_THREADS_FUNCTION_NAME,
+          normalized.frames[normalized.stacks[s.stackId][0]].name ===
+          NON_JS_THREADS_FUNCTION_NAME,
       )!;
       assert.deepStrictEqual(nonJS.values, [0, 0, 500]);
     });
@@ -235,9 +238,10 @@ describe('profile-normalizer', () => {
   });
 
   describe('visitTimeProfile', () => {
-    it('should deliver metadata first and each frame once, before its samples', () => {
+    it('should deliver metadata first, and frames and stacks once, before use', () => {
       const events: string[] = [];
-      const seen = new Set<number>();
+      const frameIds = new Set<number>();
+      const stackIds = new Set<number>();
       let nextId = 100;
       const visitor: ProfileVisitor = {
         metadata: () => {
@@ -246,14 +250,24 @@ describe('profile-normalizer', () => {
         frame: () => {
           events.push('frame');
           const id = nextId++;
-          seen.add(id);
+          frameIds.add(id);
+          return id;
+        },
+        stack: ids => {
+          events.push('stack');
+          for (const id of ids) {
+            assert.ok(frameIds.has(id), `frame ${id} delivered before stack`);
+          }
+          const id = nextId++;
+          stackIds.add(id);
           return id;
         },
         sample: s => {
           events.push('sample');
-          for (const id of s.stack) {
-            assert.ok(seen.has(id), `frame ${id} delivered before sample`);
-          }
+          assert.ok(
+            stackIds.has(s.stackId),
+            `stack ${s.stackId} delivered before sample`,
+          );
         },
       };
       const result = visitTimeProfile(v8TimeProfile, visitor, {
@@ -263,6 +277,37 @@ describe('profile-normalizer', () => {
       assert.strictEqual(events.lastIndexOf('metadata'), 0);
       assert.ok(events.includes('sample'));
       assert.strictEqual(result.hasMissingMapFiles, false);
+    });
+
+    it('should deliver a stack per distinct frame sequence that has samples', () => {
+      // Two sibling nodes resolving to the same frame share a stack, and the
+      // sample-less "parent" node's stack is never delivered.
+      const prof = makeTimeProfile([
+        makeLeaf('parent', {
+          hitCount: 0,
+          children: [makeLeaf('foo', {scriptId: 2}), makeLeaf('bar')],
+        }),
+        makeLeaf('parent', {
+          hitCount: 0,
+          children: [makeLeaf('foo', {scriptId: 2})],
+        }),
+      ]);
+      const normalized = normalizeTimeProfile(prof, {intervalMicros: 1000});
+      const stacks = normalized.stacks.map(s =>
+        s.map(i => frameFunctionName(normalized.frames[i])),
+      );
+      assert.deepStrictEqual(stacks.sort(), [
+        ['bar', 'parent'],
+        ['foo', 'parent'],
+      ]);
+      assert.strictEqual(normalized.samples.length, 3);
+      const fooStack = normalized.stacks.findIndex(
+        s => normalized.frames[s[0]].name === 'foo',
+      );
+      assert.strictEqual(
+        normalized.samples.filter(s => s.stackId === fooStack).length,
+        2,
+      );
     });
   });
 

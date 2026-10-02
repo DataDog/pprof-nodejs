@@ -117,6 +117,7 @@ function serialize(
   const stringTable = new StringTable();
   const samples: Sample[] = [];
   const locations: Location[] = [];
+  const stacks: number[][] = [];
   const functions: Function[] = [];
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
@@ -148,10 +149,11 @@ function serialize(
       locations.push(new Location({id, line: [getLine(frame)]}));
       return id;
     },
+    stack: frameIds => stacks.push(frameIds) - 1,
     sample: sample => {
       samples.push(
         new Sample({
-          locationId: sample.stack,
+          locationId: stacks[sample.stackId],
           value: sample.values,
           label: dedupLabels(buildLabels(sample.labels)),
         }),

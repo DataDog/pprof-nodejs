@@ -73,12 +73,8 @@ export type SampleLabelValue = string | number | bigint;
 export type SampleLabel = [key: string, value: SampleLabelValue];
 
 export interface NormalizedSample {
-  /**
-   * The stack, leaf first, as the frame IDs returned by
-   * {@link ProfileVisitor.frame}. Samples of the same profile node share the
-   * same array instance.
-   */
-  stack: number[];
+  /** The stack, as the ID returned by {@link ProfileVisitor.stack}. */
+  stackId: number;
   /** One value for each of {@link ProfileMetadata.sampleTypes}. */
   values: number[];
   labels: SampleLabel[];
@@ -100,15 +96,27 @@ export interface ProfileMetadata {
 
 /**
  * Receives a normalized profile. Calls arrive in this order: metadata() once,
- * then frame() and sample() interleaved, with each frame delivered exactly
- * once and before the first sample that references it.
+ * then frame(), stack() and sample() interleaved. Each distinct frame and
+ * stack is delivered exactly once, before the first stack or sample that
+ * references it. Only stacks that have samples are delivered.
+ *
+ * All samples of a profile tree node are delivered consecutively. A stack ID
+ * normally belongs to a single node, but can recur later if two nodes resolve
+ * to the same frames (e.g. when source maps map distinct generated locations
+ * to the same original location).
  */
 export interface ProfileVisitor {
   metadata(metadata: ProfileMetadata): void;
   /**
-   * @returns the ID by which samples will refer to this frame in their stacks.
+   * @returns the ID by which stacks will refer to this frame.
    */
   frame(frame: Frame): number;
+  /**
+   * @param frameIds - the stack, leaf first, as IDs returned by frame(). The
+   * array is not reused by the caller, so the visitor may retain it.
+   * @returns the ID by which samples will refer to this stack.
+   */
+  stack(frameIds: number[]): number;
   sample(sample: NormalizedSample): void;
 }
 
@@ -120,7 +128,9 @@ export interface VisitResult {
 /** A normalized profile collected into arrays. */
 export interface NormalizedProfile extends ProfileMetadata, VisitResult {
   frames: Frame[];
-  /** Stacks hold indices into {@link frames}. */
+  /** Stacks, leaf first, as indices into {@link frames}. */
+  stacks: number[][];
+  /** Samples' stack IDs are indices into {@link stacks}. */
   samples: NormalizedSample[];
 }
 
@@ -149,20 +159,21 @@ export interface HeapProfileNormalizerOptions {
 }
 
 /**
- * Converts a node into zero or more samples and passes them to the visitor.
+ * Emits a sample for the node currently being visited.
  */
-type EmitSamples<T extends ProfileNode> = (
-  node: T,
-  stack: number[],
-  visitor: ProfileVisitor,
-) => void;
+type EmitSample = (values: number[], labels: SampleLabel[]) => void;
 
 /**
- * Profile node and stack trace to that node.
+ * Converts a node into zero or more samples and passes them to emit.
+ */
+type EmitSamples<T extends ProfileNode> = (node: T, emit: EmitSample) => void;
+
+/**
+ * Profile node and the interned stack of its parent (-1 for top level nodes).
  */
 interface Entry<T extends ProfileNode> {
   node: T;
-  stack: number[];
+  parentStack: number;
 }
 
 function isGeneratedLocation(
@@ -220,7 +231,12 @@ function requireAllocationStat(
 
 /**
  * Walks the V8 profile tree depth first, delivering each distinct frame and
- * the samples emitted for each node to the visitor.
+ * stack, and the samples emitted for each node to the visitor.
+ *
+ * Stacks are interned by prefix: a node's stack is identified by its parent's
+ * stack and its own frame ID, so stacks with equal frames get the same ID
+ * without comparing whole arrays. A stack is only materialized and delivered
+ * to the visitor when its first sample is emitted.
  */
 function visitTree<T extends ProfileNode>(
   root: T,
@@ -229,12 +245,28 @@ function visitTree<T extends ProfileNode>(
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
 ): VisitResult {
-  const frameIdMap = new Map<string, number>();
+  // Interned frames: internal frame index by key, and the visitor's frame
+  // ID for each internal frame index.
+  const frameIndexMap = new Map<string, number>();
+  const frameIds: number[] = [];
   let hasMissingMapFiles = false;
+
+  // Interned stacks, by internal stack index: the parent stack index (-1 for
+  // none), the internal frame index, and the visitor's stack ID (undefined
+  // until delivered).
+  const stackIndexMap = new Map<number, number>();
+  const stackParents: number[] = [];
+  const stackFrames: number[] = [];
+  const stackIds: Array<number | undefined> = [];
+
+  let currentStack = -1;
+  const emit: EmitSample = (values, labels) => {
+    visitor.sample({stackId: getStackId(currentStack), values, labels});
+  };
 
   const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
     node: n,
-    stack: [],
+    parentStack: -1,
   }));
   while (entries.length > 0) {
     const entry = entries.pop()!;
@@ -248,17 +280,48 @@ function visitTree<T extends ProfileNode>(
     if (ignoreSamplesPath && scriptName.indexOf(ignoreSamplesPath) > -1) {
       continue;
     }
-    const stack = entry.stack;
-    stack.unshift(getFrameId(node, scriptName));
-    emitSamples(node, stack, visitor);
+    const stack = internStack(
+      entry.parentStack,
+      getFrameIndex(node, scriptName),
+    );
+    currentStack = stack;
+    emitSamples(node, emit);
     for (const child of node.children as T[]) {
-      entries.push({node: child, stack: stack.slice()});
+      entries.push({node: child, parentStack: stack});
     }
   }
 
   return {hasMissingMapFiles};
 
-  function getFrameId(node: ProfileNode, scriptName: string): number {
+  function internStack(parent: number, frame: number): number {
+    // Unique while there are fewer than 2^26 frames and 2^27 stacks, so the
+    // key stays below Number.MAX_SAFE_INTEGER.
+    const key = (parent + 1) * 0x4000000 + frame;
+    let stack = stackIndexMap.get(key);
+    if (stack === undefined) {
+      stack = stackParents.length;
+      stackParents.push(parent);
+      stackFrames.push(frame);
+      stackIds.push(undefined);
+      stackIndexMap.set(key, stack);
+    }
+    return stack;
+  }
+
+  function getStackId(stack: number): number {
+    let id = stackIds[stack];
+    if (id === undefined) {
+      const stackFrameIds: number[] = [];
+      for (let s = stack; s !== -1; s = stackParents[s]) {
+        stackFrameIds.push(frameIds[stackFrames[s]]);
+      }
+      id = visitor.stack(stackFrameIds);
+      stackIds[stack] = id;
+    }
+    return id;
+  }
+
+  function getFrameIndex(node: ProfileNode, scriptName: string): number {
     let loc: SourceLocation = {
       file: scriptName || '',
       line: node.lineNumber,
@@ -279,19 +342,22 @@ function visitTree<T extends ProfileNode>(
     // the key unambiguous.
     const file = loc.file || '';
     const keyStr = `${node.scriptId}:${loc.line}:${loc.column}:${loc.missingMapFile ? 1 : 0}:${file.length}:${file}:${loc.name}`;
-    let id = frameIdMap.get(keyStr);
-    if (id === undefined) {
-      id = visitor.frame({
-        name: loc.name,
-        file,
-        line: loc.line,
-        column: loc.column,
-        scriptId: node.scriptId,
-        missingMapFile: loc.missingMapFile === true,
-      });
-      frameIdMap.set(keyStr, id);
+    let index = frameIndexMap.get(keyStr);
+    if (index === undefined) {
+      index = frameIds.length;
+      frameIds.push(
+        visitor.frame({
+          name: loc.name,
+          file,
+          line: loc.line,
+          column: loc.column,
+          scriptId: node.scriptId,
+          missingMapFile: loc.missingMapFile === true,
+        }),
+      );
+      frameIndexMap.set(keyStr, index);
     }
-    return id;
+    return index;
   }
 }
 
@@ -429,8 +495,7 @@ export function visitTimeProfile(
 
   const emitTimeSamples: EmitSamples<TimeProfileNode> = (
     node: TimeProfileNode,
-    stack: number[],
-    visitor: ProfileVisitor,
+    emit: EmitSample,
   ) => {
     let unlabelledHits = node.hitCount;
     let unlabelledCpuTime = 0;
@@ -450,7 +515,7 @@ export function visitTimeProfile(
         if (prof.hasCpuTime) {
           values.push(context.cpuTime ?? 0);
         }
-        visitor.sample({stack, values, labels});
+        emit(values, labels);
         unlabelledHits--;
       } else if (prof.hasCpuTime) {
         unlabelledCpuTime += context.cpuTime ?? 0;
@@ -465,7 +530,7 @@ export function visitTimeProfile(
       if (prof.hasCpuTime) {
         values.push(unlabelledCpuTime);
       }
-      visitor.sample({stack, values, labels: toSampleLabels(labels)});
+      emit(values, toSampleLabels(labels));
     }
   };
 
@@ -514,8 +579,7 @@ export function visitHeapProfile(
     AllocationProfileNode | AllocationProfileNodeWithStats
   > = (
     node: AllocationProfileNode | AllocationProfileNodeWithStats,
-    stack: number[],
-    visitor: ProfileVisitor,
+    emit: EmitSample,
   ) => {
     if (node.allocations.length === 0) {
       return;
@@ -527,15 +591,14 @@ export function visitHeapProfile(
       // Live heap only
       if (!allocations) {
         const heapAllocation = alloc as Allocation;
-        visitor.sample({
-          stack,
-          values: [
+        emit(
+          [
             heapAllocation.count,
             heapAllocation.sizeBytes * heapAllocation.count,
           ],
           labels,
           // TODO: add tag for allocation size
-        });
+        );
         continue;
       }
 
@@ -556,12 +619,11 @@ export function visitHeapProfile(
         stats.allocSpaceBytes,
         'allocSpaceBytes',
       );
-      visitor.sample({
-        stack,
-        values: [inuseObjects, allocObjects, inuseSpaceBytes, allocSpaceBytes],
+      emit(
+        [inuseObjects, allocObjects, inuseSpaceBytes, allocSpaceBytes],
         labels,
         // TODO: add tag for allocation size
-      });
+      );
     }
   };
 
@@ -579,17 +641,19 @@ function collect(
 ): NormalizedProfile {
   let metadata: ProfileMetadata | undefined;
   const frames: Frame[] = [];
+  const stacks: number[][] = [];
   const samples: NormalizedSample[] = [];
   const {hasMissingMapFiles} = visit({
     metadata: m => {
       metadata = m;
     },
     frame: f => frames.push(f) - 1,
+    stack: s => stacks.push(s) - 1,
     sample: s => {
       samples.push(s);
     },
   });
-  return {...metadata!, frames, samples, hasMissingMapFiles};
+  return {...metadata!, frames, stacks, samples, hasMissingMapFiles};
 }
 
 /**
