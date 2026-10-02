@@ -151,6 +151,15 @@ export interface TimeProfileNormalizerOptions {
    */
   recomputeSamplingInterval?: boolean;
   generateLabels?: GenerateTimeLabelsFunction;
+  /**
+   * Emit a separate, timestamped sample for every context, even when it has
+   * no labels. By default, the hits and CPU time of contexts without labels
+   * are aggregated into a single sample per node, without a timestamp. Set
+   * this when every sample should have a timestamp, e.g. for OTel profiles,
+   * whose samples should all have the same shape. Hits without a context
+   * (e.g. when contexts are not collected) are still aggregated.
+   */
+  samplePerContext?: boolean;
 }
 
 export interface HeapProfileNormalizerOptions {
@@ -473,7 +482,12 @@ export function visitTimeProfile(
   visitor: ProfileVisitor,
   options: TimeProfileNormalizerOptions,
 ): VisitResult {
-  const {sourceMapper, recomputeSamplingInterval, generateLabels} = options;
+  const {
+    sourceMapper,
+    recomputeSamplingInterval,
+    generateLabels,
+    samplePerContext,
+  } = options;
   let intervalMicros = options.intervalMicros;
   // If requested, recompute sampling interval from profile duration and total number of hits,
   // since profile duration should be #hits x interval.
@@ -522,7 +536,7 @@ export function visitTimeProfile(
           ? generateLabels({node, context})
           : (context.context ?? {}),
       );
-      if (labels.length > 0) {
+      if (labels.length > 0 || samplePerContext) {
         // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
         // have zero hit count (since they do not count as wall time) and should not be assigned any
         // wall time. Also, `(idle)` nodes should be assigned zero wall time.

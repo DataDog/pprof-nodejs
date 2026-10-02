@@ -218,6 +218,52 @@ describe('profile-normalizer', () => {
       );
     });
 
+    it('should emit a timestamped sample per context with samplePerContext', () => {
+      const prof = makeTimeProfile([
+        makeLeaf('(idle)', {
+          hitCount: 2,
+          contexts: [
+            {context: {a: 'x'}, timestamp: 1n, cpuTime: 10},
+            {context: {}, timestamp: 2n, cpuTime: 20},
+          ],
+        }),
+        makeLeaf('foo', {
+          scriptId: 2,
+          // One more hit than contexts: that one stays aggregated.
+          hitCount: 3,
+          contexts: [
+            {context: {}, timestamp: 3n, cpuTime: 30},
+            {context: {}, timestamp: 4n, cpuTime: 40},
+          ],
+        }),
+      ]);
+      const describe = (p: NormalizedProfile) =>
+        p.samples.map(s => [
+          frameFunctionName(p.frames[p.stacks[s.stackId][0]]),
+          s.values,
+          s.labels,
+          s.timestamp,
+        ]);
+      const perContext = normalizeTimeProfile(prof, {
+        intervalMicros: 1000,
+        samplePerContext: true,
+      });
+      assert.deepStrictEqual(describe(perContext), [
+        ['foo', [1, 1000000, 30], [], 3000n],
+        ['foo', [1, 1000000, 40], [], 4000n],
+        ['foo', [1, 1000000, 0], [], undefined],
+        ['(idle)', [1, 0, 10], [['a', 'x']], 1000n],
+        ['(idle)', [1, 0, 20], [], 2000n],
+      ]);
+      // Totals match the default, aggregating mode.
+      const aggregated = normalizeTimeProfile(prof, {intervalMicros: 1000});
+      assert.deepStrictEqual(describe(aggregated), [
+        ['foo', [3, 3000000, 70], [], undefined],
+        ['(idle)', [1, 0, 10], [['a', 'x']], 1000n],
+        ['(idle)', [1, 0, 20], [], undefined],
+      ]);
+    });
+
     it('should pass the context to generateLabels', () => {
       const context = {context: {}, timestamp: 42n};
       const prof = makeTimeProfile([makeLeaf('foo', {contexts: [context]})]);
