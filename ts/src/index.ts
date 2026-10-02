@@ -29,6 +29,7 @@ export {
 export {
   Frame,
   frameFunctionName,
+  HeapProfileNormalizerOptions,
   NormalizedProfile,
   NormalizedSample,
   normalizeHeapProfile,
@@ -38,6 +39,7 @@ export {
   SampleLabel,
   SampleLabelValue,
   SampleType,
+  TimeProfileNormalizerOptions,
   visitHeapProfile,
   visitTimeProfile,
   VisitResult,

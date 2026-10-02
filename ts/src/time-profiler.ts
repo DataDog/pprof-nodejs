@@ -24,7 +24,11 @@ import {
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
 } from './profile-serializer';
-import {NormalizedProfile, normalizeTimeProfile} from './profile-normalizer';
+import {
+  NormalizedProfile,
+  normalizeTimeProfile,
+  TimeProfileNormalizerOptions,
+} from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   TimeProfiler,
@@ -198,14 +202,17 @@ export function stop(
  */
 export function stopNormalized(
   restart = false,
-  generateLabels?: GenerateTimeLabelsFunction,
+  options: Pick<
+    TimeProfileNormalizerOptions,
+    'generateLabels' | 'samplePerContext'
+  > = {},
 ): NormalizedProfile {
   return stopAndProcess(restart, profile =>
     normalizeTimeProfile(profile, {
+      ...options,
       intervalMicros: gIntervalMicros,
       sourceMapper: gSourceMapper,
       recomputeSamplingInterval: true,
-      generateLabels,
     }),
   );
 }
