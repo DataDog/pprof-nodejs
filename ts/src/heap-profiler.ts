@@ -28,6 +28,7 @@ import {
   DEFAULT_COLUMN_NUMBERS,
   serializeHeapProfile,
 } from './profile-serializer';
+import {NormalizedProfile, normalizeHeapProfile} from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -103,6 +104,31 @@ export function profile(
   );
 }
 
+/**
+ * Collects a profile and returns it normalized into a format-neutral
+ * representation. Throws if heap profiler is not enabled.
+ */
+export function normalizedProfile(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction,
+): NormalizedProfile {
+  return collectProfile(root => {
+    const startTimeNanos = Date.now() * 1000 * 1000;
+    return normalizeHeapProfile(
+      addExternalMemoryNode(root, startedWithAllocations),
+      {
+        startTimeNanos,
+        intervalBytes: heapIntervalBytes,
+        ignoreSamplesPath: ignoreSamplePath,
+        sourceMapper,
+        generateLabels,
+        allocations: startedWithAllocations,
+      },
+    );
+  });
+}
+
 function collectProfile<T>(
   processProfile: (
     root: AllocationProfileNode | AllocationProfileNodeWithStats,
@@ -135,47 +161,8 @@ export function convertProfile(
 ): Profile {
   const allocations = startedWithAllocations;
   const startTimeNanos = Date.now() * 1000 * 1000;
-  // Add node for external memory usage.
-  // Current type definitions do not have external.
-  // TODO: remove any once type definition is updated to include external.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const {external}: {external: number} = process.memoryUsage() as any;
-  let root: AllocationProfileNode | AllocationProfileNodeWithStats;
-  if (external > 0) {
-    if (allocations) {
-      const externalNode: AllocationProfileNodeWithStats = {
-        name: '(external)',
-        scriptName: '',
-        children: [],
-        allocations: [
-          {
-            inuseObjects: 1,
-            inuseSpaceBytes: external,
-            allocObjects: 1,
-            allocSpaceBytes: external,
-          },
-        ],
-      };
-      const allocationRoot = rootNode as AllocationProfileNodeWithStats;
-      root = {
-        ...allocationRoot,
-        children: [...allocationRoot.children, externalNode],
-      };
-    } else {
-      const externalNode: AllocationProfileNode = {
-        name: '(external)',
-        scriptName: '',
-        children: [],
-        allocations: [{sizeBytes: external, count: 1}],
-      };
-      const heapRoot = rootNode as AllocationProfileNode;
-      root = {...heapRoot, children: [...heapRoot.children, externalNode]};
-    }
-  } else {
-    root = rootNode;
-  }
   return serializeHeapProfile(
-    root,
+    addExternalMemoryNode(rootNode, allocations),
     startTimeNanos,
     heapIntervalBytes,
     ignoreSamplePath,
@@ -184,6 +171,51 @@ export function convertProfile(
     allocations,
     columnNumbers,
   );
+}
+
+/**
+ * Returns the profile with a node for external memory usage added under the
+ * root, if there is any external memory. Does not modify the input.
+ */
+function addExternalMemoryNode(
+  rootNode: AllocationProfileNode | AllocationProfileNodeWithStats,
+  allocations: boolean,
+): AllocationProfileNode | AllocationProfileNodeWithStats {
+  // Current type definitions do not have external.
+  // TODO: remove any once type definition is updated to include external.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const {external}: {external: number} = process.memoryUsage() as any;
+  if (external <= 0) {
+    return rootNode;
+  }
+  if (allocations) {
+    const externalNode: AllocationProfileNodeWithStats = {
+      name: '(external)',
+      scriptName: '',
+      children: [],
+      allocations: [
+        {
+          inuseObjects: 1,
+          inuseSpaceBytes: external,
+          allocObjects: 1,
+          allocSpaceBytes: external,
+        },
+      ],
+    };
+    const allocationRoot = rootNode as AllocationProfileNodeWithStats;
+    return {
+      ...allocationRoot,
+      children: [...allocationRoot.children, externalNode],
+    };
+  }
+  const externalNode: AllocationProfileNode = {
+    name: '(external)',
+    scriptName: '',
+    children: [],
+    allocations: [{sizeBytes: external, count: 1}],
+  };
+  const heapRoot = rootNode as AllocationProfileNode;
+  return {...heapRoot, children: [...heapRoot.children, externalNode]};
 }
 
 /**

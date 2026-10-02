@@ -536,6 +536,19 @@ describe('Time Profiler', () => {
       sinon.assert.calledOnce(timeProfilerStub.stop);
     });
 
+    it('should return a normalized profile matching the serialized one from stopNormalized', () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      const normalized = time.stopNormalized();
+      assert.ok(!time.isStarted());
+      assert.strictEqual(normalized.samples.length, timeProfile.sample.length);
+      assert.strictEqual(normalized.frames.length, timeProfile.location.length);
+      assert.strictEqual(normalized.period, timeProfile.period);
+      assert.deepStrictEqual(
+        normalized.samples.map(s => s.values),
+        timeProfile.sample.map(s => s.value),
+      );
+    });
+
     it('should serialize with the source mapper still set when stopping', () => {
       // Regression test: stop() used to tear down the profiler state (via
       // handleStopNoRestart, which clears gSourceMapper) *before* serializing,
