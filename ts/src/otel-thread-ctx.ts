@@ -138,9 +138,14 @@ interface Addon {
   threadContext: ThreadContextCtor;
   otelThreadCtxStoreAls(als: AsyncLocalStorage<ThreadContext>): void;
   otelThreadCtxGetStoredAlsHash(): number;
+  otelThreadCtxRecordSlotOffsetHolds: boolean;
 }
 
 const SCHEMA_VERSION = 'nodejs_v1_dev';
+
+// Why this process can't honor the schema, if it can't. Only meaningful on
+// Linux, the one platform the reader contract covers.
+let whyUnpublishable: () => string | undefined = () => undefined;
 
 /** {@inheritDoc ThreadContextCtor} */
 export let ThreadContext: ThreadContextCtor;
@@ -162,20 +167,29 @@ export let clearContext: () => void;
 export let _currentRecordBytes: () => Uint8Array | undefined = () => undefined;
 
 if (process.platform === 'linux') {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const findBinding = require('node-gyp-build');
   const addon: Addon = findBinding(join(__dirname, '..', '..'));
 
   ThreadContext = addon.threadContext;
 
+  whyUnpublishable = () => {
+    if (!isAsyncContextFrameActive()) {
+      return `async_context_frame support is unavailable: ${asyncContextFrameHint()}`;
+    }
+    if (!addon.otelThreadCtxRecordSlotOffsetHolds) {
+      return 'V8 does not place internal fields where the addon was built to expect them';
+    }
+    return undefined;
+  };
+
   let als: AsyncLocalStorage<ThreadContext> | undefined;
 
   function ensureHook(): AsyncLocalStorage<ThreadContext> {
     if (als) return als;
-    if (!isAsyncContextFrameActive()) {
+    const reason = whyUnpublishable();
+    if (reason) {
       throw new Error(
-        'otel thread-ctx writer requires async_context_frame support, which is ' +
-          `unavailable: ${asyncContextFrameHint()}.`,
+        `otel thread-ctx writer can't publish on this Node: ${reason}.`,
       );
     }
     als = new AsyncLocalStorage<ThreadContext>();
@@ -256,6 +270,11 @@ if (process.platform === 'linux') {
 export function getProcessContextAttributes(
   keys: string[],
 ): ProcessContextAttributes {
+  // A reader would find nothing or mis-walk, so don't declare the schema.
+  const reason = whyUnpublishable();
+  if (reason) {
+    throw new Error(`can't declare ${SCHEMA_VERSION} on this Node: ${reason}.`);
+  }
   if (!Array.isArray(keys)) {
     throw new TypeError('keys must be an array of attribute names');
   }
