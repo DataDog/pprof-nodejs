@@ -24,7 +24,24 @@ export {
   TimeProfileNode,
   ProfileNode,
   LabelSet,
+  TimeProfile,
 } from './v8-types';
+export {
+  Frame,
+  frameFunctionName,
+  NormalizedProfile,
+  NormalizedSample,
+  normalizeHeapProfile,
+  normalizeTimeProfile,
+  ProfileMetadata,
+  ProfileVisitor,
+  SampleLabel,
+  SampleLabelValue,
+  SampleType,
+  visitHeapProfile,
+  visitTimeProfile,
+  VisitResult,
+} from './profile-normalizer';
 
 export {HeapLimitExtensionSize} from './heap-profiler';
 
@@ -37,6 +54,8 @@ export const time = {
   profile: timeProfiler.profile,
   start: timeProfiler.start,
   stop: timeProfiler.stop,
+  stopNormalized: timeProfiler.stopNormalized,
+  stopRaw: timeProfiler.stopRaw,
   profileV2: timeProfiler.profileV2,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
@@ -54,6 +73,7 @@ export const heap = {
   stop: heapProfiler.stop,
   profile: heapProfiler.profile,
   profileV2: heapProfiler.profileV2,
+  normalizedProfile: heapProfiler.normalizedProfile,
   convertProfile: heapProfiler.convertProfile,
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,
