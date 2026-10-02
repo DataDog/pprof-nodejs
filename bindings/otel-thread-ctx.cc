@@ -48,6 +48,24 @@
 #include <new>
 #include <vector>
 
+// Byte offset, within an object created from an API template such as
+// ThreadContext's, of the pointer stored in internal field 0. Different
+// in some Node.js versions.
+#if NODE_MAJOR_VERSION >= 23
+constexpr int kRecordSlotOffset =
+    v8::internal::Internals::kJSAPIObjectWithEmbedderSlotsHeaderSize +
+    v8::internal::Internals::kEmbedderDataSlotExternalPointerOffset;
+#elif NODE_MAJOR_VERSION >= 22
+constexpr int kRecordSlotOffset =
+    v8::internal::Internals::kJSObjectHeaderSize +
+    v8::internal::Internals::kEmbedderDataSlotExternalPointerOffset;
+#else
+// not used
+constexpr int kRecordSlotOffset = 0;
+#endif
+static_assert(kRecordSlotOffset >= 0 && kRecordSlotOffset <= UINT8_MAX,
+              "record_slot_offset must fit its uint8 field");
+
 // Single thread-local read from outside the process via TLSDESC. It
 // identifies, for the current V8 isolate's thread:
 //
@@ -60,13 +78,16 @@
 //    AsyncContextFrame map (`als_handle`),
 //  - that instance's JS identity hash (`als_identity_hash`), so the
 //    reader can restrict the lookup to a single hash bucket.
+//  - the byte offset of internal field 0 within the wrapper JSObject the
+//    frame maps our key to (`record_slot_offset`), which holds the record
+//    pointer.
 //  - the (per-isolate) tagged address of the `undefined` singleton
 //    (`undefined_addr`). After looking up the value for our ALS key in
 //    the ACF map, the reader can compare against this to skip the
 //    JSObject / internal-field-0 dereference when no ThreadContext is
 //    currently attached; without it, a reader walking through undefined
 //    would have to rely on structural validation of the bytes at
-//    undefined+js_object_record_offset to detect the absence.
+//    undefined+<record slot offset> to detect the absence.
 //
 // Layout is part of the reader ABI: see the README "Discovery contract"
 // section and the static_asserts below.
@@ -75,9 +96,11 @@ using v8::Global;
 using v8::Object;
 
 struct otel_thread_ctx_nodejs_v1_t {
-  v8::internal::Address* cped_slot;      // offset 0
-  Global<Object> als_handle;             // offset sizeof(void*); 1 V8 ptr
-  int als_identity_hash;                 // offset 2 * sizeof(void*); 4 + 4 pad
+  v8::internal::Address* cped_slot;  // offset 0
+  Global<Object> als_handle;         // offset sizeof(void*); 1 V8 ptr
+  int als_identity_hash;             // offset 2 * sizeof(void*)
+  uint8_t record_slot_offset = kRecordSlotOffset;  // 2 * sizeof(void*) + 4
+  uint8_t reserved[3] = {};                        // 2 * sizeof(void*) + 5
   v8::internal::Address undefined_addr;  // offset 3 * sizeof(void*); tagged
 };
 
@@ -100,9 +123,12 @@ static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, als_handle) ==
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, als_identity_hash) ==
                   2 * sizeof(void*),
               "als_identity_hash must immediately follow als_handle");
+static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, record_slot_offset) ==
+                  2 * sizeof(void*) + 4,
+              "record_slot_offset must immediately follow als_identity_hash");
 static_assert(offsetof(otel_thread_ctx_nodejs_v1_t, undefined_addr) ==
                   3 * sizeof(void*),
-              "undefined_addr must follow als_identity_hash + padding");
+              "undefined_addr must follow record_slot_offset + reserved");
 
 namespace dd {
 namespace {
@@ -880,8 +906,13 @@ void StoreAls(const FunctionCallbackInfo<Value>& args) {
   // Cache the per-isolate undefined singleton's tagged address. Undefined
   // is a read-only-roots heap object, never moves, so a cached numeric
   // address is fine — no Global<> tracking needed.
+#if NODE_MAJOR_VERSION >= 22
   otel_thread_ctx_nodejs_v1.undefined_addr =
-      reinterpret_cast<v8::internal::Address>(*v8::Undefined(isolate));
+      v8::internal::ValueHelper::ValueAsAddress(*v8::Undefined(isolate));
+#else
+  // Unreachable from JS; nonzero for the cleanup-hook bookkeeping.
+  otel_thread_ctx_nodejs_v1.undefined_addr = 1;
+#endif
 
   // Write `cped_slot` last with signal fence + volatile. It is what a reader
   // tests before it dereferences anything, so publishing it after every other
@@ -915,10 +946,6 @@ void GetStoredAlsHash(const FunctionCallbackInfo<Value>& args) {
 //   OrderedHashMap header      kFixedArrayHeaderSize, because
 //   size (0x10)                OrderedHashTable derives from FixedArray
 //                              (deps/v8/src/objects/ordered-hash-table.h)
-//   record slot offset (0x18)  kJSObjectHeaderSize plus
-//                              kEmbedderDataSlotExternalPointerOffset,
-//                              which is 0 without the sandbox: internal
-//                              field 0 then holds the raw record pointer
 static_assert(v8::internal::kApiTaggedSize == 8,
               "nodejs_v1 assumes a V8 built without pointer compression");
 static_assert(v8::internal::Internals::kJSObjectHeaderSize == 0x18,
@@ -934,12 +961,47 @@ static_assert(kEmbedderDataSlotExternalPtrOffset == 0,
               "nodejs_v1 assumes a V8 built without the sandbox");
 #endif
 
+// Whether internal field 0 of an object created from an API template really
+// sits at kRecordSlotOffset. Set the field on a probe object and read it back
+// at the offset.
+bool RecordSlotOffsetHolds(v8::Isolate* isolate,
+                           v8::Local<v8::Context> context) {
+#if NODE_MAJOR_VERSION >= 22
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::ObjectTemplate> tpl = v8::ObjectTemplate::New(isolate);
+  tpl->SetInternalFieldCount(1);
+  v8::Local<v8::Object> probe;
+  if (!tpl->NewInstance(context).ToLocal(&probe)) return false;
+  // Any aligned address will do; this one is ours and can't collide.
+  static int marker;
+  SetAlignedPointerInInternalField(probe, 0, &marker);
+  const char* object = reinterpret_cast<const char*>(
+      v8::internal::ValueHelper::ValueAsAddress(*probe) -
+      v8::internal::kHeapObjectTag);
+  void* at_offset;
+  memcpy(&at_offset, object + kRecordSlotOffset, sizeof(at_offset));
+  return at_offset == &marker;
+#else
+  // No ContinuationPreservedEmbedderData, so nothing to publish anyway.
+  return false;
+#endif
+}
+
 }  // namespace
 
 void OtelThreadCtx::Init(Local<Object> exports) {
   CtxWrap::Init(exports);
   NODE_SET_METHOD(exports, "otelThreadCtxStoreAls", StoreAls);
   NODE_SET_METHOD(exports, "otelThreadCtxGetStoredAlsHash", GetStoredAlsHash);
+
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  exports
+      ->Set(context,
+            v8::String::NewFromUtf8Literal(
+                isolate, "otelThreadCtxRecordSlotOffsetHolds"),
+            v8::Boolean::New(isolate, RecordSlotOffsetHolds(isolate, context)))
+      .FromJust();
 }
 
 }  // namespace dd

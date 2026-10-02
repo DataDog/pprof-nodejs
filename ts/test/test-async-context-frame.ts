@@ -16,7 +16,7 @@
 
 import {strict as assert} from 'assert';
 import {AsyncLocalStorage} from 'node:async_hooks';
-import {fork} from 'node:child_process';
+import {fork, spawnSync} from 'node:child_process';
 import {join} from 'node:path';
 
 import {satisfies} from 'semver';
@@ -126,6 +126,38 @@ describe('isAsyncContextFrameActive', () => {
     });
     assert.deepEqual(execArgv, []);
     assert.equal(active, true);
+  });
+});
+
+describe('getProcessContextAttributes', () => {
+  it('refuses to declare the schema without AsyncContextFrame', function () {
+    // The reader contract, and so this refusal, is Linux-only.
+    if (process.platform !== 'linux') return this.skip();
+    // Nothing would ever write the CPED slot, so a reader told the schema is
+    // in use would find nothing.
+    const off = major >= 24 ? ['--no-async-context-frame'] : [];
+    const lib = JSON.stringify(join(__dirname, '..', 'src', 'otel-thread-ctx'));
+    const r = spawnSync(
+      process.execPath,
+      [
+        ...off,
+        '-e',
+        `try {
+          require(${lib}).getProcessContextAttributes([]);
+          console.log('declared');
+        } catch (e) {
+          console.log(e.message);
+        }`,
+      ],
+      {encoding: 'utf8', env: {...process.env, NODE_OPTIONS: ''}},
+    );
+    // Not the exit status: under the sanitizer jobs LeakSanitizer fails the
+    // child for leaks in Node's own `-e` startup path.
+    assert.match(
+      r.stdout,
+      /can't declare .* async_context_frame support is unavailable/,
+      r.stderr,
+    );
   });
 });
 
