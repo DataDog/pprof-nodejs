@@ -78,6 +78,13 @@ export interface NormalizedSample {
   /** One value for each of {@link ProfileMetadata.sampleTypes}. */
   values: number[];
   labels: SampleLabel[];
+  /**
+   * Time at which the sample was taken, in nanoseconds since epoch (with
+   * microsecond precision). Only set on samples that represent a single
+   * observation with a known time, i.e. time profile samples for a context.
+   * Undefined for aggregated samples.
+   */
+  timestamp?: bigint;
 }
 
 export interface SampleType {
@@ -161,7 +168,11 @@ export interface HeapProfileNormalizerOptions {
 /**
  * Emits a sample for the node currently being visited.
  */
-type EmitSample = (values: number[], labels: SampleLabel[]) => void;
+type EmitSample = (
+  values: number[],
+  labels: SampleLabel[],
+  timestamp?: bigint,
+) => void;
 
 /**
  * Converts a node into zero or more samples and passes them to emit.
@@ -260,8 +271,13 @@ function visitTree<T extends ProfileNode>(
   const stackIds: Array<number | undefined> = [];
 
   let currentStack = -1;
-  const emit: EmitSample = (values, labels) => {
-    visitor.sample({stackId: getStackId(currentStack), values, labels});
+  const emit: EmitSample = (values, labels, timestamp) => {
+    visitor.sample({
+      stackId: getStackId(currentStack),
+      values,
+      labels,
+      timestamp,
+    });
   };
 
   const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
@@ -515,7 +531,12 @@ export function visitTimeProfile(
         if (prof.hasCpuTime) {
           values.push(context.cpuTime ?? 0);
         }
-        emit(values, labels);
+        // Context timestamps are in microseconds; 0 marks a synthetic context.
+        emit(
+          values,
+          labels,
+          context.timestamp ? BigInt(context.timestamp) * 1000n : undefined,
+        );
         unlabelledHits--;
       } else if (prof.hasCpuTime) {
         unlabelledCpuTime += context.cpuTime ?? 0;

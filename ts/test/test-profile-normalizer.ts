@@ -192,6 +192,7 @@ describe('profile-normalizer', () => {
           NON_JS_THREADS_FUNCTION_NAME,
       )!;
       assert.deepStrictEqual(nonJS.values, [0, 0, 500]);
+      assert.strictEqual(nonJS.timestamp, undefined);
     });
 
     it('should emit a sample per labelled context and give idle zero wall time', () => {
@@ -206,11 +207,13 @@ describe('profile-normalizer', () => {
       ]);
       const normalized = normalizeTimeProfile(prof, {intervalMicros: 1000});
       assert.deepStrictEqual(
-        normalized.samples.map(s => [s.values, s.labels]),
+        normalized.samples.map(s => [s.values, s.labels, s.timestamp]),
         [
-          [[1, 0, 10], [['a', 'x']]],
-          // The unlabelled context's hit and CPU time go into one sample.
-          [[1, 0, 20], []],
+          // Labelled samples carry the context timestamp in nanoseconds.
+          [[1, 0, 10], [['a', 'x']], 1000n],
+          // The unlabelled context's hit and CPU time go into one aggregated
+          // sample, without a timestamp.
+          [[1, 0, 20], [], undefined],
         ],
       );
     });
