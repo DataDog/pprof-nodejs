@@ -965,6 +965,18 @@ function captureBytes(opts: {
     });
 
     describe('discovery contract', () => {
+      it('places internal field 0 at the record slot offset it publishes', () => {
+        // The offset differs between V8 versions, so the addon checks at load
+        // time that it matches where V8 actually puts the field.
+        const addon = require('node-gyp-build')(
+          join(__dirname, '..', '..'),
+        ) as {
+          otelThreadCtxRecordSlotOffsetHolds: boolean;
+        };
+        strictAssert.equal(addon.otelThreadCtxRecordSlotOffsetHolds, true);
+        assert.doesNotThrow(() => getProcessContextAttributes([]));
+      });
+
       it('exports otel_thread_ctx_nodejs_v1 as a TLS dynsym', function () {
         const addon = join(
           __dirname,
