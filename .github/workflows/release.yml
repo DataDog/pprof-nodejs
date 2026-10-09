@@ -64,19 +64,7 @@ jobs:
       - name: Release notes
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
-          VERSION: ${{ fromJson(steps.pkg.outputs.json).version }}
-        run: |
-          # The release notes are the body of the proposal PR, looked up by its
-          # head branch. This resolves even after the branch is deleted on merge.
-          notes="$RUNNER_TEMP/v$VERSION.md"
-          gh pr view "v$VERSION-proposal" --json body --jq .body > "$notes"
-          # v5.x is currently the only release line. Once a second one ships,
-          # --latest has to be decided per branch rather than hardcoded.
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            gh release edit "v$VERSION" --title "$VERSION" -F "$notes" --latest
-          else
-            gh release create "v$VERSION" --target "${{ github.ref_name }}" --title "$VERSION" -F "$notes" --latest
-          fi
+        run: node scripts/release-notes.js
 
   publish_dev:
     needs: build
