@@ -416,6 +416,36 @@ describe('Time Profiler', () => {
     });
   });
 
+  it('should put sample timestamps within the collection period', async function shouldBracketTimestamps() {
+    if (unsupportedPlatform) {
+      this.skip();
+    }
+    this.timeout(3000);
+
+    time.start({
+      intervalMicros: PROFILE_OPTIONS.intervalMicros,
+      withContexts: true,
+    });
+    const testStart = hrtime.bigint();
+    while (hrtime.bigint() - testStart < 200_000_000n) {
+      time.setContext({});
+      await setTimeoutPromise(1);
+    }
+    const profile = time.stopNormalized(false, {samplePerContext: true});
+    const timestamps = profile.samples
+      .map(sample => sample.timestamp)
+      .filter(timestamp => timestamp !== undefined) as bigint[];
+    assert.ok(timestamps.length > 0, 'has timestamped samples');
+    const start = profile.startTimeNanos!;
+    const end = start + BigInt(Math.round(profile.durationNanos!));
+    for (const timestamp of timestamps) {
+      assert.ok(
+        timestamp >= start && timestamp <= end,
+        `${timestamp} outside [${start}, ${end}]`,
+      );
+    }
+  });
+
   it('should have async IDs when enabled', async function shouldCollectAsyncIDs() {
     if (!(collectAsyncId && ['darwin', 'linux'].includes(process.platform))) {
       this.skip();

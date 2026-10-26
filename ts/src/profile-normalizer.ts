@@ -96,8 +96,17 @@ export interface ProfileMetadata {
   sampleTypes: SampleType[];
   periodType: SampleType;
   period: number;
-  /** Time of collection in nanoseconds since epoch. */
-  timeNanos: number;
+  /**
+   * Time of collection in nanoseconds since epoch: when the profile was
+   * normalized. A bigint, because the value exceeds Number.MAX_SAFE_INTEGER.
+   */
+  timeNanos: bigint;
+  /**
+   * Start of the profile's collection period, in nanoseconds since epoch,
+   * for profiles collected over a period (time profiles). Sample timestamps
+   * fall within [startTimeNanos, startTimeNanos + durationNanos].
+   */
+  startTimeNanos?: bigint;
   durationNanos?: number;
 }
 
@@ -166,7 +175,7 @@ export interface TimeProfileNormalizerOptions {
 
 export interface HeapProfileNormalizerOptions {
   /** Start time of profile, in nanoseconds since epoch. */
-  startTimeNanos: number;
+  startTimeNanos: bigint;
   /** Bytes allocated between samples. */
   intervalBytes: number;
   ignoreSamplesPath?: string;
@@ -555,10 +564,18 @@ export function visitTimeProfile(
   if (prof.hasCpuTime) {
     sampleTypes.push({type: 'cpu', unit: 'nanoseconds'});
   }
+  const timeNanos = BigInt(Date.now()) * 1_000_000n;
+  const durationNanos = (prof.endTime - prof.startTime) * 1000;
   visitor.metadata({
     sampleTypes,
-    timeNanos: Date.now() * 1000 * 1000,
-    durationNanos: (prof.endTime - prof.startTime) * 1000,
+    timeNanos,
+    // Exact with the native profiler's epoch offset. Without one, estimate it
+    // on the assumption that the profile was just stopped.
+    startTimeNanos:
+      prof.epochOffset !== undefined
+        ? BigInt(Math.round(prof.startTime + prof.epochOffset)) * 1000n
+        : timeNanos - BigInt(Math.round(durationNanos)),
+    durationNanos,
     periodType: timeType,
     period: intervalNanos,
   });
