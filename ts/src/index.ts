@@ -49,6 +49,17 @@ export {
   PprofProfileBuilder,
   PprofSerializerOptions,
 } from './profile-serializer';
+export {
+  LinkExtractor,
+  OtelColumns,
+  OtelProfileOptions,
+  OtelProfilesBuilder,
+  OtelSerializerOptions,
+  ProfileAttribute,
+  SampleLink,
+  serializeHeapProfileOtel,
+  serializeTimeProfileOtel,
+} from './otel-serializer';
 
 export {HeapLimitExtensionSize} from './heap-profiler';
 
