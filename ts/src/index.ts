@@ -44,6 +44,18 @@ export {
   visitTimeProfile,
   VisitResult,
 } from './profile-normalizer';
+export {
+  FRAME_MISSING_SOURCE_MAP,
+  LinkExtractor,
+  OtelProfileOptions,
+  OtelProfilesBuilder,
+  OtelSerializerOptions,
+  PROFILE_HAS_MISSING_SOURCE_MAPS,
+  ProfileAttribute,
+  SampleLink,
+  serializeHeapProfileOtel,
+  serializeTimeProfileOtel,
+} from './otel-serializer';
 
 export {HeapLimitExtensionSize} from './heap-profiler';
 
