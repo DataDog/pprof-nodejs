@@ -114,7 +114,7 @@ export function normalizedProfile(
   generateLabels?: GenerateAllocationLabelsFunction,
 ): NormalizedProfile {
   return collectProfile(root => {
-    const startTimeNanos = Date.now() * 1000 * 1000;
+    const startTimeNanos = BigInt(Date.now()) * 1_000_000n;
     return normalizeHeapProfile(
       addExternalMemoryNode(root, startedWithAllocations),
       {
@@ -160,7 +160,7 @@ export function convertProfile(
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const allocations = startedWithAllocations;
-  const startTimeNanos = Date.now() * 1000 * 1000;
+  const startTimeNanos = BigInt(Date.now()) * 1_000_000n;
   return serializeHeapProfile(
     addExternalMemoryNode(rootNode, allocations),
     startTimeNanos,

@@ -96,8 +96,11 @@ export interface ProfileMetadata {
   sampleTypes: SampleType[];
   periodType: SampleType;
   period: number;
-  /** Time of collection in nanoseconds since epoch. */
-  timeNanos: number;
+  /**
+   * Time of collection in nanoseconds since epoch. A bigint, because the
+   * value exceeds Number.MAX_SAFE_INTEGER.
+   */
+  timeNanos: bigint;
   durationNanos?: number;
 }
 
@@ -164,7 +167,7 @@ export interface TimeProfileNormalizerOptions {
 
 export interface HeapProfileNormalizerOptions {
   /** Start time of profile, in nanoseconds since epoch. */
-  startTimeNanos: number;
+  startTimeNanos: bigint;
   /** Bytes allocated between samples. */
   intervalBytes: number;
   ignoreSamplesPath?: string;
@@ -517,7 +520,7 @@ export function visitTimeProfile(
   }
   visitor.metadata({
     sampleTypes,
-    timeNanos: Date.now() * 1000 * 1000,
+    timeNanos: BigInt(Date.now()) * 1_000_000n,
     durationNanos: (prof.endTime - prof.startTime) * 1000,
     periodType: timeType,
     period: intervalNanos,

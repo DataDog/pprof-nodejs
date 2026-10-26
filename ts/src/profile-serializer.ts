@@ -137,7 +137,9 @@ function serialize(
         });
       profile = {
         sampleType: metadata.sampleTypes.map(valueType),
-        timeNanos: metadata.timeNanos,
+        // pprof Profile objects have always had a number here; keep it one.
+        // It rounds the time to a double, like Date.now() * 1000 * 1000 did.
+        timeNanos: Number(metadata.timeNanos),
         durationNanos: metadata.durationNanos,
         periodType: valueType(metadata.periodType),
         period: metadata.period,
@@ -293,7 +295,7 @@ export function serializeTimeProfile(
  */
 export function serializeHeapProfile(
   prof: AllocationProfileNode | AllocationProfileNodeWithStats,
-  startTimeNanos: number,
+  startTimeNanos: number | bigint,
   intervalBytes: number,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
@@ -302,7 +304,7 @@ export function serializeHeapProfile(
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const options: HeapProfileNormalizerOptions = {
-    startTimeNanos,
+    startTimeNanos: BigInt(startTimeNanos),
     intervalBytes,
     ignoreSamplesPath,
     sourceMapper,

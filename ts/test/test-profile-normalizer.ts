@@ -136,6 +136,22 @@ describe('profile-normalizer', () => {
       assert.strictEqual(normalized.durationNanos, pprof.durationNanos);
     });
 
+    it('should give the collection time exactly, as a bigint', () => {
+      // 1.7e18 nanoseconds is beyond the precision of a double
+      dateStub.returns(1700000000123);
+      try {
+        const normalized = normalizeTimeProfile(makeTimeProfile([]), {
+          intervalMicros: 1000,
+        });
+        assert.strictEqual(normalized.timeNanos, 1700000000123000000n);
+        // The pprof profile keeps the number it has always had
+        const pprof = serializeTimeProfile(makeTimeProfile([]), 1000);
+        assert.strictEqual(pprof.timeNanos, 1700000000123 * 1000 * 1000);
+      } finally {
+        dateStub.returns(0);
+      }
+    });
+
     it('should describe wall and sample count types, and CPU when present', () => {
       const withCpu = normalizeTimeProfile(makeTimeProfile([]), {
         intervalMicros: 1000,
@@ -364,7 +380,7 @@ describe('profile-normalizer', () => {
     it('should have the same samples as the serialized pprof profile', () => {
       for (const prof of [v8HeapProfile, v8AnonymousFunctionHeapProfile]) {
         const normalized = normalizeHeapProfile(prof, {
-          startTimeNanos: 0,
+          startTimeNanos: 0n,
           intervalBytes: 64,
         });
         const pprof = serializeHeapProfile(prof, 0, 64);
@@ -382,7 +398,7 @@ describe('profile-normalizer', () => {
     it('should omit samples under ignoreSamplesPath', () => {
       const ignored = '@google-cloud/profiler';
       const normalized = normalizeHeapProfile(v8HeapWithPathProfile, {
-        startTimeNanos: 0,
+        startTimeNanos: 0n,
         intervalBytes: 64,
         ignoreSamplesPath: ignored,
       });
