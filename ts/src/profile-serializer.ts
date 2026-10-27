@@ -223,15 +223,18 @@ function serialize(
   }
 
   function buildLabels(sampleLabels: SampleLabel[]): Label[] {
-    return sampleLabels.map(([key, value]) => {
+    const labels: Label[] = new Array(sampleLabels.length);
+    for (let i = 0; i < sampleLabels.length; i++) {
+      const [key, value] = sampleLabels[i];
       const labelInput: LabelInput = {key: stringTable.dedup(key)};
       if (typeof value === 'string') {
         labelInput.str = stringTable.dedup(value);
       } else {
         labelInput.num = value;
       }
-      return new Label(labelInput);
-    });
+      labels[i] = new Label(labelInput);
+    }
+    return labels;
   }
 
   function dedupLabels(labels: Label[]) {

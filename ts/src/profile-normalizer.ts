@@ -236,15 +236,16 @@ export function frameFunctionName(frame: Frame): string {
 
 function toSampleLabels(labelSet: object): SampleLabel[] {
   const labels: SampleLabel[] = [];
-  for (const [key, value] of Object.entries(labelSet)) {
+  // A for...in loop doesn't allocate the entries array of Object.entries()
+  for (const key in labelSet) {
+    if (!Object.prototype.hasOwnProperty.call(labelSet, key)) continue;
+    const value = (labelSet as Record<string, unknown>)[key];
     switch (typeof value) {
       case 'string':
       case 'number':
       case 'bigint':
         labels.push([key, value]);
         break;
-      default:
-        continue;
     }
   }
   return labels;
@@ -276,19 +277,24 @@ function visitTree<T extends ProfileNode>(
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
 ): VisitResult {
-  // Interned frames: internal frame index by key, and the visitor's frame
-  // ID for each internal frame index.
-  const frameIndexMap = new Map<string, number>();
+  // Frames, by internal frame index: the visitor's frame ID. Indexed by the
+  // raw position (before source mapping), so a repeated position skips
+  // source mapping, and by resolved identity, so different positions that
+  // resolve to the same frame share it.
+  const frameIndexByPosition = new Map<string, number>();
+  const frameIndexByIdentity = new Map<string, number>();
   const frameIds: number[] = [];
   let hasMissingMapFiles = false;
 
   // Interned stacks, by internal stack index: the parent stack index (-1 for
-  // none), the internal frame index, and the visitor's stack ID (undefined
-  // until delivered).
-  const stackIndexMap = new Map<number, number>();
+  // none), the internal frame index, the visitor's stack ID (undefined until
+  // delivered), and the child stacks by frame index. Top-level stacks are
+  // the children of rootStacks.
   const stackParents: number[] = [];
   const stackFrames: number[] = [];
   const stackIds: Array<number | undefined> = [];
+  const stackChildren: Array<Map<number, number> | undefined> = [];
+  const rootStacks = new Map<number, number>();
 
   let currentStack = -1;
   const emit: EmitSample = (values, labels, timestamp) => {
@@ -332,16 +338,24 @@ function visitTree<T extends ProfileNode>(
   return result;
 
   function internStack(parent: number, frame: number): number {
-    // Unique while there are fewer than 2^26 frames and 2^27 stacks, so the
-    // key stays below Number.MAX_SAFE_INTEGER.
-    const key = (parent + 1) * 0x4000000 + frame;
-    let stack = stackIndexMap.get(key);
+    let children: Map<number, number> | undefined;
+    if (parent < 0) {
+      children = rootStacks;
+    } else {
+      children = stackChildren[parent];
+      if (children === undefined) {
+        children = new Map();
+        stackChildren[parent] = children;
+      }
+    }
+    let stack = children.get(frame);
     if (stack === undefined) {
       stack = stackParents.length;
       stackParents.push(parent);
       stackFrames.push(frame);
       stackIds.push(undefined);
-      stackIndexMap.set(key, stack);
+      stackChildren.push(undefined);
+      children.set(frame, stack);
     }
     return stack;
   }
@@ -360,6 +374,21 @@ function visitTree<T extends ProfileNode>(
   }
 
   function getFrameIndex(node: ProfileNode, scriptName: string): number {
+    // The script ID identifies a script in V8 profiles; without one, the
+    // script name has to. The name comes last, so the key is unambiguous.
+    const positionKey =
+      node.scriptId !== undefined
+        ? `${node.scriptId}:${node.lineNumber}:${node.columnNumber}:${node.name}`
+        : `:${scriptName.length}:${scriptName}:${node.lineNumber}:${node.columnNumber}:${node.name}`;
+    let index = frameIndexByPosition.get(positionKey);
+    if (index === undefined) {
+      index = resolveFrameIndex(node, scriptName);
+      frameIndexByPosition.set(positionKey, index);
+    }
+    return index;
+  }
+
+  function resolveFrameIndex(node: ProfileNode, scriptName: string): number {
     let loc: SourceLocation = {
       file: scriptName || '',
       line: node.lineNumber,
@@ -367,20 +396,27 @@ function visitTree<T extends ProfileNode>(
       name: node.name,
     };
 
+    let mapped = false;
     if (loc.line) {
       if (sourceMapper && isGeneratedLocation(loc)) {
         loc = sourceMapper.mappingInfo(loc);
+        mapped = true;
         if (loc.missingMapFile) {
           hasMissingMapFiles = true;
         }
       }
     }
-    // The resolved file is part of a frame's identity: after source mapping,
-    // one script can map to several original files. The file's length makes
-    // the key unambiguous.
     const file = loc.file || '';
-    const keyStr = `${node.scriptId}:${loc.line}:${loc.column}:${loc.missingMapFile ? 1 : 0}:${file.length}:${file}:${loc.name}`;
-    let index = frameIndexMap.get(keyStr);
+    // An unmapped frame is identified by its position, which was just looked
+    // up. Source mapping can resolve different positions to the same frame,
+    // so a mapped frame needs to be looked up by its resolved identity. The
+    // resolved file is part of that: after source mapping, one script can map
+    // to several original files. The file's length makes the key unambiguous.
+    const keyStr = mapped
+      ? `${node.scriptId}:${loc.line}:${loc.column}:${loc.missingMapFile ? 1 : 0}:${file.length}:${file}:${loc.name}`
+      : undefined;
+    let index =
+      keyStr === undefined ? undefined : frameIndexByIdentity.get(keyStr);
     if (index === undefined) {
       index = frameIds.length;
       frameIds.push(
@@ -393,7 +429,7 @@ function visitTree<T extends ProfileNode>(
           missingMapFile: loc.missingMapFile === true,
         }),
       );
-      frameIndexMap.set(keyStr, index);
+      if (keyStr !== undefined) frameIndexByIdentity.set(keyStr, index);
     }
     return index;
   }
