@@ -303,7 +303,7 @@ describe('profile-normalizer', () => {
   });
 
   describe('visitTimeProfile', () => {
-    it('should deliver metadata first, and frames and stacks once, before use', () => {
+    it('should deliver metadata first, frames and stacks once before use, and end last', () => {
       const events: string[] = [];
       const frameIds = new Set<number>();
       const stackIds = new Set<number>();
@@ -335,12 +335,17 @@ describe('profile-normalizer', () => {
           );
         },
       };
+      visitor.end = result => {
+        events.push('end');
+        assert.deepStrictEqual(result, {hasMissingMapFiles: false});
+      };
       const result = visitTimeProfile(v8TimeProfile, visitor, {
         intervalMicros: 1000,
       });
       assert.strictEqual(events[0], 'metadata');
       assert.strictEqual(events.lastIndexOf('metadata'), 0);
       assert.ok(events.includes('sample'));
+      assert.strictEqual(events.indexOf('end'), events.length - 1);
       assert.strictEqual(result.hasMissingMapFiles, false);
     });
 

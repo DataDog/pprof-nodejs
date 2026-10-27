@@ -106,7 +106,7 @@ export interface ProfileMetadata {
 
 /**
  * Receives a normalized profile. Calls arrive in this order: metadata() once,
- * then frame(), stack() and sample() interleaved. Each distinct frame and
+ * then frame(), stack() and sample() interleaved, then end() once. Each distinct frame and
  * stack is delivered exactly once, before the first stack or sample that
  * references it. Only stacks that have samples are delivered.
  *
@@ -128,6 +128,8 @@ export interface ProfileVisitor {
    */
   stack(frameIds: number[]): number;
   sample(sample: NormalizedSample): void;
+  /** Called after the last sample, with what the visit found. */
+  end?(result: VisitResult): void;
 }
 
 export interface VisitResult {
@@ -319,7 +321,9 @@ function visitTree<T extends ProfileNode>(
     }
   }
 
-  return {hasMissingMapFiles};
+  const result = {hasMissingMapFiles};
+  visitor.end?.(result);
+  return result;
 
   function internStack(parent: number, frame: number): number {
     // Unique while there are fewer than 2^26 frames and 2^27 stacks, so the
