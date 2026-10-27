@@ -21,62 +21,37 @@ import {
   Line,
   Location,
   Profile,
+  ProfileInput,
   Sample,
   ValueType,
   StringTable,
-  ProfileInput,
 } from 'pprof-format';
 import {
-  GeneratedLocation,
-  SourceLocation,
-  SourceMapper,
-} from './sourcemapper/sourcemapper';
+  Frame,
+  frameFunctionName,
+  HeapProfileNormalizerOptions,
+  ProfileVisitor,
+  SampleLabel,
+  SampleType,
+  TimeProfileNormalizerOptions,
+  visitHeapProfile,
+  visitTimeProfile,
+  VisitResult,
+} from './profile-normalizer';
+import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
-  Allocation,
-  AllocationWithStats,
   AllocationProfileNode,
   AllocationProfileNodeWithStats,
   GenerateAllocationLabelsFunction,
   GenerateTimeLabelsFunction,
-  ProfileNode,
   TimeProfile,
-  TimeProfileNode,
 } from './v8-types';
 
-export const NON_JS_THREADS_FUNCTION_NAME = 'Non JS threads activity';
-export const GARBAGE_COLLECTION_FUNCTION_NAME = 'Garbage Collection';
-
-/**
- * A stack of function IDs.
- */
-type Stack = number[];
-
-/**
- * A function which converts entry into one or more samples, then
- * appends those sample(s) to samples.
- */
-type AppendEntryToSamples<T extends ProfileNode> = (
-  entry: Entry<T>,
-  samples: Sample[],
-) => void;
-
-/**
- * Profile node and stack trace to that node.
- */
-interface Entry<T extends ProfileNode> {
-  node: T;
-  stack: Stack;
-}
-
-function isGeneratedLocation(
-  location: SourceLocation,
-): location is GeneratedLocation {
-  return (
-    location.column !== undefined &&
-    location.line !== undefined &&
-    location.line > 0
-  );
-}
+export {
+  computeTotalHitCount,
+  GARBAGE_COLLECTION_FUNCTION_NAME,
+  NON_JS_THREADS_FUNCTION_NAME,
+} from './profile-normalizer';
 
 /**
  * Controls how a frame's column number is represented in the emitted profile.
@@ -127,71 +102,66 @@ function packLineAndColumn(
   return (BigInt(column) << 32n) | BigInt(line);
 }
 
-function requireAllocationStat(
-  value: number | undefined,
-  field: string,
-): number {
-  if (value === undefined) {
-    throw new Error(`Allocation profile is missing ${field}.`);
-  }
-  return value;
-}
-
 /**
- * Takes v8 profile and populates sample, location, and function fields of
- * profile.proto.
+ * Encodes a normalized profile as a profile proto.
  *
- * @param profile - profile.proto with empty sample, location, and function
- * fields.
- * @param root - root of v8 profile tree describing samples to be appended
- * to profile.
- * @param appendToSamples - function which converts entry to sample(s)  and
- * appends these to end of an array of samples.
- * @param stringTable - string table for the existing profile.
+ * @param visit - function that delivers the normalized profile to a visitor.
+ * @param lowCardinalityLabels - keys of labels with few distinct values, whose
+ * Label objects are shared between samples to save memory.
  */
-function serialize<T extends ProfileNode>(
-  profile: ProfileInput,
-  root: T,
-  appendToSamples: AppendEntryToSamples<T>,
-  stringTable: StringTable,
-  ignoreSamplesPath?: string,
-  sourceMapper?: SourceMapper,
+function serialize(
+  visit: (visitor: ProfileVisitor) => VisitResult,
+  lowCardinalityLabels: string[] = [],
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
-) {
+): Profile {
+  const stringTable = new StringTable();
   const samples: Sample[] = [];
   const locations: Location[] = [];
+  const stacks: number[][] = [];
   const functions: Function[] = [];
   const functionIdMap = new Map<string, number>();
-  const locationIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-
-  let hasMissingMapFiles = false;
-
-  const entries: Array<Entry<T>> = (root.children as T[]).map((n: T) => ({
-    node: n,
-    stack: [],
-  }));
-  while (entries.length > 0) {
-    const entry = entries.pop()!;
-    const node = entry.node;
-
-    // mjs files have a `file://` prefix in the scriptName -> remove it
-    const scriptName = node.scriptName.startsWith('file://')
-      ? node.scriptName.slice(7)
-      : node.scriptName;
-
-    if (ignoreSamplesPath && scriptName.indexOf(ignoreSamplesPath) > -1) {
-      continue;
-    }
-    const stack = entry.stack;
-    const location = getLocation(node, scriptName, sourceMapper);
-    stack.unshift(location.id as number);
-    appendToSamples(entry, samples);
-    for (const child of node.children as T[]) {
-      entries.push({node: child, stack: stack.slice()});
-    }
+  const labelCaches: Map<number | bigint, Label>[] = [];
+  for (const l of lowCardinalityLabels) {
+    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
   }
+  let profile: ProfileInput = {};
+
+  const {hasMissingMapFiles} = visit({
+    metadata: metadata => {
+      const valueType = (t: SampleType) =>
+        new ValueType({
+          type: stringTable.dedup(t.type),
+          unit: stringTable.dedup(t.unit),
+        });
+      profile = {
+        sampleType: metadata.sampleTypes.map(valueType),
+        // pprof Profile objects have always had a number here; keep it one.
+        // It rounds the time to a double, like Date.now() * 1000 * 1000 did.
+        timeNanos: Number(metadata.timeNanos),
+        durationNanos: metadata.durationNanos,
+        periodType: valueType(metadata.periodType),
+        period: metadata.period,
+      };
+    },
+    frame: frame => {
+      // id is index+1, since 0 is not valid id.
+      const id = locations.length + 1;
+      locations.push(new Location({id, line: [getLine(frame)]}));
+      return id;
+    },
+    stack: frameIds => stacks.push(frameIds) - 1,
+    sample: sample => {
+      samples.push(
+        new Sample({
+          locationId: stacks[sample.stackId],
+          value: sample.values,
+          label: dedupLabels(buildLabels(sample.labels)),
+        }),
+      );
+    },
+  });
 
   profile.sample = samples;
   profile.location = locations;
@@ -202,75 +172,38 @@ function serialize<T extends ProfileNode>(
     profile.comment = [stringTable.dedup('dd:has-missing-map-files')];
   }
 
-  function getLocation(
-    node: ProfileNode,
-    scriptName: string,
-    sourceMapper?: SourceMapper,
-  ): Location {
-    let profLoc: SourceLocation = {
-      file: scriptName || '',
-      line: node.lineNumber,
-      column: node.columnNumber,
-      name: node.name,
-    };
+  return new Profile(profile);
 
-    if (profLoc.line) {
-      if (sourceMapper && isGeneratedLocation(profLoc)) {
-        profLoc = sourceMapper.mappingInfo(profLoc);
-        if (profLoc.missingMapFile) {
-          hasMissingMapFiles = true;
-        }
-      }
-    }
-    // The resolved file is part of a location's identity: after source
-    // mapping, one script can map to several original files. The file's
-    // length makes the key unambiguous.
-    const file = profLoc.file || '';
-    const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.missingMapFile ? 1 : 0}:${file.length}:${file}:${profLoc.name}`;
-    let id = locationIdMap.get(keyStr);
-    if (id !== undefined) {
-      // id is index+1, since 0 is not valid id.
-      return locations[id - 1];
-    }
-    id = locations.length + 1;
-    locationIdMap.set(keyStr, id);
-    const line = getLine(profLoc, node.scriptId);
-    const location = new Location({id, line: [line]});
-    locations.push(location);
-    return location;
-  }
-
-  function getLine(loc: SourceLocation, scriptId?: number): Line {
+  function getLine(frame: Frame): Line {
     // Both 'pack' and 'emit' carry the column only for frames whose source map
     // was declared but missing locally — i.e. exactly the frames bound for
     // server-side unminification (the same condition that sets
     // dd:has-missing-map-files). Locally-resolved frames keep a plain line and
     // no column, so column data never reaches profiles that skip server-side
     // unminification.
-    const carryColumn = loc.missingMapFile === true;
+    const carryColumn = frame.missingMapFile;
     return new Line({
-      functionId: getFunction(loc, scriptId).id,
+      functionId: getFunction(frame).id,
       // 'pack' encodes the column into the high 32 bits of the line field.
       line:
         packColumns && carryColumn
-          ? packLineAndColumn(loc.line, loc.column)
-          : loc.line,
+          ? packLineAndColumn(frame.line, frame.column)
+          : frame.line,
       // 'emit' records the column in the dedicated pprof Line.column field
       // instead; the backend does the line/column packing itself.
-      column: emitColumns && carryColumn ? loc.column : undefined,
+      column: emitColumns && carryColumn ? frame.column : undefined,
     });
   }
 
-  function getFunction(loc: SourceLocation, scriptId?: number): Function {
-    let name = loc.name;
+  function getFunction(frame: Frame): Function {
     // A function is identified by script, file and name, or by script, file
     // and position for anonymous functions; the prefixes keep the two kinds
     // apart. The file matters because after source mapping, one script can
     // map to several original files.
-    const file = loc.file || '';
-    const keyStr = name
-      ? `n:${scriptId}:${file.length}:${file}:${name}`
-      : `a:${scriptId}:${loc.line}:${loc.column}:${file}`;
+    const file = frame.file;
+    const keyStr = frame.name
+      ? `n:${frame.scriptId}:${file.length}:${file}:${frame.name}`
+      : `a:${frame.scriptId}:${frame.line}:${frame.column}:${file}`;
     let id = functionIdMap.get(keyStr);
     if (id !== undefined) {
       // id is index+1, since 0 is not valid id.
@@ -278,217 +211,33 @@ function serialize<T extends ProfileNode>(
     }
     id = functions.length + 1;
     functionIdMap.set(keyStr, id);
-    if (!name) {
-      if (loc.line) {
-        if (loc.column) {
-          name = `(anonymous:L#${loc.line}:C#${loc.column})`;
-        } else {
-          name = `(anonymous:L#${loc.line})`;
-        }
-      } else {
-        name = '(anonymous)';
-      }
-    }
-    const nameId = stringTable.dedup(name);
+    const nameId = stringTable.dedup(frameFunctionName(frame));
     const f = new Function({
       id,
       name: nameId,
       systemName: nameId,
-      filename: stringTable.dedup(loc.file || ''),
+      filename: stringTable.dedup(frame.file),
     });
     functions.push(f);
     return f;
   }
-}
 
-/**
- * @return value type for sample counts (type:sample, units:count), and
- * adds strings used in this value type to the table.
- */
-function createSampleCountValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('sample'),
-    unit: table.dedup('count'),
-  });
-}
-
-/**
- * @return value type for time samples (type:wall, units:nanoseconds), and
- * adds strings used in this value type to the table.
- */
-function createTimeValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('wall'),
-    unit: table.dedup('nanoseconds'),
-  });
-}
-
-/**
- * @return value type for cpu samples (type:cpu, units:nanoseconds), and
- * adds strings used in this value type to the table.
- */
-function createCpuValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('cpu'),
-    unit: table.dedup('nanoseconds'),
-  });
-}
-
-function createInUseObjectCountValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('inuse_objects'),
-    unit: table.dedup('count'),
-  });
-}
-
-function createAllocatedObjectCountValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('alloc_objects'),
-    unit: table.dedup('count'),
-  });
-}
-
-function createInUseSpaceValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('inuse_space'),
-    unit: table.dedup('bytes'),
-  });
-}
-
-function createAllocatedSpaceValueType(table: StringTable): ValueType {
-  return new ValueType({
-    type: table.dedup('alloc_space'),
-    unit: table.dedup('bytes'),
-  });
-}
-
-export function computeTotalHitCount(root: TimeProfileNode): number {
-  return (
-    root.hitCount +
-    (root.children as TimeProfileNode[]).reduce(
-      (sum, node) => sum + computeTotalHitCount(node),
-      0,
-    )
-  );
-}
-
-/** Perform some modifications on time profile:
- *  - Add non-JS thread activity node if available
- *  - remove `(program)` nodes
- *  - remove `(idle)` nodes with no context
- *  - set `(idle)` nodes' wall time to zero when they have a context
- *  - Convert `(garbage collector)` node to `Garbage Collection`
- *  - Put `non-JS thread activity` node and `Garbage Collection` under a top level `Node.js` node
- * This function does not change the input profile.
- */
-function updateTimeProfile(prof: TimeProfile): TimeProfile {
-  const newTopLevelChildren: TimeProfileNode[] = [];
-
-  let runtimeNode: TimeProfileNode | undefined;
-
-  function getRuntimeNode(): TimeProfileNode {
-    if (!runtimeNode) {
-      runtimeNode = {
-        name: 'Node.js',
-        scriptName: '',
-        scriptId: 0,
-        lineNumber: 0,
-        columnNumber: 0,
-        children: [],
-        hitCount: 0,
-      };
-      newTopLevelChildren.push(runtimeNode);
+  function buildLabels(sampleLabels: SampleLabel[]): Label[] {
+    const labels: Label[] = new Array(sampleLabels.length);
+    for (let i = 0; i < sampleLabels.length; i++) {
+      const [key, value] = sampleLabels[i];
+      const labelInput: LabelInput = {key: stringTable.dedup(key)};
+      if (typeof value === 'string') {
+        labelInput.str = stringTable.dedup(value);
+      } else {
+        labelInput.num = value;
+      }
+      labels[i] = new Label(labelInput);
     }
-    return runtimeNode;
+    return labels;
   }
 
-  for (const child of prof.topDownRoot.children as TimeProfileNode[]) {
-    if (child.name === '(program)') {
-      continue;
-    }
-    if (child.name === '(idle)' && child.contexts?.length === 0) {
-      continue;
-    }
-    if (child.name === '(garbage collector)') {
-      // Create a new node to avoid modifying the input one
-      const newChild: TimeProfileNode = {
-        ...child,
-        name: GARBAGE_COLLECTION_FUNCTION_NAME,
-      };
-      getRuntimeNode().children.push(newChild);
-    } else {
-      newTopLevelChildren.push(child);
-    }
-  }
-
-  if (prof.hasCpuTime && prof.nonJSThreadsCpuTime) {
-    const node: TimeProfileNode = {
-      name: NON_JS_THREADS_FUNCTION_NAME,
-      scriptName: '',
-      scriptId: 0,
-      lineNumber: 0,
-      columnNumber: 0,
-      children: [],
-      hitCount: 0, // 0 because this should not be accounted for wall time
-      contexts: [
-        {
-          context: {},
-          timestamp: BigInt(0),
-          cpuTime: prof.nonJSThreadsCpuTime,
-          asyncId: -1,
-        },
-      ],
-    };
-    getRuntimeNode().children.push(node);
-  }
-  return {
-    ...prof,
-    topDownRoot: {...prof.topDownRoot, children: newTopLevelChildren},
-  };
-}
-
-/**
- * Converts v8 time profile into into a profile proto.
- * (https://github.com/google/pprof/blob/master/proto/profile.proto)
- *
- * @param prof - profile to be converted.
- * @param intervalMicros - average time (microseconds) between samples.
- */
-export function serializeTimeProfile(
-  prof: TimeProfile,
-  intervalMicros: number,
-  sourceMapper?: SourceMapper,
-  recomputeSamplingInterval = false,
-  generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels: string[] = [],
-  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
-): Profile {
-  // If requested, recompute sampling interval from profile duration and total number of hits,
-  // since profile duration should be #hits x interval.
-  // Recomputing an average interval is more accurate, since in practice intervals between
-  // samples are larger than the requested sampling interval (eg. 12.5ms vs 10ms requested).
-  // For very short durations, computation becomes meaningless (eg. if there is only one hit),
-  // therefore keep intervalMicros as a lower bound and 2 * intervalMicros as upper bound.
-  if (recomputeSamplingInterval) {
-    const totalHitCount =
-      prof.totalHitCount ?? computeTotalHitCount(prof.topDownRoot);
-    if (totalHitCount > 0) {
-      intervalMicros = Math.min(
-        Math.max(
-          Math.floor((prof.endTime - prof.startTime) / totalHitCount),
-          intervalMicros,
-        ),
-        2 * intervalMicros,
-      );
-    }
-  }
-  const intervalNanos = intervalMicros * 1000;
-  const stringTable = new StringTable();
-  const labelCaches: Map<number | bigint, Label>[] = [];
-  for (const l of lowCardinalityLabels) {
-    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
-  }
-  const dedupLabels = (labels: Label[]) => {
+  function dedupLabels(labels: Label[]) {
     for (let i = 0; i < labels.length; i++) {
       const label = labels[i];
       const cache = labelCaches[Number(label.key)];
@@ -507,112 +256,36 @@ export function serializeTimeProfile(
       }
     }
     return labels;
-  };
-
-  const appendTimeEntryToSamples: AppendEntryToSamples<TimeProfileNode> = (
-    entry: Entry<TimeProfileNode>,
-    samples: Sample[],
-  ) => {
-    let unlabelledHits = entry.node.hitCount;
-    let unlabelledCpuTime = 0;
-    const isIdle = entry.node.name === '(idle)';
-    for (const context of entry.node.contexts || []) {
-      const labels = generateLabels
-        ? generateLabels({node: entry.node, context})
-        : (context.context ?? {});
-      const labelsArr = buildLabels(labels, stringTable);
-      if (labelsArr.length > 0) {
-        // Only assign wall time if there are hits, some special nodes such as `(Non-JS threads)`
-        // have zero hit count (since they do not count as wall time) and should not be assigned any
-        // wall time. Also, `(idle)` nodes should be assigned zero wall time.
-        const values =
-          unlabelledHits > 0 ? [1, isIdle ? 0 : intervalNanos] : [0, 0];
-        if (prof.hasCpuTime) {
-          values.push(context.cpuTime ?? 0);
-        }
-        const sample = new Sample({
-          locationId: entry.stack,
-          value: values,
-          label: dedupLabels(labelsArr),
-        });
-        samples.push(sample);
-        unlabelledHits--;
-      } else if (prof.hasCpuTime) {
-        unlabelledCpuTime += context.cpuTime ?? 0;
-      }
-    }
-    if ((!isIdle && unlabelledHits > 0) || unlabelledCpuTime > 0) {
-      const labels = generateLabels ? generateLabels({node: entry.node}) : {};
-      const values =
-        unlabelledHits > 0
-          ? [unlabelledHits, isIdle ? 0 : unlabelledHits * intervalNanos]
-          : [0, 0];
-      if (prof.hasCpuTime) {
-        values.push(unlabelledCpuTime);
-      }
-      const sample = new Sample({
-        locationId: entry.stack,
-        value: values,
-        label: buildLabels(labels, stringTable),
-      });
-      samples.push(sample);
-    }
-  };
-
-  const sampleValueType = createSampleCountValueType(stringTable);
-  const timeValueType = createTimeValueType(stringTable);
-
-  const sampleTypes = [sampleValueType, timeValueType];
-  if (prof.hasCpuTime) {
-    const cpuValueType = createCpuValueType(stringTable);
-    sampleTypes.push(cpuValueType);
   }
-
-  const profile = {
-    sampleType: sampleTypes,
-    timeNanos: Date.now() * 1000 * 1000,
-    durationNanos: (prof.endTime - prof.startTime) * 1000,
-    periodType: timeValueType,
-    period: intervalNanos,
-  };
-
-  const updatedProf = updateTimeProfile(prof);
-
-  serialize(
-    profile,
-    updatedProf.topDownRoot,
-    appendTimeEntryToSamples,
-    stringTable,
-    undefined,
-    sourceMapper,
-    columnNumbers,
-  );
-
-  return new Profile(profile);
 }
 
-function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
-  const labels: Label[] = [];
-
-  for (const [key, value] of Object.entries(labelSet)) {
-    const labelInput: LabelInput = {
-      key: stringTable.dedup(key),
-    };
-    switch (typeof value) {
-      case 'string':
-        labelInput.str = stringTable.dedup(value);
-        break;
-      case 'number':
-      case 'bigint':
-        labelInput.num = value;
-        break;
-      default:
-        continue;
-    }
-    labels.push(new Label(labelInput));
-  }
-
-  return labels;
+/**
+ * Converts v8 time profile into into a profile proto.
+ * (https://github.com/google/pprof/blob/master/proto/profile.proto)
+ *
+ * @param prof - profile to be converted.
+ * @param intervalMicros - average time (microseconds) between samples.
+ */
+export function serializeTimeProfile(
+  prof: TimeProfile,
+  intervalMicros: number,
+  sourceMapper?: SourceMapper,
+  recomputeSamplingInterval = false,
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels: string[] = [],
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
+): Profile {
+  const options: TimeProfileNormalizerOptions = {
+    intervalMicros,
+    sourceMapper,
+    recomputeSamplingInterval,
+    generateLabels,
+  };
+  return serialize(
+    visitor => visitTimeProfile(prof, visitor, options),
+    lowCardinalityLabels,
+    columnNumbers,
+  );
 }
 
 /**
@@ -621,13 +294,11 @@ function buildLabels(labelSet: object, stringTable: StringTable): Label[] {
  *
  * @param prof - profile to be converted.
  * @param startTimeNanos - start time of profile, in nanoseconds (POSIX time).
- * @param durationsNanos - duration of the profile (wall clock time) in
- * nanoseconds.
  * @param intervalBytes - bytes allocated between samples.
  */
 export function serializeHeapProfile(
   prof: AllocationProfileNode | AllocationProfileNodeWithStats,
-  startTimeNanos: number,
+  startTimeNanos: number | bigint,
   intervalBytes: number,
   ignoreSamplesPath?: string,
   sourceMapper?: SourceMapper,
@@ -635,93 +306,17 @@ export function serializeHeapProfile(
   allocations = false,
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
-  const appendHeapEntryToSamples: AppendEntryToSamples<
-    AllocationProfileNode | AllocationProfileNodeWithStats
-  > = (
-    entry: Entry<AllocationProfileNode | AllocationProfileNodeWithStats>,
-    samples: Sample[],
-  ) => {
-    if (entry.node.allocations.length > 0) {
-      const labels = generateLabels
-        ? buildLabels(
-            generateLabels({node: entry.node as AllocationProfileNode}),
-            stringTable,
-          )
-        : [];
-      for (const alloc of entry.node.allocations) {
-        // Live heap only
-        if (!allocations) {
-          const heapAllocation = alloc as Allocation;
-          const sample = new Sample({
-            locationId: entry.stack,
-            value: [
-              heapAllocation.count,
-              heapAllocation.sizeBytes * heapAllocation.count,
-            ],
-            label: labels,
-            // TODO: add tag for allocation size
-          });
-          samples.push(sample);
-          continue;
-        }
-
-        const stats = alloc as AllocationWithStats;
-        const inuseObjects = requireAllocationStat(
-          stats.inuseObjects,
-          'inuseObjects',
-        );
-        const inuseSpaceBytes = requireAllocationStat(
-          stats.inuseSpaceBytes,
-          'inuseSpaceBytes',
-        );
-        const allocObjects = requireAllocationStat(
-          stats.allocObjects,
-          'allocObjects',
-        );
-        const allocSpaceBytes = requireAllocationStat(
-          stats.allocSpaceBytes,
-          'allocSpaceBytes',
-        );
-        const sample = new Sample({
-          locationId: entry.stack,
-          value: [inuseObjects, allocObjects, inuseSpaceBytes, allocSpaceBytes],
-          label: labels,
-          // TODO: add tag for allocation size
-        });
-        samples.push(sample);
-      }
-    }
-  };
-
-  const stringTable = new StringTable();
-  const sampleTypes = allocations
-    ? [
-        createInUseObjectCountValueType(stringTable),
-        createAllocatedObjectCountValueType(stringTable),
-        createInUseSpaceValueType(stringTable),
-        createAllocatedSpaceValueType(stringTable),
-      ]
-    : [
-        createInUseObjectCountValueType(stringTable),
-        createInUseSpaceValueType(stringTable),
-      ];
-
-  const profile = {
-    sampleType: sampleTypes,
-    timeNanos: startTimeNanos,
-    periodType: sampleTypes[sampleTypes.length - 1],
-    period: intervalBytes,
-  };
-
-  serialize(
-    profile,
-    prof,
-    appendHeapEntryToSamples,
-    stringTable,
+  const options: HeapProfileNormalizerOptions = {
+    startTimeNanos: BigInt(startTimeNanos),
+    intervalBytes,
     ignoreSamplesPath,
     sourceMapper,
+    generateLabels,
+    allocations,
+  };
+  return serialize(
+    visitor => visitHeapProfile(prof, visitor, options),
+    [],
     columnNumbers,
   );
-
-  return new Profile(profile);
 }

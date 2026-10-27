@@ -416,6 +416,36 @@ describe('Time Profiler', () => {
     });
   });
 
+  it('should put sample timestamps within the collection period', async function shouldBracketTimestamps() {
+    if (unsupportedPlatform) {
+      this.skip();
+    }
+    this.timeout(3000);
+
+    time.start({
+      intervalMicros: PROFILE_OPTIONS.intervalMicros,
+      withContexts: true,
+    });
+    const testStart = hrtime.bigint();
+    while (hrtime.bigint() - testStart < 200_000_000n) {
+      time.setContext({});
+      await setTimeoutPromise(1);
+    }
+    const profile = time.stopNormalized(false, {samplePerContext: true});
+    const timestamps = profile.samples
+      .map(sample => sample.timestamp)
+      .filter(timestamp => timestamp !== undefined) as bigint[];
+    assert.ok(timestamps.length > 0, 'has timestamped samples');
+    const start = profile.startTimeNanos!;
+    const end = start + BigInt(Math.round(profile.durationNanos!));
+    for (const timestamp of timestamps) {
+      assert.ok(
+        timestamp >= start && timestamp <= end,
+        `${timestamp} outside [${start}, ${end}]`,
+      );
+    }
+  });
+
   it('should have async IDs when enabled', async function shouldCollectAsyncIDs() {
     if (!(collectAsyncId && ['darwin', 'linux'].includes(process.platform))) {
       this.skip();
@@ -534,6 +564,27 @@ describe('Time Profiler', () => {
 
       sinon.assert.notCalled(timeProfilerStub.start);
       sinon.assert.calledOnce(timeProfilerStub.stop);
+    });
+
+    it('should return the raw profile from stopRaw', () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.strictEqual(time.stopRaw(true), v8TimeProfile);
+      assert.ok(time.isStarted());
+      assert.strictEqual(time.stopRaw(), v8TimeProfile);
+      assert.ok(!time.isStarted());
+    });
+
+    it('should return a normalized profile matching the serialized one from stopNormalized', () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      const normalized = time.stopNormalized();
+      assert.ok(!time.isStarted());
+      assert.strictEqual(normalized.samples.length, timeProfile.sample.length);
+      assert.strictEqual(normalized.frames.length, timeProfile.location.length);
+      assert.strictEqual(normalized.period, timeProfile.period);
+      assert.deepStrictEqual(
+        normalized.samples.map(s => s.values),
+        timeProfile.sample.map(s => s.value),
+      );
     });
 
     it('should serialize with the source mapper still set when stopping', () => {

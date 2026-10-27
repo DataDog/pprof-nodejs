@@ -123,6 +123,32 @@ describe('HeapProfiler', () => {
       assert.deepEqual(heapProfileWithExternal, profile);
     });
 
+    it('should return a normalized profile matching the serialized one', async () => {
+      profileStub = sinon
+        .stub(v8HeapProfiler, 'getAllocationProfile')
+        .returns(copy(v8HeapProfile));
+      memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
+        external: 1024,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      const intervalBytes = 1024 * 512;
+      heapProfiler.start(intervalBytes, 32);
+      const normalized = heapProfiler.normalizedProfile();
+      assert.strictEqual(normalized.period, intervalBytes);
+      assert.strictEqual(
+        normalized.samples.length,
+        heapProfileWithExternal.sample.length,
+      );
+      assert.deepStrictEqual(
+        normalized.samples.map(s => s.values),
+        heapProfileWithExternal.sample.map(s => s.value),
+      );
+      assert.ok(normalized.frames.some(f => f.name === '(external)'));
+    });
+
     it('should return a profile equal to the expected profile when including all samples', async () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'getAllocationProfile')
