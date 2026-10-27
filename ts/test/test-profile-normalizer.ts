@@ -32,6 +32,7 @@ import {
   serializeHeapProfile,
   serializeTimeProfile,
 } from '../src/profile-serializer';
+import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {TimeProfile, TimeProfileNode} from '../src/v8-types';
 import {
   labelEncodingProfile,
@@ -291,6 +292,53 @@ describe('profile-normalizer', () => {
       sinon.assert.calledOnce(generateLabels);
       assert.strictEqual(generateLabels.getCall(0).args[0].context, context);
       assert.deepStrictEqual(normalized.samples[0].labels, [['ts', 42n]]);
+    });
+
+    it('should keep frames from different original files apart', () => {
+      // One generated script whose two positions map to different original
+      // files, with the same function name and position
+      const sourceMapper = {
+        mappingInfo: (loc: {line: number}) => ({
+          file: loc.line === 1 ? '/app/a.ts' : '/app/b.ts',
+          line: 1,
+          column: 1,
+          name: 'render',
+        }),
+      } as unknown as SourceMapper;
+      const prof = makeTimeProfile([
+        makeLeaf('x', {scriptId: 42, lineNumber: 1, columnNumber: 5}),
+        makeLeaf('y', {scriptId: 42, lineNumber: 2, columnNumber: 5}),
+      ]);
+      const normalized = normalizeTimeProfile(prof, {
+        intervalMicros: 1000,
+        sourceMapper,
+      });
+      assert.deepStrictEqual(normalized.frames.map(f => f.file).sort(), [
+        '/app/a.ts',
+        '/app/b.ts',
+      ]);
+      assert.strictEqual(normalized.stacks.length, 2);
+
+      const pprof = serializeTimeProfile(prof, 1000, sourceMapper);
+      const strings = pprof.stringTable.strings;
+      assert.deepStrictEqual(
+        pprof.function.map(f => strings[Number(f.filename)]).sort(),
+        ['/app/a.ts', '/app/b.ts'],
+      );
+    });
+
+    it('should keep named and anonymous functions apart', () => {
+      // A function named like an anonymous function's position
+      const prof = makeTimeProfile([
+        makeLeaf('1:1', {lineNumber: 5, columnNumber: 5}),
+        makeLeaf('', {lineNumber: 1, columnNumber: 1}),
+      ]);
+      const pprof = serializeTimeProfile(prof, 1000);
+      const strings = pprof.stringTable.strings;
+      assert.deepStrictEqual(
+        pprof.function.map(f => strings[Number(f.name)]).sort(),
+        ['(anonymous:L#1:C#1)', '1:1'],
+      );
     });
 
     it('should strip file:// prefixes from script names', () => {
