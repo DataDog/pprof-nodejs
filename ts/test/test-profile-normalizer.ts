@@ -153,6 +153,32 @@ describe('profile-normalizer', () => {
       }
     });
 
+    it('should give the start of the collection period', () => {
+      dateStub.returns(1700000000123);
+      try {
+        // With the native profiler's epoch offset, exactly
+        const prof = {
+          ...makeTimeProfile([]),
+          startTime: 5_000_000,
+          endTime: 15_000_000,
+          epochOffset: 1700000000000_000 - 5_000_000,
+        };
+        const exact = normalizeTimeProfile(prof, {intervalMicros: 1000});
+        assert.strictEqual(exact.startTimeNanos, 1700000000000_000_000n);
+        assert.strictEqual(exact.durationNanos, 10_000_000_000);
+        // Without one, estimated as the collection time minus the duration
+        const estimated = normalizeTimeProfile(makeTimeProfile([]), {
+          intervalMicros: 1000,
+        });
+        assert.strictEqual(
+          estimated.startTimeNanos,
+          1700000000123_000_000n - 10_000_000_000n,
+        );
+      } finally {
+        dateStub.returns(0);
+      }
+    });
+
     it('should describe wall and sample count types, and CPU when present', () => {
       const withCpu = normalizeTimeProfile(makeTimeProfile([]), {
         intervalMicros: 1000,

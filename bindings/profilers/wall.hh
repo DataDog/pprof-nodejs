@@ -128,7 +128,8 @@ class WallProfiler : public Nan::ObjectWrap {
 
   ContextsByNode GetContextsByNode(v8::CpuProfile* profile,
                                    ContextBuffer& contexts,
-                                   int64_t startCpuTime);
+                                   int64_t startCpuTime,
+                                   int64_t v8ToEpochOffset);
 
   bool waitForSignal(uint64_t targetCallCount = 0);
   static void CleanupHook(void* data);
