@@ -20,6 +20,7 @@ import {time, getNativeThreadId} from '../src';
 import {profileV2, stopV2} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
 import * as profileSerializer from '../src/profile-serializer';
+import {OtelProfilesBuilder} from '../src/otel-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
@@ -577,6 +578,52 @@ describe('Time Profiler', () => {
         normalized.samples.map(s => s.values),
         timeProfile.sample.map(s => s.value),
       );
+    });
+
+    it('should stay usable when a stopAndVisit visitor throws', () => {
+      const throwing = {
+        metadata: () => {
+          throw new Error('boom');
+        },
+        frame: () => 0,
+        stack: () => 0,
+        sample: () => {},
+      };
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => time.stopAndVisit(false, throwing), /boom/);
+      assert.ok(!time.isStarted(), 'stopped despite the error');
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => time.stopAndVisit(true, throwing), /boom/);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      time.stopAndVisit(false, new OtelProfilesBuilder().visitor());
+      assert.ok(!time.isStarted());
+    });
+
+    it('should pass the profile to a visitor with stopAndVisit', () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      timeProfilerStub.stop.resetHistory();
+      const builder = new OtelProfilesBuilder();
+      const result = time.stopAndVisit(true, builder.visitor());
+      sinon.assert.calledOnce(timeProfilerStub.stop);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      assert.deepStrictEqual(result, {hasMissingMapFiles: false});
+      time.stopAndVisit(false, builder.visitor());
+      assert.ok(!time.isStarted());
+
+      const request = builder.build();
+      const profiles = request.resourceProfiles[0].scopeProfiles[0].profiles;
+      // Two visits of a profile without contexts (so its samples are summed,
+      // and the count keeps a profile) or CPU time: sample count and wall
+      assert.strictEqual(profiles.length, 4);
+      const expectedCount = timeProfile.sample.reduce(
+        (total, sample) => total + Number(sample.value[0]),
+        0,
+      );
+      const count = profiles[0].samples.reduce(
+        (total, sample) => total + Number(sample.values[0]),
+        0,
+      );
+      assert.strictEqual(count, expectedCount);
     });
 
     it('should serialize with the source mapper still set when stopping', () => {
