@@ -17,10 +17,10 @@
 // Type Definitions based on implementation in bindings/
 
 export interface TimeProfile {
-  /** Time in nanoseconds at which profile was stopped. */
+  /** V8 timer value, in microseconds, at which profile was stopped. */
   endTime: number;
   topDownRoot: TimeProfileNode;
-  /** Time in nanoseconds at which profile was started. */
+  /** V8 timer value, in microseconds, at which profile was started. */
   startTime: number;
   hasCpuTime?: boolean;
   /** CPU time of non-JS threads, only reported for the main worker thread */
