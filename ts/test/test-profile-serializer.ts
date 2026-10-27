@@ -236,6 +236,75 @@ describe('profile-serializer', () => {
     });
   });
 
+  describe('frame identity', () => {
+    const makeProfile = (children: TimeProfileNode[]): TimeProfile => ({
+      startTime: 0,
+      endTime: 10 * 1000 * 1000,
+      topDownRoot: {
+        name: '(root)',
+        scriptName: 'root',
+        scriptId: 0,
+        lineNumber: 0,
+        columnNumber: 0,
+        hitCount: 0,
+        children,
+      },
+    });
+    const leaf = (props: Partial<TimeProfileNode>): TimeProfileNode => ({
+      name: 'foo',
+      scriptName: 'script.js',
+      scriptId: 1,
+      lineNumber: 1,
+      columnNumber: 1,
+      hitCount: 1,
+      children: [],
+      ...props,
+    });
+
+    it('should keep frames from different original files apart', () => {
+      // One generated script whose two positions map to different original
+      // files, with the same function name and position
+      const sourceMapper = {
+        mappingInfo: (loc: {line: number}) => ({
+          file: loc.line === 1 ? '/app/a.ts' : '/app/b.ts',
+          line: 1,
+          column: 1,
+          name: 'render',
+        }),
+      } as unknown as SourceMapper;
+      const profile = serializeTimeProfile(
+        makeProfile([
+          leaf({scriptId: 42, lineNumber: 1, columnNumber: 5}),
+          leaf({scriptId: 42, lineNumber: 2, columnNumber: 5}),
+        ]),
+        1000,
+        sourceMapper,
+      );
+      const strings = profile.stringTable.strings;
+      assert.deepStrictEqual(
+        profile.function.map(f => strings[Number(f.filename)]).sort(),
+        ['/app/a.ts', '/app/b.ts'],
+      );
+      assert.strictEqual(profile.location.length, 2);
+    });
+
+    it('should keep named and anonymous functions apart', () => {
+      // A function named like an anonymous function's position
+      const profile = serializeTimeProfile(
+        makeProfile([
+          leaf({name: '1:1', lineNumber: 5, columnNumber: 5}),
+          leaf({name: '', lineNumber: 1, columnNumber: 1}),
+        ]),
+        1000,
+      );
+      const strings = profile.stringTable.strings;
+      assert.deepStrictEqual(
+        profile.function.map(f => strings[Number(f.name)]).sort(),
+        ['(anonymous:L#1:C#1)', '1:1'],
+      );
+    });
+  });
+
   describe('label builder', () => {
     it('should accept strings, numbers, and bigints', () => {
       const profileOut = serializeTimeProfile(labelEncodingProfile, 1000);

@@ -222,7 +222,11 @@ function serialize<T extends ProfileNode>(
         }
       }
     }
-    const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.name}`;
+    // The resolved file is part of a location's identity: after source
+    // mapping, one script can map to several original files. The file's
+    // length makes the key unambiguous.
+    const file = profLoc.file || '';
+    const keyStr = `${node.scriptId}:${profLoc.line}:${profLoc.column}:${profLoc.missingMapFile ? 1 : 0}:${file.length}:${file}:${profLoc.name}`;
     let id = locationIdMap.get(keyStr);
     if (id !== undefined) {
       // id is index+1, since 0 is not valid id.
@@ -259,9 +263,14 @@ function serialize<T extends ProfileNode>(
 
   function getFunction(loc: SourceLocation, scriptId?: number): Function {
     let name = loc.name;
+    // A function is identified by script, file and name, or by script, file
+    // and position for anonymous functions; the prefixes keep the two kinds
+    // apart. The file matters because after source mapping, one script can
+    // map to several original files.
+    const file = loc.file || '';
     const keyStr = name
-      ? `${scriptId}:${name}`
-      : `${scriptId}:${loc.line}:${loc.column}`;
+      ? `n:${scriptId}:${file.length}:${file}:${name}`
+      : `a:${scriptId}:${loc.line}:${loc.column}:${file}`;
     let id = functionIdMap.get(keyStr);
     if (id !== undefined) {
       // id is index+1, since 0 is not valid id.
