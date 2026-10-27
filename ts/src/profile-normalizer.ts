@@ -143,6 +143,19 @@ export interface VisitResult {
   hasMissingMapFiles: boolean;
 }
 
+/**
+ * A profile captured from a profiler, to be visited later: normalized, and
+ * passed to a visitor, which chooses the output (e.g. a PprofProfileBuilder's
+ * or an OtelProfilesBuilder's). Capturing does only what has to happen when
+ * the profile is taken; visiting does the rest, so a caller can defer that
+ * work, e.g. until it can yield to the event loop. The options of the
+ * normalization are set when the profile is captured. Visiting doesn't change
+ * the profile, so it can be visited more than once.
+ */
+export interface CapturedProfile {
+  visit(visitor: ProfileVisitor): VisitResult;
+}
+
 /** A normalized profile collected into arrays. */
 export interface NormalizedProfile extends ProfileMetadata, VisitResult {
   frames: Frame[];

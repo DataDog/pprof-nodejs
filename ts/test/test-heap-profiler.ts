@@ -152,6 +152,55 @@ describe('HeapProfiler', () => {
       assert.ok(normalized.frames.some(f => f.name === '(external)'));
     });
 
+    it('should capture a profile to visit later', async () => {
+      profileStub = sinon
+        .stub(v8HeapProfiler, 'getAllocationProfile')
+        .returns(copy(v8HeapProfile));
+      memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
+        external: 1024,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      const intervalBytes = 1024 * 512;
+      heapProfiler.start(intervalBytes, 32);
+      const captured = heapProfiler.capture();
+      // The profile, with external memory, is the one at the capture
+      sinon.assert.calledOnce(profileStub);
+      memoryUsageStub.returns({
+        external: 4096,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      const visit = () => {
+        const values: number[][] = [];
+        let period = 0;
+        let frames = 0;
+        const result = captured.visit({
+          metadata: metadata => {
+            period = metadata.period;
+          },
+          frame: () => frames++,
+          stack: () => 0,
+          sample: sample => {
+            values.push(sample.values);
+          },
+        });
+        assert.deepStrictEqual(result, {hasMissingMapFiles: false});
+        assert.strictEqual(period, intervalBytes);
+        assert.ok(frames > 0);
+        return values;
+      };
+      const expected = heapProfileWithExternal.sample.map(s => s.value);
+      assert.deepStrictEqual(visit(), expected);
+      // Visiting doesn't change the profile
+      assert.deepStrictEqual(visit(), expected);
+      sinon.assert.calledOnce(profileStub);
+    });
+
     it('should return a profile equal to the expected profile when including all samples', async () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'getAllocationProfile')
