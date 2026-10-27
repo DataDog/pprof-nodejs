@@ -28,7 +28,14 @@ import {
   DEFAULT_COLUMN_NUMBERS,
   serializeHeapProfile,
 } from './profile-serializer';
-import {NormalizedProfile, normalizeHeapProfile} from './profile-normalizer';
+import {
+  HeapProfileNormalizerOptions,
+  NormalizedProfile,
+  normalizeHeapProfile,
+  ProfileVisitor,
+  visitHeapProfile,
+  VisitResult,
+} from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -127,6 +134,32 @@ export function normalizedProfile(
       },
     );
   });
+}
+
+/**
+ * Collects a profile and passes it to the visitor, normalized, instead of
+ * serializing it as pprof, so the caller chooses the output (e.g. a visitor of
+ * an OtelProfilesBuilder). Throws if heap profiler is not enabled.
+ */
+export function visitProfile(
+  visitor: ProfileVisitor,
+  options: Pick<
+    HeapProfileNormalizerOptions,
+    'ignoreSamplesPath' | 'sourceMapper' | 'generateLabels'
+  > = {},
+): VisitResult {
+  return collectProfile(root =>
+    visitHeapProfile(
+      addExternalMemoryNode(root, startedWithAllocations),
+      visitor,
+      {
+        ...options,
+        startTimeNanos: BigInt(Date.now()) * 1_000_000n,
+        intervalBytes: heapIntervalBytes,
+        allocations: startedWithAllocations,
+      },
+    ),
+  );
 }
 
 function collectProfile<T>(

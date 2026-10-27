@@ -149,6 +149,41 @@ describe('HeapProfiler', () => {
       assert.ok(normalized.frames.some(f => f.name === '(external)'));
     });
 
+    it('should pass the profile to a visitor with visitProfile', async () => {
+      profileStub = sinon
+        .stub(v8HeapProfiler, 'getAllocationProfile')
+        .returns(copy(v8HeapProfile));
+      memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
+        external: 1024,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      const intervalBytes = 1024 * 512;
+      heapProfiler.start(intervalBytes, 32);
+      const values: number[][] = [];
+      let period = 0;
+      let frames = 0;
+      const result = heapProfiler.visitProfile({
+        metadata: metadata => {
+          period = metadata.period;
+        },
+        frame: () => frames++,
+        stack: () => 0,
+        sample: sample => {
+          values.push(sample.values);
+        },
+      });
+      assert.deepStrictEqual(result, {hasMissingMapFiles: false});
+      assert.strictEqual(period, intervalBytes);
+      assert.ok(frames > 0);
+      assert.deepStrictEqual(
+        values,
+        heapProfileWithExternal.sample.map(s => s.value),
+      );
+    });
+
     it('should return a profile equal to the expected profile when including all samples', async () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'getAllocationProfile')
