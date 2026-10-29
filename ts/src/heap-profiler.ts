@@ -92,23 +92,38 @@ export function profile(
   generateLabels?: GenerateAllocationLabelsFunction,
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
-  const result = convertProfile(
-    v8Profile(),
-    ignoreSamplePath,
-    sourceMapper,
-    generateLabels,
-    columnNumbers,
+  return collectProfile(root =>
+    convertProfile(
+      root,
+      ignoreSamplePath,
+      sourceMapper,
+      generateLabels,
+      columnNumbers,
+    ),
   );
-  // In allocation mode V8 keeps every sampled object (live + collected-by-GC)
-  // in an append-only buffer that's only freed by stopSamplingHeapProfiler.
-  // Without this reset, each call to getAllocationProfile re-reads the entire
-  // history, so alloc_* totals grow linearly with wall-clock time and V8's
-  // internal sample buffer leaks for the lifetime of the process.
-  if (startedWithAllocations) {
-    stopSamplingHeapProfiler();
-    startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, true);
+}
+
+function collectProfile<T>(
+  processProfile: (
+    root: AllocationProfileNode | AllocationProfileNodeWithStats,
+  ) => T,
+): T {
+  const root = v8Profile();
+  try {
+    return processProfile(root);
+  } finally {
+    // In allocation mode V8 keeps every sampled object (live + collected-by-GC)
+    // in an append-only buffer that's only freed by stopSamplingHeapProfiler.
+    // Without this reset, each call to getAllocationProfile re-reads the entire
+    // history, so alloc_* totals grow linearly with wall-clock time and V8's
+    // internal sample buffer leaks for the lifetime of the process. Reset even
+    // if processing throws: the collected window is consumed either way, so it
+    // isn't counted again by the next collection.
+    if (startedWithAllocations) {
+      stopSamplingHeapProfiler();
+      startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, true);
+    }
   }
-  return result;
 }
 
 export function convertProfile(

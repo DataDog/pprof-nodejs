@@ -180,6 +180,30 @@ describe('HeapProfiler', () => {
       assert.deepEqual(heapProfileIncludePathWithLabels, profile);
     });
 
+    it('should reset the allocation window even when processing throws', async () => {
+      profileStub = sinon
+        .stub(v8HeapProfiler, 'getAllocationProfile')
+        .returns(copy(v8AllocationProfile));
+      memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
+        external: 0,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      heapProfiler.start(1024 * 512, 32, true);
+      startStub.resetHistory();
+      assert.throws(
+        () =>
+          heapProfiler.profile(undefined, undefined, () => {
+            throw new Error('boom');
+          }),
+        /boom/,
+      );
+      sinon.assert.calledOnce(stopStub);
+      sinon.assert.calledOnceWithExactly(startStub, 1024 * 512, 32, true);
+    });
+
     it('should use allocation profile mode when allocations is passed', async () => {
       profileStub = sinon
         .stub(v8HeapProfiler, 'getAllocationProfile')

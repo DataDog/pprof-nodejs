@@ -498,6 +498,20 @@ describe('Time Profiler', () => {
       assert.deepEqual(timeProfile, profile);
     });
 
+    it('should stay usable when processing the stopped profile throws', () => {
+      const boom = () => {
+        throw new Error('boom');
+      };
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => time.stop(false, boom), /boom/);
+      assert.ok(!time.isStarted(), 'stopped despite the error');
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => time.stop(true, boom), /boom/);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      time.stop();
+      assert.ok(!time.isStarted());
+    });
+
     it('should be able to restart when stopping', async () => {
       time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
       timeProfilerStub.start.resetHistory();
@@ -681,6 +695,20 @@ describe('Time Profiler', () => {
     it('should return a profile equal to the expected profile', async () => {
       const profile = await profileV2(PROFILE_OPTIONS);
       assert.deepEqual(timeProfile, profile);
+    });
+
+    it('should stay usable when processing the stopped profile throws', () => {
+      const boom = () => {
+        throw new Error('boom');
+      };
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => stopV2(false, boom), /boom/);
+      assert.ok(!time.isStarted(), 'stopped despite the error');
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      assert.throws(() => stopV2(true, boom), /boom/);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      stopV2();
+      assert.ok(!time.isStarted());
     });
 
     it('should be able to restart when stopping', async () => {
