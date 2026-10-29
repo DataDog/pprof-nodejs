@@ -377,10 +377,13 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
-  async function runOomFixture(script: string, heapLimitExtensionSize: string) {
-    const proc = fork(path.join(__dirname, script), [heapLimitExtensionSize], {
+  async function runOomFixture(script: string, ...args: string[]) {
+    const proc = fork(path.join(__dirname, script), args, {
       execArgv: ['--expose-gc', '--max-old-space-size=64'],
       silent: true,
+      // These fixtures end on process.exit() while holding the leak, so under
+      // asan LeakSanitizer would report it all and fail the child. ASAN stays on.
+      env: {...process.env, LSAN_OPTIONS: 'detect_leaks=0'},
     });
     let output = '';
 
@@ -394,7 +397,8 @@ describe('OOMMonitoring', () => {
     return new Promise<{code: number | null; output: string}>(
       (resolve, reject) => {
         proc.on('error', reject);
-        proc.on('exit', code => {
+        // 'close', not 'exit': stdio is only drained by then.
+        proc.on('close', code => {
           resolve({code, output});
         });
       },
@@ -475,6 +479,47 @@ describe('OOMMonitoring', () => {
     );
   });
 
+  // A dumped folded stack: "<frames> <count> <bytes>", with a nonzero count.
+  const FOLDED_STACK_LINE = /allocateChunk:\d+ [1-9]\d* \d+/;
+
+  async function assertOomProfileReported(script: string, marker: string) {
+    const {code, output} = await runOomFixture(script);
+    assert.strictEqual(code, 0, `fixture reported a failure\n${output}`);
+    assert.ok(
+      output.includes(marker),
+      `the OOM callback did not report a checked profile\n${output}`,
+    );
+    assert.match(
+      output,
+      FOLDED_STACK_LINE,
+      `the folded stack dump carried no allocations\n${output}`,
+    );
+  }
+
+  // Regression guard: no yielding, so only an inline capture can dump. The
+  // fixture has no callback and is expected to die, so only the dump is read.
+  it('should capture the near-OOM profile without yielding', async function () {
+    if (Number(process.versions.node.split('.')[0]) < 26) {
+      this.skip();
+    }
+    this.timeout(30000);
+    const {output} = await runOomFixture('oom-allocation-profile-sync.js');
+    assert.match(
+      output,
+      FOLDED_STACK_LINE,
+      `the folded stack dump carried no allocations\n${output}`,
+    );
+  });
+
+  // Not version-gated: this translation branch must hold on every version.
+  it('should report in-use stats in the near-OOM profile', async function () {
+    this.timeout(30000);
+    await assertOomProfileReported(
+      'oom-inuse-profile.js',
+      'inuseProfileChecked',
+    );
+  });
+
   it('should call external process upon OOM', async function () {
     // this test is very slow on some configs (asan/valgrind)
     this.timeout(20000);
@@ -495,7 +540,8 @@ describe('OOMMonitoring', () => {
         }
       });
     });
-    assert.equal(fs.readFileSync(checkFilePath), 'ok');
+    const checkResult = fs.readFileSync(checkFilePath, 'utf8');
     fs.unlinkSync(checkFilePath);
+    assert.strictEqual(checkResult, 'ok', `export check said: ${checkResult}`);
   });
 });

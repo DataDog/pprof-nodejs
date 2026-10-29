@@ -298,7 +298,9 @@ export function monitorOutOfMemory(
   }
   let newCallback;
   if (typeof callback !== 'undefined') {
-    newCallback = (profile: AllocationProfileNode) => {
+    newCallback = (
+      profile: AllocationProfileNode | AllocationProfileNodeWithStats,
+    ) => {
       callback(convertProfile(profile));
     };
   }
