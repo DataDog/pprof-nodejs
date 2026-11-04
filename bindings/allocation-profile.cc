@@ -23,7 +23,6 @@
 using namespace v8;
 
 namespace dd {
-namespace {
 Local<Object> CreateAllocationObject(Isolate* isolate,
                                      const AllocationProfileNodeStats& stats) {
   Local<Object> alloc_obj = Object::New(isolate);
@@ -41,7 +40,6 @@ Local<Object> CreateAllocationObject(Isolate* isolate,
            Number::New(isolate, static_cast<double>(stats.alloc_space_bytes)));
   return alloc_obj;
 }
-}  // namespace
 
 AllocationProfileNodeStatsMap BuildAllocationStatsByNodeId(
     const std::vector<AllocationProfile::Sample>& samples) {

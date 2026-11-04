@@ -45,4 +45,7 @@ v8::Local<v8::Array> TranslateAllocationStats(
     v8::Isolate* isolate,
     const AllocationProfileSizeStatsMap* allocation_stats);
 
+v8::Local<v8::Object> CreateAllocationObject(
+    v8::Isolate* isolate, const AllocationProfileNodeStats& stats);
+
 }  // namespace dd
