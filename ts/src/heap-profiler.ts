@@ -204,9 +204,8 @@ export function profileV2(
  * @param intervalBytes - average number of bytes between samples.
  * @param stackDepth - maximum stack depth for samples collected.
  * @param allocations - include total allocation samples in the profile.
- *   When true, each call to `profile()` forces a full GC (via
- *   v8::HeapProfiler::kSamplingForceGC) to classify sampled objects as
- *   live/dead, which adds a measurable pause. Requires Node.js >= 26.
+ *   Retains samples of objects collected by GC. Liveness reflects the most
+ *   recent GC; collecting a profile does not force one. Requires Node.js >= 26.
  */
 export function start(
   intervalBytes: number,
