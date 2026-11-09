@@ -89,7 +89,6 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
 #if NODE_MAJOR_VERSION >= 26
     if (allocations) {
       flags = static_cast<v8::HeapProfiler::SamplingFlags>(
-          v8::HeapProfiler::kSamplingForceGC |
           v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMajorGC |
           v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMinorGC);
     }
