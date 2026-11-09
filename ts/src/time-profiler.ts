@@ -178,6 +178,23 @@ export function stop(
   generateLabels?: GenerateTimeLabelsFunction,
   lowCardinalityLabels?: string[],
 ): Profile {
+  return stopAndProcess(restart, profile =>
+    serializeTimeProfile(
+      profile,
+      gIntervalMicros,
+      gSourceMapper,
+      true,
+      generateLabels,
+      lowCardinalityLabels,
+      gColumnNumbers,
+    ),
+  );
+}
+
+function stopAndProcess<T>(
+  restart: boolean,
+  processProfile: (profile: TimeProfile) => T,
+): T {
   if (!gProfiler) {
     throw new Error('Wall profiler is not started');
   }
@@ -185,31 +202,55 @@ export function stop(
   const profile = gProfiler.stop(restart);
 
   if (restart) {
-    // Restart the profiler *before* serializing so the cost of serialization is
+    // Restart the profiler *before* processing so the cost of processing is
     // captured in the next profile. handleStopRestart() does not dispose of the
     // source mapper, so the source-map resolution below is unaffected.
     handleStopRestart();
+    return processProfile(profile);
   }
 
-  const serializedProfile = serializeTimeProfile(
-    profile,
-    gIntervalMicros,
-    gSourceMapper,
-    true,
-    generateLabels,
-    lowCardinalityLabels,
-    gColumnNumbers,
-  );
-
-  if (!restart) {
-    // Tear down *after* serializing: handleStopNoRestart() clears gSourceMapper
-    // (and disposes gProfiler), so serializing afterwards would drop source-map
+  try {
+    return processProfile(profile);
+  } finally {
+    // Tear down *after* processing: handleStopNoRestart() clears gSourceMapper
+    // (and disposes gProfiler), so processing afterwards would drop source-map
     // resolution and leave transpiled frames pointing at the generated files
-    // instead of the original sources.
+    // instead of the original sources. Tear down even if processing throws,
+    // since the native profiler has already stopped.
     handleStopNoRestart();
   }
+}
 
-  return serializedProfile;
+/**
+ * Stops the profiler through the lazy native path, which passes the profile
+ * to `processProfile` while the native profile is still alive. Updates the JS
+ * state for the stop or restart even if `processProfile` throws, because the
+ * native profiler has already stopped (and restarted) by then. If the native
+ * stop itself fails, the state is left as it was.
+ */
+function stopAndCollect<T>(
+  restart: boolean,
+  processProfile: (profile: TimeProfile) => T,
+): T {
+  if (!gProfiler) {
+    throw new Error('Wall profiler is not started');
+  }
+
+  let stopped = false;
+  try {
+    return gProfiler.stopAndCollect(restart, (profile: TimeProfile) => {
+      stopped = true;
+      return processProfile(profile);
+    });
+  } finally {
+    if (stopped) {
+      if (restart) {
+        handleStopRestart();
+      } else {
+        handleStopNoRestart();
+      }
+    }
+  }
 }
 
 /**
@@ -222,29 +263,17 @@ export function stopV2(
   generateLabels?: GenerateTimeLabelsFunction,
   lowCardinalityLabels?: string[],
 ) {
-  if (!gProfiler) {
-    throw new Error('Wall profiler is not started');
-  }
-
-  const serializedProfile = gProfiler.stopAndCollect(
-    restart,
-    (profile: TimeProfile) =>
-      serializeTimeProfile(
-        profile,
-        gIntervalMicros,
-        gSourceMapper,
-        true,
-        generateLabels,
-        lowCardinalityLabels,
-        gColumnNumbers,
-      ),
+  return stopAndCollect(restart, (profile: TimeProfile) =>
+    serializeTimeProfile(
+      profile,
+      gIntervalMicros,
+      gSourceMapper,
+      true,
+      generateLabels,
+      lowCardinalityLabels,
+      gColumnNumbers,
+    ),
   );
-  if (restart) {
-    handleStopRestart();
-  } else {
-    handleStopNoRestart();
-  }
-  return serializedProfile;
 }
 
 export function getState() {
