@@ -23,7 +23,7 @@ import {
   AllocationProfileNodeWithStats,
   LabelSet,
 } from '../src/v8-types';
-import {fork} from 'child_process';
+import {execFileSync, fork} from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
@@ -328,6 +328,31 @@ describe('HeapProfiler', () => {
       );
     });
   });
+});
+
+it('should collect allocation profiles without forcing GC', function () {
+  this.timeout(30000);
+  if (Number(process.versions.node.split('.')[0]) < 26) this.skip();
+
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--trace-gc',
+      '-e',
+      `
+      const heap = require(${JSON.stringify(require.resolve('../src/heap-profiler'))});
+      heap.start(512 * 1024, 64, true);
+      global.retained = Array.from({length: 200000}, (_, i) => ({i}));
+      console.time('10 allocation profiles');
+      for (let i = 0; i < 10; i++) heap.profile();
+      console.timeEnd('10 allocation profiles');
+      heap.stop();
+    `,
+    ],
+    {encoding: 'utf8', timeout: 25000},
+  );
+  console.log(output.trim());
+  assert.doesNotMatch(output, /sampling profiler/);
 });
 
 describe('foreign heap sampler', () => {
