@@ -83,6 +83,7 @@ const v8AllocationProfile: AllocationProfileNodeWithStats = {
 
 describe('HeapProfiler', () => {
   let startStub: sinon.SinonStub<[number, number, boolean?], void>;
+  let restartStub: sinon.SinonStub;
   let stopStub: sinon.SinonStub<[], void>;
   let profileStub: sinon.SinonStub<
     [],
@@ -92,6 +93,7 @@ describe('HeapProfiler', () => {
   let memoryUsageStub: sinon.SinonStub<[], NodeJS.MemoryUsage>;
   beforeEach(() => {
     startStub = sinon.stub(v8HeapProfiler, 'startSamplingHeapProfiler');
+    restartStub = sinon.stub(v8HeapProfiler, 'restartSamplingHeapProfiler');
     stopStub = sinon.stub(v8HeapProfiler, 'stopSamplingHeapProfiler');
     dateStub = sinon.stub(Date, 'now').returns(0);
   });
@@ -100,6 +102,7 @@ describe('HeapProfiler', () => {
     heapProfiler.stop();
     startStub.restore();
     stopStub.restore();
+    restartStub.restore();
     profileStub?.restore();
     dateStub.restore();
     memoryUsageStub?.restore();
@@ -402,11 +405,32 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
-  async function runOomFixture(script: string, heapLimitExtensionSize: string) {
-    const proc = fork(path.join(__dirname, script), [heapLimitExtensionSize], {
-      execArgv: ['--expose-gc', '--max-old-space-size=64'],
-      silent: true,
-    });
+  it('should dump an OOM profile after an allocation collection', async function () {
+    if (Number(process.versions.node.split('.')[0]) < 26) this.skip();
+    this.timeout(30000);
+    const {output} = await runOomFixture(
+      'oom-heap-limit-extension.js',
+      '0',
+      'allocations',
+    );
+    assert.ok(output.includes('FATAL ERROR:'), output);
+    assert.ok(output.includes('NearHeapLimit(count=1)'), output);
+    assert.ok(output.includes(':leak:'), output);
+  });
+
+  async function runOomFixture(
+    script: string,
+    heapLimitExtensionSize: string,
+    mode = '',
+  ) {
+    const proc = fork(
+      path.join(__dirname, script),
+      [heapLimitExtensionSize, mode],
+      {
+        execArgv: ['--expose-gc', '--max-old-space-size=64'],
+        silent: true,
+      },
+    );
     let output = '';
 
     proc.stdout?.on('data', chunk => {

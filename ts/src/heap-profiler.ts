@@ -20,6 +20,7 @@ import {
   getAllocationProfile,
   mapAllocationProfile,
   startSamplingHeapProfiler,
+  restartSamplingHeapProfiler,
   stopSamplingHeapProfiler,
   monitorOutOfMemory as monitorOutOfMemoryImported,
 } from './heap-profiler-bindings';
@@ -100,13 +101,13 @@ export function profile(
     columnNumbers,
   );
   // In allocation mode V8 keeps every sampled object (live + collected-by-GC)
-  // in an append-only buffer that's only freed by stopSamplingHeapProfiler.
+  // in an append-only buffer that's only freed by stopping V8 sampling.
   // Without this reset, each call to getAllocationProfile re-reads the entire
   // history, so alloc_* totals grow linearly with wall-clock time and V8's
   // internal sample buffer leaks for the lifetime of the process.
+  // Preserve OOM monitoring when starting the next sampling interval.
   if (startedWithAllocations) {
-    stopSamplingHeapProfiler();
-    startSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, true);
+    restartSamplingHeapProfiler(heapIntervalBytes, heapStackDepth, true);
   }
   return result;
 }
