@@ -30,6 +30,9 @@ class HeapProfiler {
   // stopSamplingHeapProfiler()
   static NAN_METHOD(StopSamplingHeapProfiler);
 
+  // Restart V8 sampling while preserving OOM monitoring.
+  static NAN_METHOD(RestartSamplingHeapProfiler);
+
   // Signature:
   // getAllocationProfile(): AllocationProfileNode
   static NAN_METHOD(GetAllocationProfile);
