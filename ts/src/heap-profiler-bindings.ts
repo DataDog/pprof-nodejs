@@ -38,6 +38,18 @@ export function startSamplingHeapProfiler(
   );
 }
 
+export function restartSamplingHeapProfiler(
+  heapIntervalBytes: number,
+  heapStackDepth: number,
+  allocations: boolean,
+) {
+  profiler.heapProfiler.restartSamplingHeapProfiler(
+    heapIntervalBytes,
+    heapStackDepth,
+    allocations,
+  );
+}
+
 export function stopSamplingHeapProfiler() {
   profiler.heapProfiler.stopSamplingHeapProfiler();
 }

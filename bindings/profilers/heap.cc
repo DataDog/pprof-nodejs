@@ -49,7 +49,8 @@ static void HeapProfilerCleanupHook(void* data) {
   }
 }
 
-NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
+static void StartSampling(const Nan::FunctionCallbackInfo<v8::Value>& info,
+                          bool restart) {
   auto isolate = info.GetIsolate();
 
   // Register cleanup hook if not already registered for this isolate
@@ -94,9 +95,14 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
     }
 #endif
 
+    // Collection resets only V8 sampling. Keep the OOM callback, configuration,
+    // extension counters, and cleanup hook attached to the existing state.
+    if (restart) {
+      isolate->GetHeapProfiler()->StopSamplingHeapProfiler();
+    }
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler(
         sample_interval, stack_depth, flags);
-  } else if (info.Length() == 0) {
+  } else if (info.Length() == 0 && !restart) {
     isolate->GetHeapProfiler()->StartSamplingHeapProfiler();
   } else {
     return Nan::ThrowTypeError(
@@ -108,6 +114,18 @@ NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
     state = std::make_shared<HeapProfilerState>(isolate);
   }
   state->allocations = allocations;
+}
+
+NAN_METHOD(HeapProfiler::StartSamplingHeapProfiler) {
+  StartSampling(info, false);
+}
+
+NAN_METHOD(HeapProfiler::RestartSamplingHeapProfiler) {
+  auto& state = PerIsolateData::For(info.GetIsolate())->GetHeapProfilerState();
+  if (!state) {
+    return Nan::ThrowError("Heap profiler is not enabled.");
+  }
+  StartSampling(info, true);
 }
 
 // Signature:
@@ -211,6 +229,8 @@ NAN_MODULE_INIT(HeapProfiler::Init) {
   v8::Local<v8::Object> heapProfiler = Nan::New<v8::Object>();
   Nan::SetMethod(
       heapProfiler, "startSamplingHeapProfiler", StartSamplingHeapProfiler);
+  Nan::SetMethod(
+      heapProfiler, "restartSamplingHeapProfiler", RestartSamplingHeapProfiler);
   Nan::SetMethod(
       heapProfiler, "stopSamplingHeapProfiler", StopSamplingHeapProfiler);
   Nan::SetMethod(heapProfiler, "getAllocationProfile", GetAllocationProfile);

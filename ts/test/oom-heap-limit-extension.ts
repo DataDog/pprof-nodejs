@@ -23,6 +23,7 @@ import {heap, HeapLimitExtensionSize} from '../src/index';
 const MB = 1024 * 1024;
 const CHUNK_SIZE = 4 * MB;
 const MAX_CHUNKS = 64;
+const allocations = process.argv[3] === 'allocations';
 const heapLimitExtensionSize: HeapLimitExtensionSize =
   process.argv[2] === 'auto' ? 'auto' : Number(process.argv[2] || 0);
 
@@ -30,8 +31,9 @@ function heapLimit() {
   return v8.getHeapStatistics().heap_size_limit;
 }
 
-heap.start(MB, 64);
-heap.monitorOutOfMemory(heapLimitExtensionSize, 1, false);
+heap.start(MB, 64, allocations);
+heap.monitorOutOfMemory(heapLimitExtensionSize, 1, allocations);
+if (allocations) heap.profile();
 
 const initialLimit = heapLimit();
 const retained: number[][] = [];
