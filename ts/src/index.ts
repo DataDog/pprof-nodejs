@@ -44,6 +44,11 @@ export {
   visitTimeProfile,
   VisitResult,
 } from './profile-normalizer';
+export {
+  ColumnNumbers,
+  PprofProfileBuilder,
+  PprofSerializerOptions,
+} from './profile-serializer';
 
 export {HeapLimitExtensionSize} from './heap-profiler';
 
