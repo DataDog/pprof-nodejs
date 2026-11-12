@@ -39,6 +39,7 @@ export {
   SampleLabel,
   SampleLabelValue,
   SampleType,
+  teeVisitor,
   TimeProfileNormalizerOptions,
   visitHeapProfile,
   visitTimeProfile,
