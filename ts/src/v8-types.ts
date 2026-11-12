@@ -22,6 +22,12 @@ export interface TimeProfile {
   topDownRoot: TimeProfileNode;
   /** V8 timer value, in microseconds, at which profile was started. */
   startTime: number;
+  /**
+   * Microseconds to add to a V8 timer value (startTime, endTime) to get
+   * microseconds since the UNIX epoch. The same offset converts sample
+   * timestamps, so the converted startTime and endTime bracket them.
+   */
+  epochOffset?: number;
   hasCpuTime?: boolean;
   /** CPU time of non-JS threads, only reported for the main worker thread */
   nonJSThreadsCpuTime?: number;
