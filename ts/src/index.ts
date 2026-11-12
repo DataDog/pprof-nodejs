@@ -34,6 +34,7 @@ export {
   SampleLabel,
   SampleLabelValue,
   SampleType,
+  teeVisitor,
   VisitResult,
 } from './profile-normalizer';
 export {
