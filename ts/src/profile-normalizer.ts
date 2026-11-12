@@ -143,6 +143,46 @@ export interface VisitResult {
   hasMissingMapFiles: boolean;
 }
 
+/**
+ * Returns a visitor that delivers one visit to several visitors, e.g. to build
+ * a profile in two formats from a single collection. Each visitor gets the
+ * frame and stack IDs it returned itself. The visitors share each sample's
+ * labels, so they must not modify them.
+ */
+export function teeVisitor(...visitors: ProfileVisitor[]): ProfileVisitor {
+  // For each visitor, its frame and stack IDs, by the tee's IDs
+  const frameIds: number[][] = visitors.map(() => []);
+  const stackIds: number[][] = visitors.map(() => []);
+  let frameCount = 0;
+  let stackCount = 0;
+  return {
+    metadata: metadata => {
+      for (const visitor of visitors) visitor.metadata(metadata);
+    },
+    frame: frame => {
+      for (let i = 0; i < visitors.length; i++) {
+        frameIds[i].push(visitors[i].frame(frame));
+      }
+      return frameCount++;
+    },
+    stack: ids => {
+      for (let i = 0; i < visitors.length; i++) {
+        const ownFrameIds = frameIds[i];
+        stackIds[i].push(visitors[i].stack(ids.map(id => ownFrameIds[id])));
+      }
+      return stackCount++;
+    },
+    sample: sample => {
+      for (let i = 0; i < visitors.length; i++) {
+        visitors[i].sample({...sample, stackId: stackIds[i][sample.stackId]});
+      }
+    },
+    end: result => {
+      for (const visitor of visitors) visitor.end?.(result);
+    },
+  };
+}
+
 /** A normalized profile collected into arrays. */
 export interface NormalizedProfile extends ProfileMetadata, VisitResult {
   frames: Frame[];
