@@ -45,6 +45,11 @@ export {
   VisitResult,
 } from './profile-normalizer';
 export {
+  ColumnNumbers,
+  PprofProfileBuilder,
+  PprofSerializerOptions,
+} from './profile-serializer';
+export {
   FRAME_MISSING_SOURCE_MAP,
   LinkExtractor,
   OtelProfileOptions,
