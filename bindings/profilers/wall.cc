@@ -511,7 +511,8 @@ void WallProfiler::Cleanup(Isolate* isolate) {
 
 ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
                                                ContextBuffer& contexts,
-                                               int64_t startCpuTime) {
+                                               int64_t startCpuTime,
+                                               int64_t V8toEpochOffset) {
   ContextsByNode contextsByNode;
 
   auto sampleCount = profile->GetSamplesCount();
@@ -551,7 +552,6 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
     return object;
   };
 #endif
-  auto V8toEpochOffset = GetV8ToEpochOffset();
   auto lastCpuTime = startCpuTime;
 
   // skip first sample because it's the one taken on profiler start, outside of
@@ -1160,6 +1160,9 @@ Result WallProfiler::StopCore(bool restart, ProfileBuilder&& buildProfile) {
   ContextsByNode* contextsByNodePtr = nullptr;
   int64_t nonJSThreadsCpuTime = 0;
   bool hasCpuTime = false;
+  // One offset for both the sample timestamps and the profile's epochOffset,
+  // so that they agree.
+  auto v8ToEpochOffset = GetV8ToEpochOffset();
 
   if (withContexts_) {
     if (isMainThread_ && collectCpuTime_) {
@@ -1173,13 +1176,17 @@ Result WallProfiler::StopCore(bool restart, ProfileBuilder&& buildProfile) {
           std::max(processCpu - totalWorkerCpu, ProcessCpuClock::duration{})
               .count();
     }
-    contextsByNode =
-        GetContextsByNode(v8_profile, contexts, startThreadCpuTime);
+    contextsByNode = GetContextsByNode(
+        v8_profile, contexts, startThreadCpuTime, v8ToEpochOffset);
     contextsByNodePtr = &contextsByNode;
     hasCpuTime = collectCpuTime_;
   }
 
-  buildProfile(v8_profile, hasCpuTime, nonJSThreadsCpuTime, contextsByNodePtr);
+  buildProfile(v8_profile,
+               hasCpuTime,
+               nonJSThreadsCpuTime,
+               contextsByNodePtr,
+               v8ToEpochOffset);
 
   v8_profile->Delete();
 
@@ -1197,17 +1204,28 @@ Result WallProfiler::StopCore(bool restart, ProfileBuilder&& buildProfile) {
   return {};
 }
 
+// Sets the offset that converts the profile's V8 timer values (startTime,
+// endTime) to microseconds since the UNIX epoch, like sample timestamps.
+static void SetEpochOffset(v8::Local<v8::Value> profile,
+                           int64_t v8ToEpochOffset) {
+  Nan::Set(profile.As<v8::Object>(),
+           Nan::New("epochOffset").ToLocalChecked(),
+           Nan::New<v8::Number>(static_cast<double>(v8ToEpochOffset)));
+}
+
 Result WallProfiler::StopImpl(bool restart, v8::Local<v8::Value>& profile) {
   return StopCore(restart,
                   [&](const v8::CpuProfile* v8_profile,
                       bool hasCpuTime,
                       int64_t nonJSThreadsCpuTime,
-                      ContextsByNode* contextsByNodePtr) {
+                      ContextsByNode* contextsByNodePtr,
+                      int64_t v8ToEpochOffset) {
                     profile = TranslateTimeProfile(v8_profile,
                                                    includeLines_,
                                                    contextsByNodePtr,
                                                    hasCpuTime,
                                                    nonJSThreadsCpuTime);
+                    SetEpochOffset(profile, v8ToEpochOffset);
                   });
 }
 
@@ -1219,11 +1237,13 @@ Result WallProfiler::StopAndCollectImpl(bool restart,
       [&](const v8::CpuProfile* v8_profile,
           bool hasCpuTime,
           int64_t nonJSThreadsCpuTime,
-          ContextsByNode* contextsByNodePtr) {
+          ContextsByNode* contextsByNodePtr,
+          int64_t v8ToEpochOffset) {
         auto* isolate = Isolate::GetCurrent();
         TimeProfileViewState state{includeLines_, contextsByNodePtr, {}};
         auto profile_view = BuildTimeProfileView(
             v8_profile, hasCpuTime, nonJSThreadsCpuTime, state);
+        SetEpochOffset(profile_view, v8ToEpochOffset);
         v8::Local<v8::Value> argv[] = {profile_view};
         auto cb_result = Nan::Call(
             callback, isolate->GetCurrentContext()->Global(), 1, argv);
