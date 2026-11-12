@@ -31,10 +31,15 @@ import {
   serializeTimeProfileOtel,
 } from '../src/otel-serializer';
 import {
+  PprofProfileBuilder,
   serializeHeapProfile,
   serializeTimeProfile,
 } from '../src/profile-serializer';
-import {visitHeapProfile, visitTimeProfile} from '../src/profile-normalizer';
+import {
+  teeVisitor,
+  visitHeapProfile,
+  visitTimeProfile,
+} from '../src/profile-normalizer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -1166,6 +1171,50 @@ describe('otel-serializer', () => {
         pprof.serializeHeapProfileOtel,
         serializeHeapProfileOtel,
       );
+    });
+  });
+
+  describe('teeVisitor', () => {
+    // Time profiles are timestamped when normalized; the stubbed Date.now()
+    // makes separate visits comparable
+    it('builds pprof and OTel from one visit, as separate visits would', () => {
+      const options = {intervalMicros: 1000, samplePerContext: true};
+      // Visit the OTel builder first, so that the pprof builder sees
+      // different frame and stack IDs than it returns itself
+      const otel = new OtelProfilesBuilder();
+      visitHeapProfile(v8HeapProfile, otel.visitor(), {
+        startTimeNanos: 0n,
+        intervalBytes: 512,
+      });
+      const pprof = new PprofProfileBuilder();
+      visitTimeProfile(
+        richTimeProfile(),
+        teeVisitor(otel.visitor(), pprof.visitor()),
+        options,
+      );
+
+      const separateOtel = new OtelProfilesBuilder();
+      visitHeapProfile(v8HeapProfile, separateOtel.visitor(), {
+        startTimeNanos: 0n,
+        intervalBytes: 512,
+      });
+      visitTimeProfile(richTimeProfile(), separateOtel.visitor(), options);
+      const separatePprof = new PprofProfileBuilder();
+      visitTimeProfile(richTimeProfile(), separatePprof.visitor(), options);
+
+      assert.deepStrictEqual(
+        Buffer.from(otel.build().encode()),
+        Buffer.from(separateOtel.build().encode()),
+      );
+      assert.deepStrictEqual(
+        Buffer.from(pprof.build().encode()),
+        Buffer.from(separatePprof.build().encode()),
+      );
+    });
+
+    it('is exported from the package', async () => {
+      const pprof = await import('../src');
+      assert.strictEqual(pprof.teeVisitor, teeVisitor);
     });
   });
 
