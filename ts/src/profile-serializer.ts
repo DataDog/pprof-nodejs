@@ -110,13 +110,19 @@ export interface PprofSerializerOptions {
   lowCardinalityLabels?: string[];
   /** How frame columns are encoded. */
   columnNumbers?: ColumnNumbers;
+  /**
+   * Name of a numeric label that receives each sample's timestamp, in
+   * nanoseconds since the epoch, e.g. `end_timestamp_ns`. pprof samples have no
+   * timestamps, so without it they are not encoded.
+   */
+  timestampLabel?: string;
 }
 
 /**
  * Builds a pprof profile from one normalized profile, delivered to the
  * visitor from visitor(): by the normalizer, or by a profiler emitting
  * samples itself. pprof samples have no timestamps, so sample timestamps are
- * not encoded; a visitor that needs them should carry them as labels.
+ * encoded as a label if the options name one, and not at all otherwise.
  *
  * The visit runs synchronously; call build() after it ends.
  */
@@ -129,6 +135,7 @@ export class PprofProfileBuilder {
     [this.profileVisitor, this.buildProfile] = createPprofVisitor(
       options.lowCardinalityLabels ?? [],
       options.columnNumbers ?? DEFAULT_COLUMN_NUMBERS,
+      options.timestampLabel,
     );
   }
 
@@ -169,8 +176,13 @@ function serialize(
 function createPprofVisitor(
   lowCardinalityLabels: string[],
   columnNumbers: ColumnNumbers,
+  timestampLabel?: string,
 ): [ProfileVisitor, () => Profile] {
   const stringTable = new StringTable();
+  const timestampKey =
+    timestampLabel === undefined
+      ? undefined
+      : stringTable.dedup(timestampLabel);
   const samples: Sample[] = [];
   const locations: Location[] = [];
   const stacks: number[][] = [];
@@ -210,11 +222,16 @@ function createPprofVisitor(
     },
     stack: frameIds => stacks.push(frameIds) - 1,
     sample: sample => {
+      const labels = dedupLabels(buildLabels(sample.labels));
+      if (timestampKey !== undefined && sample.timestamp !== undefined) {
+        // A timestamp is unique to its sample, so its Label isn't shared
+        labels.push(new Label({key: timestampKey, num: sample.timestamp}));
+      }
       samples.push(
         new Sample({
           locationId: stacks[sample.stackId],
           value: sample.values,
-          label: dedupLabels(buildLabels(sample.labels)),
+          label: labels,
         }),
       );
     },

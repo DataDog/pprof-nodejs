@@ -929,6 +929,46 @@ describe('profile-serializer', () => {
       );
     });
 
+    it('encodes sample timestamps as the label the options name', () => {
+      const builder = new PprofProfileBuilder({
+        timestampLabel: 'end_timestamp_ns',
+      });
+      const visitor = builder.visitor();
+      const wall = {type: 'wall', unit: 'nanoseconds'};
+      visitor.metadata({
+        sampleTypes: [wall],
+        periodType: wall,
+        period: 1,
+        timeNanos: 0n,
+      });
+      const stackId = visitor.stack([]);
+      // Beyond Number.MAX_SAFE_INTEGER, like real epoch nanoseconds
+      const timestamp = 1_700_000_000_123_456_789n;
+      visitor.sample({
+        stackId,
+        values: [10],
+        labels: [['thread name', 'Main Event Loop']],
+        timestamp,
+      });
+      visitor.sample({stackId, values: [20], labels: []});
+      visitor.end!({hasMissingMapFiles: false});
+      const profile = Profile.decode(builder.build().encode());
+      const strings = profile.stringTable.strings;
+      const labels = profile.sample.map(s =>
+        s.label.map(l => [
+          strings[Number(l.key)],
+          l.str ? strings[Number(l.str)] : BigInt(l.num),
+        ]),
+      );
+      assert.deepStrictEqual(labels, [
+        [
+          ['thread name', 'Main Event Loop'],
+          ['end_timestamp_ns', timestamp],
+        ],
+        [],
+      ]);
+    });
+
     it('takes a single visit', () => {
       const builder = new PprofProfileBuilder();
       builder.visitor();
