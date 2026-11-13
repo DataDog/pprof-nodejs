@@ -102,19 +102,87 @@ function packLineAndColumn(
   return (BigInt(column) << 32n) | BigInt(line);
 }
 
+export interface PprofSerializerOptions {
+  /**
+   * Keys of labels with few distinct values, whose Label objects are shared
+   * between samples to save memory.
+   */
+  lowCardinalityLabels?: string[];
+  /** How frame columns are encoded. */
+  columnNumbers?: ColumnNumbers;
+  /**
+   * Name of a numeric label that receives each sample's timestamp, in
+   * nanoseconds since the epoch, e.g. `end_timestamp_ns`. pprof samples have no
+   * timestamps, so without it they are not encoded.
+   */
+  timestampLabel?: string;
+}
+
+/**
+ * Builds a pprof profile from one normalized profile, delivered to the
+ * visitor from visitor(): by the normalizer, or by a profiler emitting
+ * samples itself. pprof samples have no timestamps, so sample timestamps are
+ * encoded as a label if the options name one, and not at all otherwise.
+ *
+ * The visit runs synchronously; call build() after it ends.
+ */
+export class PprofProfileBuilder {
+  private readonly profileVisitor: ProfileVisitor;
+  private readonly buildProfile: () => Profile;
+  private visited = false;
+
+  constructor(options: PprofSerializerOptions = {}) {
+    [this.profileVisitor, this.buildProfile] = createPprofVisitor(
+      options.lowCardinalityLabels ?? [],
+      options.columnNumbers ?? DEFAULT_COLUMN_NUMBERS,
+      options.timestampLabel,
+    );
+  }
+
+  /** Returns the visitor for the profile. A builder takes a single visit. */
+  visitor(): ProfileVisitor {
+    if (this.visited) {
+      throw new Error('A PprofProfileBuilder builds a single profile.');
+    }
+    this.visited = true;
+    return this.profileVisitor;
+  }
+
+  /** Builds the profile from the visit. */
+  build(): Profile {
+    return this.buildProfile();
+  }
+}
+
 /**
  * Encodes a normalized profile as a profile proto.
  *
  * @param visit - function that delivers the normalized profile to a visitor.
- * @param lowCardinalityLabels - keys of labels with few distinct values, whose
- * Label objects are shared between samples to save memory.
  */
 function serialize(
   visit: (visitor: ProfileVisitor) => VisitResult,
   lowCardinalityLabels: string[] = [],
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
+  const builder = new PprofProfileBuilder({
+    lowCardinalityLabels,
+    columnNumbers,
+  });
+  visit(builder.visitor());
+  return builder.build();
+}
+
+/** Returns a visitor that collects a pprof profile, and a function to build it. */
+function createPprofVisitor(
+  lowCardinalityLabels: string[],
+  columnNumbers: ColumnNumbers,
+  timestampLabel?: string,
+): [ProfileVisitor, () => Profile] {
   const stringTable = new StringTable();
+  const timestampKey =
+    timestampLabel === undefined
+      ? undefined
+      : stringTable.dedup(timestampLabel);
   const samples: Sample[] = [];
   const locations: Location[] = [];
   const stacks: number[][] = [];
@@ -127,8 +195,9 @@ function serialize(
     labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
   }
   let profile: ProfileInput = {};
+  let hasMissingMapFiles = false;
 
-  const {hasMissingMapFiles} = visit({
+  const visitor: ProfileVisitor = {
     metadata: metadata => {
       const valueType = (t: SampleType) =>
         new ValueType({
@@ -153,26 +222,39 @@ function serialize(
     },
     stack: frameIds => stacks.push(frameIds) - 1,
     sample: sample => {
+      const labels = dedupLabels(buildLabels(sample.labels));
+      if (timestampKey !== undefined && sample.timestamp !== undefined) {
+        // A timestamp is unique to its sample, so its Label isn't shared
+        labels.push(new Label({key: timestampKey, num: sample.timestamp}));
+      }
       samples.push(
         new Sample({
           locationId: stacks[sample.stackId],
           value: sample.values,
-          label: dedupLabels(buildLabels(sample.labels)),
+          label: labels,
         }),
       );
     },
-  });
+    end: result => {
+      hasMissingMapFiles = result.hasMissingMapFiles;
+    },
+  };
 
-  profile.sample = samples;
-  profile.location = locations;
-  profile.function = functions;
-  profile.stringTable = stringTable;
+  const build = () => {
+    const input: ProfileInput = {
+      ...profile,
+      sample: samples,
+      location: locations,
+      function: functions,
+      stringTable,
+    };
+    if (hasMissingMapFiles) {
+      input.comment = [stringTable.dedup('dd:has-missing-map-files')];
+    }
+    return new Profile(input);
+  };
 
-  if (hasMissingMapFiles) {
-    profile.comment = [stringTable.dedup('dd:has-missing-map-files')];
-  }
-
-  return new Profile(profile);
+  return [visitor, build];
 
   function getLine(frame: Frame): Line {
     // Both 'pack' and 'emit' carry the column only for frames whose source map

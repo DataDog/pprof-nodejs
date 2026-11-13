@@ -39,11 +39,29 @@ export {
   SampleLabel,
   SampleLabelValue,
   SampleType,
+  teeVisitor,
   TimeProfileNormalizerOptions,
   visitHeapProfile,
   visitTimeProfile,
   VisitResult,
 } from './profile-normalizer';
+export {
+  ColumnNumbers,
+  PprofProfileBuilder,
+  PprofSerializerOptions,
+} from './profile-serializer';
+export {
+  FRAME_MISSING_SOURCE_MAP,
+  LinkExtractor,
+  OtelProfileOptions,
+  OtelProfilesBuilder,
+  OtelSerializerOptions,
+  PROFILE_HAS_MISSING_SOURCE_MAPS,
+  ProfileAttribute,
+  SampleLink,
+  serializeHeapProfileOtel,
+  serializeTimeProfileOtel,
+} from './otel-serializer';
 
 export {HeapLimitExtensionSize} from './heap-profiler';
 
@@ -57,6 +75,7 @@ export const time = {
   start: timeProfiler.start,
   stop: timeProfiler.stop,
   stopNormalized: timeProfiler.stopNormalized,
+  stopAndVisit: timeProfiler.stopAndVisit,
   profileV2: timeProfiler.profileV2,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
@@ -75,6 +94,7 @@ export const heap = {
   profile: heapProfiler.profile,
   profileV2: heapProfiler.profileV2,
   normalizedProfile: heapProfiler.normalizedProfile,
+  visitProfile: heapProfiler.visitProfile,
   convertProfile: heapProfiler.convertProfile,
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,

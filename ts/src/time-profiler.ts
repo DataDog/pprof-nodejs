@@ -27,7 +27,10 @@ import {
 import {
   NormalizedProfile,
   normalizeTimeProfile,
+  ProfileVisitor,
   TimeProfileNormalizerOptions,
+  visitTimeProfile,
+  VisitResult,
 } from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
@@ -299,6 +302,29 @@ export function stopV2(
       lowCardinalityLabels,
       gColumnNumbers,
     ),
+  );
+}
+
+/**
+ * Like stop(), but passes the normalized profile to the visitor instead of
+ * serializing it as pprof, so the caller chooses the output (e.g. a visitor
+ * of an OtelProfilesBuilder).
+ */
+export function stopAndVisit(
+  restart: boolean,
+  visitor: ProfileVisitor,
+  options: Pick<
+    TimeProfileNormalizerOptions,
+    'generateLabels' | 'samplePerContext'
+  > = {},
+): VisitResult {
+  return stopAndProcess(restart, profile =>
+    visitTimeProfile(profile, visitor, {
+      ...options,
+      intervalMicros: gIntervalMicros,
+      sourceMapper: gSourceMapper,
+      recomputeSamplingInterval: true,
+    }),
   );
 }
 
