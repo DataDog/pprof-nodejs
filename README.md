@@ -102,6 +102,14 @@ Install [`pprof`][npm-url] with `npm` or add to your `package.json`.
           const profile = await pprof.heap.v8Profile();
         ```
 
+### Collect without building a `Profile` object
+
+Use `time.stopEncoded()` or `heap.profileEncoded()` when you only need profile
+bytes. They accept the same arguments as `time.stop()` and `heap.profile()`.
+The result includes `hasMissingSourceMaps` and an `encodeAsync()` method that
+returns uncompressed pprof protobuf bytes. Compress the bytes separately if
+your output requires gzip.
+
 [build-image]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml/badge.svg?branch=main
 [build-url]: https://github.com/Datadog/pprof-nodejs/actions/workflows/build.yml
 [npm-image]: https://badge.fury.io/js/@datadog%2Fpprof.svg

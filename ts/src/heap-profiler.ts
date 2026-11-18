@@ -28,8 +28,14 @@ import {
   ColumnNumbers,
   DEFAULT_COLUMN_NUMBERS,
   serializeHeapProfile,
+  serializeEncodedProfile,
+  EncodedProfile,
 } from './profile-serializer';
-import {NormalizedProfile, normalizeHeapProfile} from './profile-normalizer';
+import {
+  NormalizedProfile,
+  normalizeHeapProfile,
+  visitHeapProfile,
+} from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -160,17 +166,59 @@ export function convertProfile(
   generateLabels?: GenerateAllocationLabelsFunction,
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
+  return convertProfileWith(rootNode, (root, startTimeNanos, allocations) =>
+    serializeHeapProfile(
+      root,
+      startTimeNanos,
+      heapIntervalBytes,
+      ignoreSamplePath,
+      sourceMapper,
+      generateLabels,
+      allocations,
+      columnNumbers,
+    ),
+  );
+}
+
+export function profileEncoded(
+  ignoreSamplePath?: string,
+  sourceMapper?: SourceMapper,
+  generateLabels?: GenerateAllocationLabelsFunction,
+  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
+): EncodedProfile {
+  return collectProfile(rootNode =>
+    convertProfileWith(rootNode, (root, startTimeNanos, allocations) =>
+      serializeEncodedProfile(
+        visitor =>
+          visitHeapProfile(root, visitor, {
+            startTimeNanos,
+            intervalBytes: heapIntervalBytes,
+            ignoreSamplesPath: ignoreSamplePath,
+            sourceMapper,
+            generateLabels,
+            allocations,
+          }),
+        [],
+        columnNumbers,
+      ),
+    ),
+  );
+}
+
+function convertProfileWith<Output>(
+  rootNode: AllocationProfileNode | AllocationProfileNodeWithStats,
+  convert: (
+    root: AllocationProfileNode | AllocationProfileNodeWithStats,
+    startTimeNanos: bigint,
+    allocations: boolean,
+  ) => Output,
+): Output {
   const allocations = startedWithAllocations;
   const startTimeNanos = BigInt(Date.now()) * 1_000_000n;
-  return serializeHeapProfile(
+  return convert(
     addExternalMemoryNode(rootNode, allocations),
     startTimeNanos,
-    heapIntervalBytes,
-    ignoreSamplePath,
-    sourceMapper,
-    generateLabels,
     allocations,
-    columnNumbers,
   );
 }
 

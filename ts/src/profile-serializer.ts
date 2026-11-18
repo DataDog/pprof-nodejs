@@ -22,6 +22,7 @@ import {
   Location,
   Profile,
   ProfileInput,
+  ProfileWriter,
   Sample,
   ValueType,
   StringTable,
@@ -30,6 +31,7 @@ import {
   Frame,
   frameFunctionName,
   HeapProfileNormalizerOptions,
+  NormalizedSample,
   ProfileVisitor,
   SampleLabel,
   SampleType,
@@ -77,6 +79,17 @@ export type ColumnNumbers = 'drop' | 'pack' | 'emit';
 
 export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
 
+export interface EncodedProfile {
+  hasMissingSourceMaps: boolean;
+  encodeAsync(): Promise<Uint8Array>;
+}
+
+interface SampleSink<Output> {
+  stack(locationIds: number[]): number;
+  sample(sample: NormalizedSample): void;
+  finish(data: ProfileInput, hasMissingMapFiles: boolean): Output;
+}
+
 /**
  * Packs a frame's line and column into the single value carried by the pprof
  * Line.line field: the column in the high 32 bits, the line in the low 32 bits
@@ -105,27 +118,19 @@ function packLineAndColumn(
 /**
  * Encodes a normalized profile as a profile proto.
  *
- * @param visit - function that delivers the normalized profile to a visitor.
- * @param lowCardinalityLabels - keys of labels with few distinct values, whose
- * Label objects are shared between samples to save memory.
  */
-function serialize(
+function serialize<Output>(
   visit: (visitor: ProfileVisitor) => VisitResult,
-  lowCardinalityLabels: string[] = [],
-  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
-): Profile {
+  columnNumbers: ColumnNumbers,
+  createSink: (stringTable: StringTable) => SampleSink<Output>,
+): Output {
   const stringTable = new StringTable();
-  const samples: Sample[] = [];
+  const sink = createSink(stringTable);
   const locations: Location[] = [];
-  const stacks: number[][] = [];
   const functions: Function[] = [];
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-  const labelCaches: Map<number | bigint, Label>[] = [];
-  for (const l of lowCardinalityLabels) {
-    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
-  }
   let profile: ProfileInput = {};
 
   const {hasMissingMapFiles} = visit({
@@ -151,19 +156,10 @@ function serialize(
       locations.push(new Location({id, line: [getLine(frame)]}));
       return id;
     },
-    stack: frameIds => stacks.push(frameIds) - 1,
-    sample: sample => {
-      samples.push(
-        new Sample({
-          locationId: stacks[sample.stackId],
-          value: sample.values,
-          label: dedupLabels(buildLabels(sample.labels)),
-        }),
-      );
-    },
+    stack: sink.stack,
+    sample: sink.sample,
   });
 
-  profile.sample = samples;
   profile.location = locations;
   profile.function = functions;
   profile.stringTable = stringTable;
@@ -172,7 +168,7 @@ function serialize(
     profile.comment = [stringTable.dedup('dd:has-missing-map-files')];
   }
 
-  return new Profile(profile);
+  return sink.finish(profile, hasMissingMapFiles);
 
   function getLine(frame: Frame): Line {
     // Both 'pack' and 'emit' carry the column only for frames whose source map
@@ -221,6 +217,35 @@ function serialize(
     functions.push(f);
     return f;
   }
+}
+
+function createObjectSampleSink(
+  stringTable: StringTable,
+  lowCardinalityLabels: string[],
+): SampleSink<Profile> {
+  const samples: Sample[] = [];
+  const stacks: number[][] = [];
+  const labelCaches: Map<number | bigint, Label>[] = [];
+  for (const key of lowCardinalityLabels) {
+    labelCaches[stringTable.dedup(key)] = new Map<number | bigint, Label>();
+  }
+
+  return {
+    stack: locationIds => stacks.push(locationIds) - 1,
+    sample({stackId, values, labels}) {
+      samples.push(
+        new Sample({
+          locationId: stacks[stackId],
+          value: values,
+          label: dedupLabels(buildLabels(labels)),
+        }),
+      );
+    },
+    finish(data) {
+      data.sample = samples;
+      return new Profile(data);
+    },
+  };
 
   function buildLabels(sampleLabels: SampleLabel[]): Label[] {
     const labels: Label[] = new Array(sampleLabels.length);
@@ -259,6 +284,40 @@ function serialize(
   }
 }
 
+export function serializeEncodedProfile(
+  visit: (visitor: ProfileVisitor) => VisitResult,
+  lowCardinalityLabels: string[],
+  columnNumbers: ColumnNumbers,
+): EncodedProfile {
+  return serialize(visit, columnNumbers, stringTable => {
+    const writer = new ProfileWriter();
+    const stacks: Uint8Array[] = [];
+    for (const key of lowCardinalityLabels) {
+      stringTable.dedup(key);
+    }
+    return {
+      stack: locationIds => stacks.push(writer.packStack(locationIds)) - 1,
+      sample({stackId, values, labels}) {
+        writer.writeSample(stacks[stackId], values);
+        for (const [key, value] of labels) {
+          const keyId = stringTable.dedup(key);
+          if (typeof value === 'string') {
+            writer.writeLabel(keyId, stringTable.dedup(value));
+          } else {
+            writer.writeLabel(keyId, 0, value);
+          }
+        }
+      },
+      finish(data, hasMissingSourceMaps) {
+        return {
+          hasMissingSourceMaps,
+          encodeAsync: writer.encodeAsync.bind(writer, data),
+        };
+      },
+    };
+  });
+}
+
 /**
  * Converts v8 time profile into into a profile proto.
  * (https://github.com/google/pprof/blob/master/proto/profile.proto)
@@ -283,8 +342,8 @@ export function serializeTimeProfile(
   };
   return serialize(
     visitor => visitTimeProfile(prof, visitor, options),
-    lowCardinalityLabels,
     columnNumbers,
+    stringTable => createObjectSampleSink(stringTable, lowCardinalityLabels),
   );
 }
 
@@ -316,7 +375,7 @@ export function serializeHeapProfile(
   };
   return serialize(
     visitor => visitHeapProfile(prof, visitor, options),
-    [],
     columnNumbers,
+    stringTable => createObjectSampleSink(stringTable, []),
   );
 }

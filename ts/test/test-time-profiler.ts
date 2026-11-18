@@ -579,6 +579,34 @@ describe('Time Profiler', () => {
       );
     });
 
+    it('should encode packed columns on restart and final stop', async () => {
+      const sourceMapper = new SourceMapper();
+      sinon.stub(sourceMapper, 'mappingInfo').callsFake(location => ({
+        ...location,
+        missingMapFile: true,
+      }));
+      const options = {
+        intervalMicros: PROFILE_OPTIONS.intervalMicros,
+        columnNumbers: 'pack' as const,
+        sourceMapper,
+      };
+      time.start(options);
+      const expected = time.stop().encode();
+
+      time.start(options);
+      const restarted = time.stopEncoded(true);
+      assert.ok(time.isStarted());
+      const stopped = time.stopEncoded();
+      assert.ok(!time.isStarted());
+
+      const [restartBytes, stopBytes] = await Promise.all([
+        restarted.encodeAsync(),
+        stopped.encodeAsync(),
+      ]);
+      assert.deepStrictEqual(restartBytes, expected);
+      assert.deepStrictEqual(stopBytes, expected);
+    });
+
     it('should serialize with the source mapper still set when stopping', () => {
       // Regression test: stop() used to tear down the profiler state (via
       // handleStopNoRestart, which clears gSourceMapper) *before* serializing,

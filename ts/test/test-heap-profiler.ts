@@ -16,6 +16,7 @@
 
 import * as sinon from 'sinon';
 
+import {heap} from '../src';
 import * as heapProfiler from '../src/heap-profiler';
 import * as v8HeapProfiler from '../src/heap-profiler-bindings';
 import {
@@ -279,6 +280,34 @@ describe('HeapProfiler', () => {
       heapProfiler.start(intervalBytes, stackDepth, true);
       const profile = heapProfiler.profile();
       assert.ok(profile.sample.some(sample => sample.value[2] === 1024));
+    });
+
+    it('should reset the allocation window before encoding its snapshot', async () => {
+      profileStub = sinon
+        .stub(v8HeapProfiler, 'getAllocationProfile')
+        .callsFake(() => copy(v8AllocationProfile));
+      memoryUsageStub = sinon.stub(process, 'memoryUsage').returns({
+        external: 1024,
+        rss: 2048,
+        heapTotal: 4096,
+        heapUsed: 2048,
+        arrayBuffers: 512,
+      });
+      const intervalBytes = 1024 * 512;
+      const stackDepth = 32;
+      heapProfiler.start(intervalBytes, stackDepth, true);
+      const expected = heapProfiler.profile().encode();
+      restartStub.resetHistory();
+
+      const snapshot = heap.profileEncoded();
+
+      sinon.assert.calledOnceWithExactly(
+        restartStub,
+        intervalBytes,
+        stackDepth,
+        true,
+      );
+      assert.deepStrictEqual(await snapshot.encodeAsync(), expected);
     });
 
     it('should throw when profileV2 is requested from allocation mode', async () => {
