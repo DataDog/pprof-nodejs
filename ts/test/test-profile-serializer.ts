@@ -18,9 +18,11 @@ import * as tmp from 'tmp';
 
 import {
   NON_JS_THREADS_FUNCTION_NAME,
+  serializeEncodedProfile,
   serializeHeapProfile,
   serializeTimeProfile,
 } from '../src/profile-serializer';
+import {visitHeapProfile, visitTimeProfile} from '../src/profile-normalizer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
 import {
@@ -546,6 +548,34 @@ describe('profile-serializer', () => {
       assertHasMissingMapToken(profile);
     });
 
+    it('writes labelled time samples and missing-map columns before encoding metadata', async () => {
+      const input = makeSingleNodeTimeProfile(missingJsPath);
+      const generateLabels = () => ({tier: 'prod', span: 2 ** 40, cpu: -1});
+      const lowCardinality = ['tier', 'cpu'];
+      const expected = serializeTimeProfile(
+        input,
+        1000,
+        sourceMapper,
+        true,
+        generateLabels,
+        lowCardinality,
+        'emit',
+      );
+      const direct = serializeEncodedProfile(
+        visitor =>
+          visitTimeProfile(input, visitor, {
+            intervalMicros: 1000,
+            sourceMapper,
+            recomputeSamplingInterval: true,
+            generateLabels,
+          }),
+        lowCardinality,
+        'emit',
+      );
+      assert.strictEqual(direct.hasMissingSourceMaps, true);
+      assert.deepStrictEqual(await direct.encodeAsync(), expected.encode());
+    });
+
     it('packs the column for a missing-map frame when columnNumbers is "pack"', () => {
       // The frame's map is declared but missing, so it is bound for server-side
       // unminification (same condition as the missing-map token). Its generated
@@ -647,6 +677,31 @@ describe('profile-serializer', () => {
         sourceMapper,
       );
       assertHasMissingMapToken(profile);
+    });
+
+    it('writes heap samples and labels without changing the profile bytes', async () => {
+      const generateLabels = () => ({tier: 'prod', span: 2 ** 40});
+      const intervalBytes = 512 * 1024;
+      const expected = serializeHeapProfile(
+        v8HeapProfile,
+        0,
+        intervalBytes,
+        undefined,
+        undefined,
+        generateLabels,
+      );
+      const direct = serializeEncodedProfile(
+        visitor =>
+          visitHeapProfile(v8HeapProfile, visitor, {
+            startTimeNanos: 0n,
+            intervalBytes,
+            generateLabels,
+          }),
+        [],
+        'drop',
+      );
+      assert.strictEqual(direct.hasMissingSourceMaps, false);
+      assert.deepStrictEqual(await direct.encodeAsync(), expected.encode());
     });
 
     it('does not emit missing-map token when no source mapper is used', () => {

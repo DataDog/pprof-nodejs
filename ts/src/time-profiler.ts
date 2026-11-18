@@ -21,6 +21,8 @@ import {
   ColumnNumbers,
   DEFAULT_COLUMN_NUMBERS,
   serializeTimeProfile,
+  serializeEncodedProfile,
+  EncodedProfile,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
 } from './profile-serializer';
@@ -28,6 +30,7 @@ import {
   NormalizedProfile,
   normalizeTimeProfile,
   TimeProfileNormalizerOptions,
+  visitTimeProfile,
 } from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
@@ -190,6 +193,26 @@ export function stop(
       gSourceMapper,
       true,
       generateLabels,
+      lowCardinalityLabels,
+      gColumnNumbers,
+    ),
+  );
+}
+
+export function stopEncoded(
+  restart = false,
+  generateLabels?: GenerateTimeLabelsFunction,
+  lowCardinalityLabels: string[] = [],
+): EncodedProfile {
+  return stopAndProcess(restart, profile =>
+    serializeEncodedProfile(
+      visitor =>
+        visitTimeProfile(profile, visitor, {
+          intervalMicros: gIntervalMicros,
+          sourceMapper: gSourceMapper,
+          recomputeSamplingInterval: true,
+          generateLabels,
+        }),
       lowCardinalityLabels,
       gColumnNumbers,
     ),
