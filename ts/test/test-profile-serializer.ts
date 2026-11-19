@@ -317,6 +317,58 @@ describe('profile-serializer', () => {
         new Label({key: st.dedup('someBigint'), num: 18446744073709551557n}),
       ]);
     });
+
+    it('shares cached labels without changing label values or order', () => {
+      const values = [42, 42n, 42n, 42, 'same', 'same'];
+      const zeroValues = ['', 0n, NaN, -0, '', 0];
+      const {topDownRoot} = labelEncodingProfile;
+      const leaf: TimeProfileNode = {
+        ...topDownRoot.children[0],
+        hitCount: values.length,
+        contexts: values.map((value, index) => ({
+          context: {cached: value, zero: zeroValues[index], uncached: 'same'},
+          timestamp: BigInt(index + 1),
+        })),
+      };
+      const profile = serializeTimeProfile(
+        {
+          ...labelEncodingProfile,
+          topDownRoot: {...topDownRoot, children: [leaf]},
+        },
+        1000,
+        undefined,
+        false,
+        undefined,
+        ['cached', 'zero'],
+      );
+      const labels = profile.sample.map(sample => sample.label);
+      const strings = profile.stringTable.strings;
+      assert.deepStrictEqual(
+        labels.map(sample =>
+          sample.map(label => [
+            strings[Number(label.key)],
+            strings[Number(label.str)],
+            label.num,
+          ]),
+        ),
+        values.map(value => [
+          [
+            'cached',
+            typeof value === 'string' ? value : '',
+            typeof value === 'string' ? 0 : value,
+          ],
+          ['zero', '', 0],
+          ['uncached', 'same', 0],
+        ]),
+      );
+      assert.strictEqual(labels[0][0], labels[3][0]);
+      assert.strictEqual(labels[4][0], labels[5][0]);
+      assert.ok(labels.every(sample => sample[1] === labels[0][1]));
+      assert.strictEqual(
+        new Set(labels.map(sample => sample[2])).size,
+        values.length,
+      );
+    });
   });
 
   describe('serializeHeapProfile', () => {

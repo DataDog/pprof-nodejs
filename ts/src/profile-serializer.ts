@@ -17,7 +17,6 @@
 import {
   Function,
   Label,
-  LabelInput,
   Line,
   Location,
   Profile,
@@ -190,9 +189,13 @@ function createPprofVisitor(
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-  const labelCaches: Map<number | bigint, Label>[] = [];
-  for (const l of lowCardinalityLabels) {
-    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
+  const labelCaches: Map<number, Label>[] = [];
+  const labelKeyIds =
+    lowCardinalityLabels.length === 0 ? undefined : new Map<string, number>();
+  for (const key of lowCardinalityLabels) {
+    const keyId = stringTable.dedup(key);
+    labelCaches[keyId] = new Map<number, Label>();
+    labelKeyIds?.set(key, keyId);
   }
   let profile: ProfileInput = {};
   let hasMissingMapFiles = false;
@@ -222,7 +225,7 @@ function createPprofVisitor(
     },
     stack: frameIds => stacks.push(frameIds) - 1,
     sample: sample => {
-      const labels = dedupLabels(buildLabels(sample.labels));
+      const labels = buildLabels(sample.labels);
       if (timestampKey !== undefined && sample.timestamp !== undefined) {
         // A timestamp is unique to its sample, so its Label isn't shared
         labels.push(new Label({key: timestampKey, num: sample.timestamp}));
@@ -308,33 +311,24 @@ function createPprofVisitor(
     const labels: Label[] = new Array(sampleLabels.length);
     for (let i = 0; i < sampleLabels.length; i++) {
       const [key, value] = sampleLabels[i];
-      const labelInput: LabelInput = {key: stringTable.dedup(key)};
-      if (typeof value === 'string') {
-        labelInput.str = stringTable.dedup(value);
-      } else {
-        labelInput.num = value;
+      let keyIndex = labelKeyIds?.get(key);
+      if (keyIndex === undefined) {
+        keyIndex = stringTable.dedup(key);
+        labelKeyIds?.set(key, keyIndex);
       }
-      labels[i] = new Label(labelInput);
-    }
-    return labels;
-  }
-
-  function dedupLabels(labels: Label[]) {
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i];
-      const cache = labelCaches[Number(label.key)];
-      if (cache !== undefined) {
-        const key = label.str ?? label.num;
-        const exlabel = cache.get(key);
-        if (exlabel === undefined) {
-          cache.set(key, label);
-        } else if (
-          label.str === exlabel.str &&
-          label.num === exlabel.num &&
-          label.numUnit === exlabel.numUnit
-        ) {
-          labels[i] = exlabel;
+      const isString = typeof value === 'string';
+      const str = isString ? stringTable.dedup(value) : 0;
+      const num = isString ? 0 : value || 0;
+      const cache = labelCaches[keyIndex];
+      const cached = cache?.get(str);
+      if (cached?.num === num) {
+        labels[i] = cached;
+      } else {
+        const label = new Label({key: keyIndex, str, num});
+        if (cache !== undefined && cached === undefined) {
+          cache.set(str, label);
         }
+        labels[i] = label;
       }
     }
     return labels;
