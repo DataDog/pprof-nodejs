@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import {once} from 'node:events';
+
 import * as sinon from 'sinon';
 
 import * as heapProfiler from '../src/heap-profiler';
@@ -456,17 +458,21 @@ describe('foreign heap sampler', () => {
 });
 
 describe('OOMMonitoring', () => {
+  const CONFIGURED_HEAP_EXTENSION = String(64 * 1024 * 1024);
+
   it('should dump an OOM profile after an allocation collection', async function () {
-    if (Number(process.versions.node.split('.')[0]) < 26) this.skip();
+    if (Number(process.versions.node.split('.')[0]) < 26) {
+      this.skip();
+    }
     this.timeout(30000);
-    const {output} = await runOomFixture(
+    const {code, output} = await runOomFixture(
       'oom-heap-limit-extension.js',
-      '0',
+      CONFIGURED_HEAP_EXTENSION,
       'allocations',
     );
-    assert.ok(output.includes('FATAL ERROR:'), output);
     assert.ok(output.includes('NearHeapLimit(count=1)'), output);
     assert.ok(output.includes(':leak:'), output);
+    assert.strictEqual(code, 0, output);
   });
 
   async function runOomFixture(
@@ -491,14 +497,11 @@ describe('OOMMonitoring', () => {
       output += chunk;
     });
 
-    return new Promise<{code: number | null; output: string}>(
-      (resolve, reject) => {
-        proc.on('error', reject);
-        proc.on('exit', code => {
-          resolve({code, output});
-        });
-      },
-    );
+    const [code] = (await once(proc, 'close')) as [
+      number | null,
+      NodeJS.Signals | null,
+    ];
+    return {code, output};
   }
 
   async function assertHeapLimitIsRestored(heapLimitExtensionSize: string) {
@@ -520,7 +523,7 @@ describe('OOMMonitoring', () => {
 
   it('should restore a configured heap limit extension', async function () {
     this.timeout(30000);
-    await assertHeapLimitIsRestored(String(64 * 1024 * 1024));
+    await assertHeapLimitIsRestored(CONFIGURED_HEAP_EXTENSION);
   });
 
   // The fixture runs under --max-old-space-size=64, and v8 reports
