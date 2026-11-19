@@ -17,7 +17,6 @@
 import {
   Function,
   Label,
-  LabelInput,
   Line,
   Location,
   Profile,
@@ -122,9 +121,9 @@ function serialize(
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-  const labelCaches: Map<number | bigint, Label>[] = [];
+  const labelCaches: Map<number, Label>[] = [];
   for (const l of lowCardinalityLabels) {
-    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
+    labelCaches[stringTable.dedup(l)] = new Map<number, Label>();
   }
   let profile: ProfileInput = {};
 
@@ -157,7 +156,7 @@ function serialize(
         new Sample({
           locationId: stacks[sample.stackId],
           value: sample.values,
-          label: dedupLabels(buildLabels(sample.labels)),
+          label: buildLabels(sample.labels),
         }),
       );
     },
@@ -226,33 +225,20 @@ function serialize(
     const labels: Label[] = new Array(sampleLabels.length);
     for (let i = 0; i < sampleLabels.length; i++) {
       const [key, value] = sampleLabels[i];
-      const labelInput: LabelInput = {key: stringTable.dedup(key)};
-      if (typeof value === 'string') {
-        labelInput.str = stringTable.dedup(value);
+      const keyIndex = stringTable.dedup(key);
+      const isString = typeof value === 'string';
+      const str = isString ? stringTable.dedup(value) : 0;
+      const num = isString ? 0 : value || 0;
+      const cache = labelCaches[keyIndex];
+      const cached = cache?.get(str);
+      if (cached?.num === num) {
+        labels[i] = cached;
       } else {
-        labelInput.num = value;
-      }
-      labels[i] = new Label(labelInput);
-    }
-    return labels;
-  }
-
-  function dedupLabels(labels: Label[]) {
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i];
-      const cache = labelCaches[Number(label.key)];
-      if (cache !== undefined) {
-        const key = label.str ?? label.num;
-        const exlabel = cache.get(key);
-        if (exlabel === undefined) {
-          cache.set(key, label);
-        } else if (
-          label.str === exlabel.str &&
-          label.num === exlabel.num &&
-          label.numUnit === exlabel.numUnit
-        ) {
-          labels[i] = exlabel;
+        const label = new Label({key: keyIndex, str, num});
+        if (cache !== undefined && cached === undefined) {
+          cache.set(str, label);
         }
+        labels[i] = label;
       }
     }
     return labels;
