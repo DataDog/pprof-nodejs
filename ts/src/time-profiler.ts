@@ -26,8 +26,6 @@ import {
 } from './profile-serializer';
 import {
   CapturedProfile,
-  NormalizedProfile,
-  normalizeTimeProfile,
   TimeProfileNormalizerOptions,
   visitTimeProfile,
 } from './profile-normalizer';
@@ -195,27 +193,6 @@ export function stop(
       lowCardinalityLabels,
       gColumnNumbers,
     ),
-  );
-}
-
-/**
- * Same as stop(), but returns the profile normalized into a format-neutral
- * representation instead of serialized as pprof.
- */
-export function stopNormalized(
-  restart = false,
-  options: Pick<
-    TimeProfileNormalizerOptions,
-    'generateLabels' | 'samplePerContext'
-  > = {},
-): NormalizedProfile {
-  return stopAndProcess(restart, profile =>
-    normalizeTimeProfile(profile, {
-      ...options,
-      intervalMicros: gIntervalMicros,
-      sourceMapper: gSourceMapper,
-      recomputeSamplingInterval: true,
-    }),
   );
 }
 

@@ -23,6 +23,7 @@ import * as profileNormalizer from '../src/profile-normalizer';
 import * as profileSerializer from '../src/profile-serializer';
 import {OtelProfilesBuilder} from '../src/otel-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
+import {collect} from './normalized-profile';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
@@ -433,7 +434,9 @@ describe('Time Profiler', () => {
       time.setContext({});
       await setTimeoutPromise(1);
     }
-    const profile = time.stopNormalized(false, {samplePerContext: true});
+    const profile = collect(
+      time.stopAndCapture(false, {samplePerContext: true}),
+    );
     const timestamps = profile.samples
       .map(sample => sample.timestamp)
       .filter(timestamp => timestamp !== undefined) as bigint[];
@@ -568,9 +571,9 @@ describe('Time Profiler', () => {
       sinon.assert.calledOnce(timeProfilerStub.stop);
     });
 
-    it('should return a normalized profile matching the serialized one from stopNormalized', () => {
+    it('should capture a profile matching the serialized one', () => {
       time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
-      const normalized = time.stopNormalized();
+      const normalized = collect(time.stopAndCapture(false));
       assert.ok(!time.isStarted());
       assert.strictEqual(normalized.samples.length, timeProfile.sample.length);
       assert.strictEqual(normalized.frames.length, timeProfile.location.length);

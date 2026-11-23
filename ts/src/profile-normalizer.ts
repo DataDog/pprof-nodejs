@@ -156,15 +156,6 @@ export interface CapturedProfile {
   visit(visitor: ProfileVisitor): VisitResult;
 }
 
-/** A normalized profile collected into arrays. */
-export interface NormalizedProfile extends ProfileMetadata, VisitResult {
-  frames: Frame[];
-  /** Stacks, leaf first, as indices into {@link frames}. */
-  stacks: number[][];
-  /** Samples' stack IDs are indices into {@link stacks}. */
-  samples: NormalizedSample[];
-}
-
 export interface TimeProfileNormalizerOptions {
   /** Average time in microseconds between samples, as requested. */
   intervalMicros: number;
@@ -739,46 +730,4 @@ export function visitHeapProfile(
     ignoreSamplesPath,
     sourceMapper,
   );
-}
-
-function collect(
-  visit: (visitor: ProfileVisitor) => VisitResult,
-): NormalizedProfile {
-  let metadata: ProfileMetadata | undefined;
-  const frames: Frame[] = [];
-  const stacks: number[][] = [];
-  const samples: NormalizedSample[] = [];
-  const {hasMissingMapFiles} = visit({
-    metadata: m => {
-      metadata = m;
-    },
-    frame: f => frames.push(f) - 1,
-    stack: s => stacks.push(s) - 1,
-    sample: s => {
-      samples.push(s);
-    },
-  });
-  return {...metadata!, frames, stacks, samples, hasMissingMapFiles};
-}
-
-/**
- * Normalizes a V8 time profile into a {@link NormalizedProfile}.
- * See {@link visitTimeProfile}.
- */
-export function normalizeTimeProfile(
-  prof: TimeProfile,
-  options: TimeProfileNormalizerOptions,
-): NormalizedProfile {
-  return collect(visitor => visitTimeProfile(prof, visitor, options));
-}
-
-/**
- * Normalizes a V8 heap profile into a {@link NormalizedProfile}.
- * See {@link visitHeapProfile}.
- */
-export function normalizeHeapProfile(
-  prof: AllocationProfileNode | AllocationProfileNodeWithStats,
-  options: HeapProfileNormalizerOptions,
-): NormalizedProfile {
-  return collect(visitor => visitHeapProfile(prof, visitor, options));
 }

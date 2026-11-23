@@ -32,8 +32,6 @@ import {
 import {
   CapturedProfile,
   HeapProfileNormalizerOptions,
-  NormalizedProfile,
-  normalizeHeapProfile,
   visitHeapProfile,
 } from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
@@ -109,31 +107,6 @@ export function profile(
       columnNumbers,
     ),
   );
-}
-
-/**
- * Collects a profile and returns it normalized into a format-neutral
- * representation. Throws if heap profiler is not enabled.
- */
-export function normalizedProfile(
-  ignoreSamplePath?: string,
-  sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction,
-): NormalizedProfile {
-  return collectProfile(root => {
-    const startTimeNanos = BigInt(Date.now()) * 1_000_000n;
-    return normalizeHeapProfile(
-      addExternalMemoryNode(root, startedWithAllocations),
-      {
-        startTimeNanos,
-        intervalBytes: heapIntervalBytes,
-        ignoreSamplesPath: ignoreSamplePath,
-        sourceMapper,
-        generateLabels,
-        allocations: startedWithAllocations,
-      },
-    );
-  });
 }
 
 /** Options of a heap profile's normalization, set when it is captured. */
