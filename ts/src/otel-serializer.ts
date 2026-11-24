@@ -176,8 +176,10 @@ interface ProfileLayout {
  * profile, which is a snapshot at a single instant.
  *
  * Visitors run synchronously, and build() can be called after any number of
- * completed visits. A visit that throws leaves partial data in the builder,
- * so discard the builder after a failed visit.
+ * completed visits. A visit's profiles are added to the request when it ends,
+ * so a visit that throws, or isn't ended, adds none: the builder can go on
+ * with other visits, and its request has their profiles only. (A failed
+ * visit can leave dictionary entries that no profile refers to.)
  */
 export class OtelProfilesBuilder {
   private readonly strings = new StringTable();
@@ -207,7 +209,8 @@ export class OtelProfilesBuilder {
 
   /**
    * Returns a visitor that adds one normalized profile to the request, as one
-   * OTel profile per sample type. Use a new visitor for each profile.
+   * OTel profile per sample type, when the visit ends: its end() must be
+   * called. Use a new visitor for each profile.
    */
   visitor(options: OtelProfileOptions = {}): ProfileVisitor {
     let layout: ProfileLayout = {
@@ -230,16 +233,16 @@ export class OtelProfilesBuilder {
             profile.originalPayload = options.originalPayload.payload;
           }
         }
-        this.profiles.push(...layout.profiles);
       },
       frame: frame => this.locationIndex(frame),
       stack: frameIds => this.stackIndex(frameIds),
       sample: sample => this.addSample(sample, layout),
       end: () => {
-        if (layout.countIndex >= 0 && layout.foldable) {
-          const count = layout.profiles[layout.countIndex];
-          this.profiles.splice(this.profiles.indexOf(count), 1);
-        }
+        const folded =
+          layout.countIndex >= 0 && layout.foldable
+            ? layout.profiles[layout.countIndex]
+            : undefined;
+        this.profiles.push(...layout.profiles.filter(p => p !== folded));
       },
     };
   }

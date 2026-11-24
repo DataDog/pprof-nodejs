@@ -1131,6 +1131,61 @@ describe('otel-serializer', () => {
       );
     });
 
+    it('adds the profiles of a visit when it ends, so a failed visit adds none', () => {
+      const builder = new OtelProfilesBuilder({
+        // An invalid link for samples labeled 'bad', which makes their visit throw
+        extractLink: labels =>
+          labels.some(([key]) => key === 'bad')
+            ? {
+                link: {traceId: new Uint8Array(8), spanId: new Uint8Array(8)},
+                labels,
+              }
+            : {labels},
+      });
+      const visit = (name: string, labels: SampleLabel[], end = true) => {
+        const visitor = builder.visitor();
+        visitor.metadata({
+          sampleTypes: [cpu],
+          periodType: cpu,
+          period: 1,
+          timeNanos: 0n,
+        });
+        const stackId = visitor.stack([
+          visitor.frame({name, file: 'a.js', missingMapFile: false}),
+        ]);
+        visitor.sample({stackId, values: [10], labels: []});
+        visitor.sample({stackId, values: [20], labels});
+        if (end) visitor.end!({hasMissingMapFiles: false});
+      };
+      visit('first', [['m', 2]]);
+      assert.throws(() => visit('failed', [['bad', 1]]), TypeError);
+      // A visit that isn't ended adds none either
+      visit('unended', [['m', 2]], false);
+      visit('last', [['m', 2]]);
+
+      const request = roundTrip(builder.build());
+      const profiles = profilesOf(request);
+      assert.strictEqual(profiles.length, 2);
+      const strings = request.dictionary!.stringTable.strings;
+      const leaves = profiles.map(profile => {
+        const stack =
+          request.dictionary!.stackTable[profile.samples[0].stackIndex];
+        const location =
+          request.dictionary!.locationTable[stack.locationIndices[0]];
+        const fn =
+          request.dictionary!.functionTable[location.lines[0].functionIndex];
+        return strings[fn.nameStrindex];
+      });
+      assert.deepStrictEqual(leaves, ['first', 'last']);
+      // The other visits' profiles are complete
+      for (const profile of profiles) {
+        assert.deepStrictEqual(
+          profile.samples.map(s => Number(s.values[0])),
+          [10, 20],
+        );
+      }
+    });
+
     it('interns label attributes by key, value and type', () => {
       const builder = new OtelProfilesBuilder();
       const visitor = builder.visitor();
