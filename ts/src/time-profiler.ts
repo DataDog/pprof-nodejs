@@ -25,9 +25,9 @@ import {
   NON_JS_THREADS_FUNCTION_NAME,
 } from './profile-serializer';
 import {
-  NormalizedProfile,
-  normalizeTimeProfile,
+  CapturedProfile,
   TimeProfileNormalizerOptions,
+  visitTimeProfile,
 } from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
@@ -196,27 +196,6 @@ export function stop(
   );
 }
 
-/**
- * Same as stop(), but returns the profile normalized into a format-neutral
- * representation instead of serialized as pprof.
- */
-export function stopNormalized(
-  restart = false,
-  options: Pick<
-    TimeProfileNormalizerOptions,
-    'generateLabels' | 'samplePerContext'
-  > = {},
-): NormalizedProfile {
-  return stopAndProcess(restart, profile =>
-    normalizeTimeProfile(profile, {
-      ...options,
-      intervalMicros: gIntervalMicros,
-      sourceMapper: gSourceMapper,
-      recomputeSamplingInterval: true,
-    }),
-  );
-}
-
 function stopAndProcess<T>(
   restart: boolean,
   processProfile: (profile: TimeProfile) => T,
@@ -300,6 +279,38 @@ export function stopV2(
       gColumnNumbers,
     ),
   );
+}
+
+/** Options of a time profile's normalization, set when it is captured. */
+export type TimeProfileCaptureOptions = Pick<
+  TimeProfileNormalizerOptions,
+  'generateLabels' | 'samplePerContext'
+>;
+
+/**
+ * Like stop(), but captures the profile to be visited later, instead of
+ * serializing it as pprof: see {@link CapturedProfile}. Stopping (and
+ * restarting) happens now, so visiting the profile is safe whatever the
+ * profiler does in the meantime. `generateLabels` runs when the profile is
+ * visited.
+ */
+export function stopAndCapture(
+  restart: boolean,
+  options: TimeProfileCaptureOptions = {},
+): CapturedProfile {
+  return stopAndProcess(restart, profile => {
+    // The profiler's state, e.g. the source mapper, which a stop without
+    // restart clears, is the profile's as it is captured
+    const normalizerOptions: TimeProfileNormalizerOptions = {
+      ...options,
+      intervalMicros: gIntervalMicros,
+      sourceMapper: gSourceMapper,
+      recomputeSamplingInterval: true,
+    };
+    return {
+      visit: visitor => visitTimeProfile(profile, visitor, normalizerOptions),
+    };
+  });
 }
 
 export function getState() {

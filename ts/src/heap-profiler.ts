@@ -29,7 +29,11 @@ import {
   DEFAULT_COLUMN_NUMBERS,
   serializeHeapProfile,
 } from './profile-serializer';
-import {NormalizedProfile, normalizeHeapProfile} from './profile-normalizer';
+import {
+  CapturedProfile,
+  HeapProfileNormalizerOptions,
+  visitHeapProfile,
+} from './profile-normalizer';
 import {SourceMapper} from './sourcemapper/sourcemapper';
 import {
   AllocationProfileNode,
@@ -105,28 +109,33 @@ export function profile(
   );
 }
 
+/** Options of a heap profile's normalization, set when it is captured. */
+export type HeapProfileCaptureOptions = Pick<
+  HeapProfileNormalizerOptions,
+  'ignoreSamplesPath' | 'sourceMapper' | 'generateLabels'
+>;
+
 /**
- * Collects a profile and returns it normalized into a format-neutral
- * representation. Throws if heap profiler is not enabled.
+ * Like profile(), but captures the profile to be visited later, instead of
+ * serializing it as pprof: see {@link CapturedProfile}. Collecting the profile
+ * from V8, and in allocation mode restarting sampling, happens now.
+ * `generateLabels` runs when the profile is visited. Throws if heap profiler
+ * is not enabled.
  */
-export function normalizedProfile(
-  ignoreSamplePath?: string,
-  sourceMapper?: SourceMapper,
-  generateLabels?: GenerateAllocationLabelsFunction,
-): NormalizedProfile {
+export function capture(
+  options: HeapProfileCaptureOptions = {},
+): CapturedProfile {
   return collectProfile(root => {
-    const startTimeNanos = BigInt(Date.now()) * 1_000_000n;
-    return normalizeHeapProfile(
-      addExternalMemoryNode(root, startedWithAllocations),
-      {
-        startTimeNanos,
-        intervalBytes: heapIntervalBytes,
-        ignoreSamplesPath: ignoreSamplePath,
-        sourceMapper,
-        generateLabels,
-        allocations: startedWithAllocations,
-      },
-    );
+    const profile = addExternalMemoryNode(root, startedWithAllocations);
+    const normalizerOptions: HeapProfileNormalizerOptions = {
+      ...options,
+      startTimeNanos: BigInt(Date.now()) * 1_000_000n,
+      intervalBytes: heapIntervalBytes,
+      allocations: startedWithAllocations,
+    };
+    return {
+      visit: visitor => visitHeapProfile(profile, visitor, normalizerOptions),
+    };
   });
 }
 

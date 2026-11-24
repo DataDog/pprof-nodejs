@@ -19,8 +19,11 @@ import {isAsyncContextFrameActive} from '../src/async-context-frame';
 import {time, getNativeThreadId} from '../src';
 import {profileV2, stopV2} from '../src/time-profiler';
 import * as v8TimeProfiler from '../src/time-profiler-bindings';
+import * as profileNormalizer from '../src/profile-normalizer';
 import * as profileSerializer from '../src/profile-serializer';
+import {OtelProfilesBuilder} from '../src/otel-serializer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
+import {collect} from './normalized-profile';
 import {timeProfile, v8TimeProfile} from './profiles-for-tests';
 import {hrtime} from 'process';
 import {Label, Profile} from 'pprof-format';
@@ -431,7 +434,9 @@ describe('Time Profiler', () => {
       time.setContext({});
       await setTimeoutPromise(1);
     }
-    const profile = time.stopNormalized(false, {samplePerContext: true});
+    const profile = collect(
+      time.stopAndCapture(false, {samplePerContext: true}),
+    );
     const timestamps = profile.samples
       .map(sample => sample.timestamp)
       .filter(timestamp => timestamp !== undefined) as bigint[];
@@ -566,9 +571,9 @@ describe('Time Profiler', () => {
       sinon.assert.calledOnce(timeProfilerStub.stop);
     });
 
-    it('should return a normalized profile matching the serialized one from stopNormalized', () => {
+    it('should capture a profile matching the serialized one', () => {
       time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
-      const normalized = time.stopNormalized();
+      const normalized = collect(time.stopAndCapture(false));
       assert.ok(!time.isStarted());
       assert.strictEqual(normalized.samples.length, timeProfile.sample.length);
       assert.strictEqual(normalized.frames.length, timeProfile.location.length);
@@ -577,6 +582,81 @@ describe('Time Profiler', () => {
         normalized.samples.map(s => s.values),
         timeProfile.sample.map(s => s.value),
       );
+    });
+
+    it('should have stopped when a captured profile is visited', () => {
+      const throwing = {
+        metadata: () => {
+          throw new Error('boom');
+        },
+        frame: () => 0,
+        stack: () => 0,
+        sample: () => {},
+      };
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      const stopped = time.stopAndCapture(false);
+      assert.ok(!time.isStarted(), 'stopped by the capture');
+      assert.throws(() => stopped.visit(throwing), /boom/);
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      const restarted = time.stopAndCapture(true);
+      assert.throws(() => restarted.visit(throwing), /boom/);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      time.stopAndCapture(false).visit(new OtelProfilesBuilder().visitor());
+      assert.ok(!time.isStarted());
+    });
+
+    it('should visit a captured profile with the source mapper of the capture', () => {
+      // A stop without restart clears the source mapper, so the capture has
+      // to keep it for the visit
+      const sourceMapper = {} as unknown as SourceMapper;
+      const visitStub = sinon
+        .stub(profileNormalizer, 'visitTimeProfile')
+        .returns({hasMissingMapFiles: false});
+      try {
+        time.start({
+          intervalMicros: PROFILE_OPTIONS.intervalMicros,
+          sourceMapper,
+        });
+        const captured = time.stopAndCapture(false);
+        sinon.assert.notCalled(visitStub);
+        captured.visit(new OtelProfilesBuilder().visitor());
+        sinon.assert.calledOnce(visitStub);
+        assert.strictEqual(
+          visitStub.firstCall.args[2].sourceMapper,
+          sourceMapper,
+        );
+      } finally {
+        visitStub.restore();
+      }
+    });
+
+    it('should capture profiles to visit into a builder', () => {
+      time.start({intervalMicros: PROFILE_OPTIONS.intervalMicros});
+      timeProfilerStub.stop.resetHistory();
+      const builder = new OtelProfilesBuilder();
+      const captured = time.stopAndCapture(true);
+      sinon.assert.calledOnce(timeProfilerStub.stop);
+      assert.ok(time.isStarted(), 'still running after a restart');
+      assert.deepStrictEqual(captured.visit(builder.visitor()), {
+        hasMissingMapFiles: false,
+      });
+      time.stopAndCapture(false).visit(builder.visitor());
+      assert.ok(!time.isStarted());
+
+      const request = builder.build();
+      const profiles = request.resourceProfiles[0].scopeProfiles[0].profiles;
+      // Two visits of a profile without contexts (so its samples are summed,
+      // and the count keeps a profile) or CPU time: sample count and wall
+      assert.strictEqual(profiles.length, 4);
+      const expectedCount = timeProfile.sample.reduce(
+        (total, sample) => total + Number(sample.value[0]),
+        0,
+      );
+      const count = profiles[0].samples.reduce(
+        (total, sample) => total + Number(sample.values[0]),
+        0,
+      );
+      assert.strictEqual(count, expectedCount);
     });
 
     it('should serialize with the source mapper still set when stopping', () => {
