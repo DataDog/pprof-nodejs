@@ -22,12 +22,14 @@ import {
   frameFunctionName,
   GARBAGE_COLLECTION_FUNCTION_NAME,
   NON_JS_THREADS_FUNCTION_NAME,
-  NormalizedProfile,
-  normalizeHeapProfile,
-  normalizeTimeProfile,
   ProfileVisitor,
   visitTimeProfile,
 } from '../src/profile-normalizer';
+import {
+  NormalizedProfile,
+  normalizeHeapProfile,
+  normalizeTimeProfile,
+} from './normalized-profile';
 import {
   serializeHeapProfile,
   serializeTimeProfile,

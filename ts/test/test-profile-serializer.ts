@@ -18,9 +18,11 @@ import * as tmp from 'tmp';
 
 import {
   NON_JS_THREADS_FUNCTION_NAME,
+  PprofProfileBuilder,
   serializeHeapProfile,
   serializeTimeProfile,
 } from '../src/profile-serializer';
+import {visitTimeProfile} from '../src/profile-normalizer';
 import {SourceMapper} from '../src/sourcemapper/sourcemapper';
 import {Label, Profile} from 'pprof-format';
 import {
@@ -860,6 +862,122 @@ describe('profile-serializer', () => {
         FIRST_CALL_SOURCE_LINE,
         'Column 11 should use GREATEST_LOWER_BOUND to find mapping at column 10',
       );
+    });
+  });
+
+  describe('PprofProfileBuilder', () => {
+    it('builds the same profile as serializeTimeProfile', () => {
+      const builder = new PprofProfileBuilder({columnNumbers: 'emit'});
+      visitTimeProfile(v8TimeProfile, builder.visitor(), {
+        intervalMicros: 1000,
+      });
+      const expected = serializeTimeProfile(
+        v8TimeProfile,
+        1000,
+        undefined,
+        false,
+        undefined,
+        [],
+        'emit',
+      );
+      assert.deepStrictEqual(
+        Buffer.from(builder.build().encode()),
+        Buffer.from(expected.encode()),
+      );
+    });
+
+    it('takes samples from a visitor that emits them itself', () => {
+      const builder = new PprofProfileBuilder();
+      const visitor = builder.visitor();
+      const timeline = {type: 'timeline', unit: 'nanoseconds'};
+      visitor.metadata({
+        sampleTypes: [timeline],
+        periodType: timeline,
+        period: 1,
+        timeNanos: 5n,
+      });
+      const stackId = visitor.stack([]);
+      visitor.sample({
+        stackId,
+        values: [7],
+        labels: [
+          ['event', 'gc'],
+          ['end_timestamp_ns', 9n],
+        ],
+        timestamp: 9n,
+      });
+      visitor.end!({hasMissingMapFiles: true});
+      const profile = Profile.decode(builder.build().encode());
+      const strings = profile.stringTable.strings;
+      assert.strictEqual(profile.sample.length, 1);
+      const [sample] = profile.sample;
+      assert.deepStrictEqual(sample.locationId, []);
+      assert.deepStrictEqual(sample.value.map(Number), [7]);
+      assert.deepStrictEqual(
+        sample.label.map(l => [
+          strings[Number(l.key)],
+          l.str ? strings[Number(l.str)] : Number(l.num),
+        ]),
+        [
+          ['event', 'gc'],
+          ['end_timestamp_ns', 9],
+        ],
+      );
+      assert.deepStrictEqual(
+        profile.comment.map(c => strings[Number(c)]),
+        ['dd:has-missing-map-files'],
+      );
+    });
+
+    it('encodes sample timestamps as the label the options name', () => {
+      const builder = new PprofProfileBuilder({
+        timestampLabel: 'end_timestamp_ns',
+      });
+      const visitor = builder.visitor();
+      const wall = {type: 'wall', unit: 'nanoseconds'};
+      visitor.metadata({
+        sampleTypes: [wall],
+        periodType: wall,
+        period: 1,
+        timeNanos: 0n,
+      });
+      const stackId = visitor.stack([]);
+      // Beyond Number.MAX_SAFE_INTEGER, like real epoch nanoseconds
+      const timestamp = 1_700_000_000_123_456_789n;
+      visitor.sample({
+        stackId,
+        values: [10],
+        labels: [['thread name', 'Main Event Loop']],
+        timestamp,
+      });
+      visitor.sample({stackId, values: [20], labels: []});
+      visitor.end!({hasMissingMapFiles: false});
+      const profile = Profile.decode(builder.build().encode());
+      const strings = profile.stringTable.strings;
+      const labels = profile.sample.map(s =>
+        s.label.map(l => [
+          strings[Number(l.key)],
+          l.str ? strings[Number(l.str)] : BigInt(l.num),
+        ]),
+      );
+      assert.deepStrictEqual(labels, [
+        [
+          ['thread name', 'Main Event Loop'],
+          ['end_timestamp_ns', timestamp],
+        ],
+        [],
+      ]);
+    });
+
+    it('takes a single visit', () => {
+      const builder = new PprofProfileBuilder();
+      builder.visitor();
+      assert.throws(() => builder.visitor(), /single profile/);
+    });
+
+    it('is exported from the package', async () => {
+      const pprof = await import('../src');
+      assert.strictEqual(pprof.PprofProfileBuilder, PprofProfileBuilder);
     });
   });
 });
