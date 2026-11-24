@@ -24,28 +24,38 @@ export {
   TimeProfileNode,
   ProfileNode,
   LabelSet,
-  TimeProfile,
 } from './v8-types';
 export {
+  CapturedProfile,
   Frame,
-  frameFunctionName,
-  HeapProfileNormalizerOptions,
-  NormalizedProfile,
   NormalizedSample,
-  normalizeHeapProfile,
-  normalizeTimeProfile,
   ProfileMetadata,
   ProfileVisitor,
   SampleLabel,
   SampleLabelValue,
   SampleType,
-  TimeProfileNormalizerOptions,
-  visitHeapProfile,
-  visitTimeProfile,
   VisitResult,
 } from './profile-normalizer';
+export {
+  ColumnNumbers,
+  PprofProfileBuilder,
+  PprofSerializerOptions,
+} from './profile-serializer';
+export {
+  LinkExtractor,
+  OtelColumns,
+  OtelProfileOptions,
+  OtelProfilesBuilder,
+  OtelSerializerOptions,
+  ProfileAttribute,
+  SampleLink,
+} from './otel-serializer';
 
-export {HeapLimitExtensionSize} from './heap-profiler';
+export {
+  HeapLimitExtensionSize,
+  HeapProfileCaptureOptions,
+} from './heap-profiler';
+export {TimeProfileCaptureOptions} from './time-profiler';
 
 export {encode, encodeSync} from './profile-encoder';
 export {SourceMapper} from './sourcemapper/sourcemapper';
@@ -56,7 +66,7 @@ export const time = {
   profile: timeProfiler.profile,
   start: timeProfiler.start,
   stop: timeProfiler.stop,
-  stopNormalized: timeProfiler.stopNormalized,
+  stopAndCapture: timeProfiler.stopAndCapture,
   profileV2: timeProfiler.profileV2,
   getContext: timeProfiler.getContext,
   setContext: timeProfiler.setContext,
@@ -74,7 +84,7 @@ export const heap = {
   stop: heapProfiler.stop,
   profile: heapProfiler.profile,
   profileV2: heapProfiler.profileV2,
-  normalizedProfile: heapProfiler.normalizedProfile,
+  capture: heapProfiler.capture,
   convertProfile: heapProfiler.convertProfile,
   v8Profile: heapProfiler.v8Profile,
   monitorOutOfMemory: heapProfiler.monitorOutOfMemory,
