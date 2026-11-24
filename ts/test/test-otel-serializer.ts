@@ -33,6 +33,7 @@ import {
 } from '../src/profile-serializer';
 import {
   HeapProfileNormalizerOptions,
+  SampleLabel,
   TimeProfileNormalizerOptions,
   visitHeapProfile,
   visitTimeProfile,
@@ -1128,6 +1129,46 @@ describe('otel-serializer', () => {
         new Set([...first.attributeIndices, ...second.attributeIndices]).size,
         4,
       );
+    });
+
+    it('interns label attributes by key, value and type', () => {
+      const builder = new OtelProfilesBuilder();
+      const visitor = builder.visitor();
+      visitor.metadata({
+        sampleTypes: [cpu],
+        periodType: cpu,
+        period: 1,
+        timeNanos: 0n,
+      });
+      const stackId = visitor.stack([
+        visitor.frame({name: 'f', file: 'a.js', missingMapFile: false}),
+      ]);
+      const sample = (labels: SampleLabel[]) =>
+        visitor.sample({stackId, values: [1], labels});
+      sample([['n', 1]]);
+      sample([['n', 1n]]);
+      sample([['n', '1']]);
+      sample([['m', 1]]);
+      // Repeated labels reuse their entries, and -0 encodes as 0
+      sample([
+        ['n', 1],
+        ['z', 0],
+      ]);
+      sample([
+        ['n', '1'],
+        ['z', -0],
+      ]);
+      visitor.end!({hasMissingMapFiles: false});
+      const request = roundTrip(builder.build());
+      const {attributeTable, stringTable} = request.dictionary!;
+      const entries = attributeTable
+        .slice(1)
+        .map(a => `${stringTable.strings[a.keyStrindex]}=${attributeValue(a)}`);
+      // 1 and 1n encode alike, but are different labels, as before
+      assert.strictEqual(entries.length, 5);
+      assert.deepStrictEqual(new Set(entries), new Set(['n=1', 'm=1', 'z=0']));
+      const [profile] = profilesOf(request);
+      assert.strictEqual(profile.samples.length, 6);
     });
 
     it('gives samples without frames the zero-value stack', () => {

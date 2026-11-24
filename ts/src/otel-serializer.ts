@@ -64,6 +64,7 @@ import {
   NormalizedSample,
   SampleType,
   SampleLabel,
+  SampleLabelValue,
 } from './profile-normalizer';
 
 /**
@@ -191,7 +192,14 @@ export class OtelProfilesBuilder {
   private readonly functionIndices = new Map<string, number>();
   private readonly locationIndices = new Map<string, number>();
   private readonly stackIndices = new Map<string, number>();
-  private readonly attributeIndices = new Map<string, number>();
+  // Label attributes' indices, by key and then by value. Map keys compare as
+  // SameValueZero, which tells 1, 1n and '1' apart, without building a string
+  // key for every label of every sample.
+  private readonly labelAttributeIndices = new Map<
+    string,
+    Map<SampleLabelValue, number>
+  >();
+  private readonly profileAttributeIndices = new Map<string, number>();
   private readonly linkIndices = new Map<string, number>();
   private readonly profiles: ProfileInput[] = [];
 
@@ -417,31 +425,34 @@ export class OtelProfilesBuilder {
   }
 
   private attributeIndex([key, value]: SampleLabel): number {
-    // JSON-encoding the tuple keeps the key unambiguous whatever the strings
-    // contain.
-    const internKey = JSON.stringify([key, typeof value, String(value)]);
-    return this.internAttribute(internKey, () => ({
-      keyStrindex: this.strings.dedup(key),
-      value: anyValue(value),
-    }));
+    let byValue = this.labelAttributeIndices.get(key);
+    if (byValue === undefined) {
+      byValue = new Map();
+      this.labelAttributeIndices.set(key, byValue);
+    }
+    let index = byValue.get(value);
+    if (index === undefined) {
+      index =
+        this.attributeTable.push({
+          keyStrindex: this.strings.dedup(key),
+          value: anyValue(value),
+        }) - 1;
+      byValue.set(value, index);
+    }
+    return index;
   }
 
   private profileAttributeIndex({key, value}: ProfileAttribute): number {
-    // A different shape from the label keys above, so the two never collide
-    return this.internAttribute(
-      JSON.stringify(['profile', key, canonicalValue(value)]),
-      () => ({keyStrindex: this.strings.dedup(key), value}),
-    );
-  }
-
-  private internAttribute(
-    key: string,
-    create: () => KeyValueAndUnitInput,
-  ): number {
-    let index = this.attributeIndices.get(key);
+    // Profile attributes are few, and structured values need a canonical form
+    const internKey = JSON.stringify([key, canonicalValue(value)]);
+    let index = this.profileAttributeIndices.get(internKey);
     if (index === undefined) {
-      index = this.attributeTable.push(create()) - 1;
-      this.attributeIndices.set(key, index);
+      index =
+        this.attributeTable.push({
+          keyStrindex: this.strings.dedup(key),
+          value,
+        }) - 1;
+      this.profileAttributeIndices.set(internKey, index);
     }
     return index;
   }
