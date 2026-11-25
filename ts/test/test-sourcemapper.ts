@@ -260,6 +260,21 @@ describe('SourceMapper.loadDirectory', () => {
     );
   });
 
+  it('resolves a source map through an unnormalized generated path', async () => {
+    write('test.js', '//# sourceMappingURL=test.js.map\n');
+    write('test.js.map', MAP_CONTENT);
+    const sm = await SourceMapper.create([tmpDir]);
+    const file = [tmpDir, 'nested', '..', 'test.js'].join(path.sep);
+
+    assert.ok(sm.hasMappingInfo(file));
+    assert.deepStrictEqual(sm.mappingInfo({file, line: 1, column: 1}), {
+      file: path.join(tmpDir, 'test.ts'),
+      line: 1,
+      column: 1,
+      name: undefined,
+    });
+  });
+
   it('loads no mapping when sourceMappingURL points to a non-existent file and there is no .map fallback', async () => {
     write('orphan.js', '//# sourceMappingURL=nonexistent.js.map\n');
     // No orphan.js.map written — nothing to fall back to.
@@ -434,6 +449,7 @@ describe('SourceMapper.mappingInfo — webpack-style single-line bundle', () => 
     const a = lookup(mapper, 1, 11); // col 11 → adjusted 10 → funcA
     assert.strictEqual(a.name, 'funcA', 'funcA column');
     assert.ok(a.file!.endsWith('a.ts'), `funcA file: ${a.file}`);
+    assert.strictEqual(lookup(mapper, 1, 30).name, 'funcA');
 
     const b = lookup(mapper, 1, 31); // col 31 → adjusted 30 → funcB
     assert.strictEqual(b.name, 'funcB', 'funcB column');
