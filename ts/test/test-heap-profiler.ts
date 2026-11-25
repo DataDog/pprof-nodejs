@@ -530,7 +530,11 @@ describe('OOMMonitoring', () => {
       path.join(__dirname, script),
       [heapLimitExtensionSize, mode],
       {
-        execArgv: ['--expose-gc', '--max-old-space-size=64'],
+        execArgv: [
+          '--expose-gc',
+          '--max-old-space-size=64',
+          '--max-semi-space-size=4',
+        ],
         silent: true,
       },
     );
