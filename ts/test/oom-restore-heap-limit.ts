@@ -21,7 +21,6 @@ import * as v8 from 'v8';
 import {heap, HeapLimitExtensionSize} from '../src/index';
 
 const MB = 1024 * 1024;
-const LIMIT_TOLERANCE = 16 * MB;
 const CHUNK_SIZE = 4 * MB;
 const heapLimitExtensionSize: HeapLimitExtensionSize =
   process.argv[2] === 'auto' ? 'auto' : Number(process.argv[2] || 0);
@@ -51,22 +50,19 @@ async function main() {
     const initialLimit = heapLimit();
     const retained: number[][] = [];
 
-    while (
-      heapLimit() <= initialLimit + LIMIT_TOLERANCE &&
-      retained.length < 64
-    ) {
+    while (heapLimit() === initialLimit && retained.length < 64) {
       retained.push(allocateChunk());
     }
 
     const increasedLimit = heapLimit();
-    if (increasedLimit <= initialLimit + LIMIT_TOLERANCE) {
+    if (increasedLimit <= initialLimit) {
       throw new Error(`Heap limit did not increase from ${initialLimit}.`);
     }
 
     retained.length = 0;
     for (let i = 0; i < 100; i++) {
       gc();
-      if (heapLimit() <= initialLimit + LIMIT_TOLERANCE) {
+      if (heapLimit() === initialLimit) {
         return;
       }
       await new Promise(resolve => setTimeout(resolve, 20));
