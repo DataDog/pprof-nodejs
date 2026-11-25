@@ -77,6 +77,8 @@ export type ColumnNumbers = 'drop' | 'pack' | 'emit';
 
 export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
 
+const EMPTY_LABEL_INPUT: Label[] = [];
+
 /**
  * Packs a frame's line and column into the single value carried by the pprof
  * Line.line field: the column in the high 32 bits, the line in the low 32 bits
@@ -132,11 +134,7 @@ export class PprofProfileBuilder {
   private visited = false;
 
   constructor(options: PprofSerializerOptions = {}) {
-    [this.profileVisitor, this.buildProfile] = createPprofVisitor(
-      options.lowCardinalityLabels ?? [],
-      options.columnNumbers ?? DEFAULT_COLUMN_NUMBERS,
-      options.timestampLabel,
-    );
+    [this.profileVisitor, this.buildProfile] = createPprofVisitor(options);
   }
 
   /** Returns the visitor for the profile. A builder takes a single visit. */
@@ -164,19 +162,22 @@ function serialize(
   lowCardinalityLabels: string[] = [],
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
-  const builder = new PprofProfileBuilder({
-    lowCardinalityLabels,
-    columnNumbers,
-  });
-  visit(builder.visitor());
-  return builder.build();
+  const [visitor, build] = createPprofVisitor(
+    {lowCardinalityLabels, columnNumbers},
+    {adoptArrays: true},
+  );
+  visit(visitor);
+  return build();
 }
 
 /** Returns a visitor that collects a pprof profile, and a function to build it. */
 function createPprofVisitor(
-  lowCardinalityLabels: string[],
-  columnNumbers: ColumnNumbers,
-  timestampLabel?: string,
+  {
+    lowCardinalityLabels,
+    columnNumbers = DEFAULT_COLUMN_NUMBERS,
+    timestampLabel,
+  }: PprofSerializerOptions,
+  {adoptArrays = false}: {adoptArrays?: boolean} = {},
 ): [ProfileVisitor, () => Profile] {
   const stringTable = new StringTable();
   const timestampKey =
@@ -191,7 +192,7 @@ function createPprofVisitor(
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
   const labelCaches: Map<number | bigint, Label>[] = [];
-  for (const l of lowCardinalityLabels) {
+  for (const l of lowCardinalityLabels ?? []) {
     labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
   }
   let profile: ProfileInput = {};
@@ -227,13 +228,13 @@ function createPprofVisitor(
         // A timestamp is unique to its sample, so its Label isn't shared
         labels.push(new Label({key: timestampKey, num: sample.timestamp}));
       }
-      samples.push(
-        new Sample({
-          locationId: stacks[sample.stackId],
-          value: sample.values,
-          label: labels,
-        }),
-      );
+      const message = new Sample({
+        locationId: stacks[sample.stackId],
+        value: sample.values,
+        label: EMPTY_LABEL_INPUT,
+      });
+      message.label = labels;
+      samples.push(message);
     },
     end: result => {
       hasMissingMapFiles = result.hasMissingMapFiles;
@@ -243,15 +244,22 @@ function createPprofVisitor(
   const build = () => {
     const input: ProfileInput = {
       ...profile,
-      sample: samples,
-      location: locations,
-      function: functions,
       stringTable,
     };
     if (hasMissingMapFiles) {
       input.comment = [stringTable.dedup('dd:has-missing-map-files')];
     }
-    return new Profile(input);
+    if (!adoptArrays) {
+      input.sample = samples;
+      input.location = locations;
+      input.function = functions;
+      return new Profile(input);
+    }
+    const output = new Profile(input);
+    output.sample = samples;
+    output.location = locations;
+    output.function = functions;
+    return output;
   };
 
   return [visitor, build];

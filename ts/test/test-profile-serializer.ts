@@ -867,23 +867,48 @@ describe('profile-serializer', () => {
 
   describe('PprofProfileBuilder', () => {
     it('builds the same profile as serializeTimeProfile', () => {
+      const sourceMapper = new SourceMapper();
+      sinon.stub(sourceMapper, 'mappingInfo').callsFake(frame => ({
+        ...frame,
+        column: 17,
+        missingMapFile: true,
+      }));
       const builder = new PprofProfileBuilder({columnNumbers: 'emit'});
       visitTimeProfile(v8TimeProfile, builder.visitor(), {
         intervalMicros: 1000,
+        sourceMapper,
       });
       const expected = serializeTimeProfile(
         v8TimeProfile,
         1000,
-        undefined,
+        sourceMapper,
         false,
         undefined,
         [],
         'emit',
       );
-      assert.deepStrictEqual(
-        Buffer.from(builder.build().encode()),
-        Buffer.from(expected.encode()),
+      const profile = builder.build();
+      assert.ok(
+        profile.location.some(location =>
+          location.line.some(line => Number(line.column) === 17),
+        ),
       );
+      assert.deepStrictEqual(profile.encode(), expected.encode());
+    });
+
+    it('can build again after callers change the returned profile arrays', () => {
+      const builder = new PprofProfileBuilder();
+      visitTimeProfile(v8TimeProfile, builder.visitor(), {
+        intervalMicros: 1000,
+      });
+      const profile = builder.build();
+      const expected = profile.encode();
+
+      profile.sample.length = 0;
+      profile.location.length = 0;
+      profile.function.length = 0;
+
+      assert.deepStrictEqual(builder.build().encode(), expected);
     });
 
     it('takes samples from a visitor that emits them itself', () => {
