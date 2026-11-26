@@ -143,7 +143,7 @@ class HeapProfileTranslator : ProfileTranslator {
   }
 
  public:
-  explicit HeapProfileTranslator() {}
+  HeapProfileTranslator() = default;
 };
 }  // namespace
 

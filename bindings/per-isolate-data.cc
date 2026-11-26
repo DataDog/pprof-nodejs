@@ -33,7 +33,7 @@ PerIsolateData* PerIsolateData::For(v8::Isolate* isolate) {
     return &maybe->second;
   }
 
-  per_isolate_data_.emplace(std::make_pair(isolate, PerIsolateData()));
+  per_isolate_data_.emplace(isolate, PerIsolateData());
 
   auto pair = per_isolate_data_.find(isolate);
   auto perIsolateData = &pair->second;

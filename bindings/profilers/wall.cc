@@ -48,7 +48,7 @@
 // our addon will be able to dynamically link to the symbol when loaded.
 namespace v8 {
 namespace base {
-struct TimeTicks {
+struct TimeTicks {  // NOLINT(misc-use-internal-linkage)
   static int64_t Now();
 };
 }  // namespace base
@@ -59,7 +59,7 @@ struct TimeTicks {
 
 namespace internal {
 #if NODE_MAJOR_VERSION < 25
-struct HandleScopeData {
+struct HandleScopeData {  // NOLINT(misc-use-internal-linkage)
   v8::internal::Address* next;
   v8::internal::Address* limit;
 };
@@ -91,7 +91,7 @@ using namespace v8;
 
 namespace dd {
 
-class SignalGuard {
+class SignalGuard {  // NOLINT(misc-use-internal-linkage)
   std::atomic<bool>& guard_;
 
   inline void store(bool value) {
@@ -100,14 +100,16 @@ class SignalGuard {
   }
 
  public:
-  inline SignalGuard(std::atomic<bool>& guard) : guard_(guard) { store(true); }
+  explicit SignalGuard(std::atomic<bool>& guard) : guard_(guard) {
+    store(true);
+  }
 
   inline ~SignalGuard() { store(false); }
 };
 
-void SetContextPtr(ContextPtr& contextPtr,
-                   Isolate* isolate,
-                   Local<Value> value) {
+static void SetContextPtr(ContextPtr& contextPtr,
+                          Isolate* isolate,
+                          Local<Value> value) {
   if (!value->IsNullOrUndefined()) {
     contextPtr = std::make_shared<Global<Value>>(isolate, value);
   } else {
@@ -208,7 +210,7 @@ PersistentContextPtr::~PersistentContextPtr() {
 // Maximum number of rounds in the GetV8ToEpochOffset
 static constexpr int MAX_EPOCH_OFFSET_ATTEMPTS = 20;
 
-int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
+static int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
   int count = node->GetHitCount();
   auto child_count = node->GetChildrenCount();
 
@@ -223,7 +225,7 @@ int getTotalHitCount(const v8::CpuProfileNode* node, bool* noHitLeaf) {
 
 /** Returns 0 if no bug detected, 1 if possible bug (it could be a false
  * positive), 2 if bug detected for certain. */
-int detectV8Bug(const v8::CpuProfile* profile) {
+static int detectV8Bug(const v8::CpuProfile* profile) {
   /* When the profiler operates correctly, there'll be at least one node with
    * a non-zero hit count and the number of samples will be strictly greater
    * than the number of hits because they'll contain at least the starting
@@ -272,7 +274,7 @@ thread_local WallProfiler* t_active_profiler = nullptr;
 // Registry of all live profilers across threads. Used by the JS worker threads
 // to publish CPU consumed by them, and by the main thread to gather that data
 // while building a profile.
-class ActiveProfilers {
+class ActiveProfilers {  // NOLINT(misc-use-internal-linkage)
  public:
   void Add(WallProfiler* profiler) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -644,17 +646,17 @@ ContextsByNode WallProfiler::GetContextsByNode(CpuProfile* profile,
 }
 #undef DD_SAMPLE_CONTEXT_FIELDS
 
-void GCPrologueCallback(Isolate* isolate,
-                        GCType type,
-                        GCCallbackFlags flags,
-                        void* data) {
+static void GCPrologueCallback(Isolate* isolate,
+                               GCType type,
+                               GCCallbackFlags flags,
+                               void* data) {
   static_cast<WallProfiler*>(data)->OnGCStart(isolate);
 }
 
-void GCEpilogueCallback(Isolate* isolate,
-                        GCType type,
-                        GCCallbackFlags flags,
-                        void* data) {
+static void GCEpilogueCallback(Isolate* isolate,
+                               GCType type,
+                               GCCallbackFlags flags,
+                               void* data) {
   static_cast<WallProfiler*>(data)->OnGCEnd();
 }
 
@@ -770,12 +772,15 @@ void WallProfiler::Dispose(Isolate* isolate, bool removeCleanupHook) {
   }
 }
 
+// `name` declares a variable, so it cannot be parenthesized.
+// NOLINTBEGIN(bugprone-macro-parentheses)
 #define DD_WALL_PROFILER_GET_BOOLEAN_CONFIG(name)                              \
   auto name##Value = getArg(#name);                                            \
   if (name##Value.IsEmpty() || !name##Value.ToLocalChecked()->IsBoolean()) {   \
     return Nan::ThrowTypeError(#name " must be a boolean.");                   \
   }                                                                            \
   bool name = name##Value.ToLocalChecked().As<v8::Boolean>()->Value();
+// NOLINTEND(bugprone-macro-parentheses)
 
 NAN_METHOD(WallProfiler::New) {
   if (info.Length() != 1 || !info[0]->IsObject()) {
@@ -956,7 +961,7 @@ Result WallProfiler::StartInternal() {
   // names are not released until v8::CpuProfiler object is destroyed.
   // https://github.com/nodejs/node/blob/b53c51995380b1f8d642297d848cab6010d2909c/deps/v8/src/profiler/profile-generator.h#L516
   char buf[128];
-  snprintf(buf, sizeof(buf), "pprof-%" PRId64, (profileIdx_++) % 2);
+  (void)snprintf(buf, sizeof(buf), "pprof-%" PRId64, (profileIdx_++) % 2);
   v8::Local<v8::String> title = Nan::New<String>(buf).ToLocalChecked();
   auto result = cpuProfiler_->Start(
       title,
@@ -1287,8 +1292,12 @@ NAN_MODULE_INIT(WallProfiler::Init) {
   Nan::Set(target, className, Nan::GetFunction(tpl).ToLocalChecked());
 
   auto isolate = v8::Isolate::GetCurrent();
+  // V8 property attributes are bit flags; combined values are valid.
+  // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
   v8::PropertyAttribute ReadOnlyDontDelete =
       static_cast<v8::PropertyAttribute>(ReadOnly | DontDelete);
+  // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
+  // V8 bit flags
 
   v8::Local<Object> constants = v8::Object::New(isolate);
   Nan::DefineOwnProperty(constants,
@@ -1505,7 +1514,7 @@ NAN_METHOD(WallProfiler::Dispose) {
 #if NODE_MAJOR_VERSION >= 24 && DD_WALL_USE_SIGPROF
 // Returns the number of free Address slots for Locals that can be returned by
 // the isolate without triggering memory allocation.
-int GetFreeLocalSlotCount(Isolate* isolate) {
+static int GetFreeLocalSlotCount(Isolate* isolate) {
   v8::internal::HandleScopeData* data =
       reinterpret_cast<v8::internal::HandleScopeData*>(
           reinterpret_cast<uint64_t>(isolate) +
@@ -1518,7 +1527,7 @@ int GetFreeLocalSlotCount(Isolate* isolate) {
 }
 #endif
 
-double GetAsyncIdNoGC(v8::Isolate* isolate) {
+static double GetAsyncIdNoGC(v8::Isolate* isolate) {
   if (!isolate->IsInUse()) {
     // Must not try to create a handle scope if isolate is not in use.
     return -1;

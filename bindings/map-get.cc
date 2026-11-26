@@ -50,7 +50,7 @@ constexpr int kLoadFactor = 2;
 // Helper Functions (needed by struct methods)
 // ============================================================================
 
-inline Address UntagPointer(Address tagged) {
+static inline Address UntagPointer(Address tagged) {
   return tagged - kHeapObjectTag;
 }
 
@@ -58,12 +58,12 @@ inline Address UntagPointer(Address tagged) {
 // only ones we support.
 static_assert(sizeof(void*) == 8, "Only 64-bit platforms supported");
 
-inline bool IsSmi(Address value) {
+static inline bool IsSmi(Address value) {
   // More rigorous than (value & 1) but valid on 64-bit platforms only.
   return (value & 0xFFFFFFFF) == 0;
 }
 
-inline int SmiToInt(Address smi) {
+static inline int SmiToInt(Address smi) {
   return static_cast<int>(static_cast<intptr_t>(smi) >> 32);
 }
 
@@ -73,12 +73,12 @@ inline int SmiToInt(Address smi) {
 
 // HeapObject layout - base for all V8 heap objects
 // From v8/src/objects/heap-object.h
-struct HeapObjectLayout {
-  Address classMap_;  // Tagged pointer to the class map
+struct HeapObjectLayout {  // NOLINT(misc-use-internal-linkage)
+  Address classMap_;       // Tagged pointer to the class map
 };
 
 // JavaScript Map object
-struct JSMapLayout {
+struct JSMapLayout {            // NOLINT(misc-use-internal-linkage)
   HeapObjectLayout header_;     // Map is a HeapObject
   Address properties_or_hash_;  // not used by us
   Address elements_;            // not used by us
@@ -87,7 +87,7 @@ struct JSMapLayout {
 };
 
 // V8 FixedArray: length_ is a Smi, followed by that many element slots
-struct FixedArrayLayout {
+struct FixedArrayLayout {    // NOLINT(misc-use-internal-linkage)
   HeapObjectLayout header_;  // FixedArray is a HeapObject
   Address length_;
   Address elements_[0];
@@ -95,7 +95,7 @@ struct FixedArrayLayout {
 
 // OrderedHashMap layout
 // From v8/src/objects/ordered-hash-table.h
-struct OrderedHashMapLayout {
+struct OrderedHashMapLayout {    // NOLINT(misc-use-internal-linkage)
   FixedArrayLayout fixedArray_;  // OrderedHashMap is a FixedArray
   // The first 3 address slots in the FixedArray that is a Hashtable are the
   // number of elements, deleted elements, and buckets. Each one is a Smi.
@@ -167,9 +167,9 @@ struct OrderedHashMapLayout {
 // ============================================================================
 
 // Find an entry by a key and its hash in an OrderedHashMap.
-int FindEntryByHash(const OrderedHashMapLayout* layout,
-                    int hash,
-                    Address key_to_find) {
+static int FindEntryByHash(const OrderedHashMapLayout* layout,
+                           int hash,
+                           Address key_to_find) {
   const int entry_count = layout->GetEntryCount();
   const int bucket = hash & (layout->NumberOfBuckets() - 1);
   int entry = layout->GetFirstEntry(bucket);
@@ -179,6 +179,7 @@ int FindEntryByHash(const OrderedHashMapLayout* layout,
   // reason the chain is cyclical. Also, every entry value must be between
   // [0, GetEntryCount).
   for (int max_entries_left = entry_count;
+       // NOLINTNEXTLINE(misc-redundant-expression): kNotFound check is explicit
        entry != OrderedHashMapLayout::kNotFoundValue && entry >= 0 &&
        entry < entry_count && max_entries_left > 0;
        max_entries_left--) {
@@ -194,9 +195,9 @@ int FindEntryByHash(const OrderedHashMapLayout* layout,
 
 // Find an entry by a key and its hash in an OrderedHashMap, and return its
 // value or the zero address if it is not found.
-Address FindValueByHash(const OrderedHashMapLayout* layout,
-                        int hash,
-                        Address key_to_find) {
+static Address FindValueByHash(const OrderedHashMapLayout* layout,
+                               int hash,
+                               Address key_to_find) {
   auto entry = FindEntryByHash(layout, hash, key_to_find);
   return entry == kNotFound ? 0 : layout->GetValue(entry);
 }

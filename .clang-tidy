@@ -1,0 +1,52 @@
+---
+# Static analysis for the native bindings in bindings/.
+# Medium strictness: bug-finding checks plus a few safe modernizations.
+#
+# Disabled on purpose:
+# - performance-no-int-to-ptr: pointer tagging and V8 internals need int/pointer casts.
+# - bugprone-signed-bitwise: V8 and OS bit flags are signed ints.
+# - performance-enum-size: changing enum underlying types could affect ABI / V8 layouts.
+# - bugprone-assignment-in-if-condition: libuv idiom `if ((r = uv_x()) != 0)`.
+# - clang-analyzer-optin.core.EnumCastOutOfRange: V8 PropertyAttribute bit flags.
+# - the rest: noisy, little value for this code base.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -bugprone-signed-bitwise,
+  cert-*,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -cert-err58-cpp,
+  clang-analyzer-*,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  concurrency-mt-unsafe,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-virtual-class-destructor,
+  misc-*,
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -misc-use-anonymous-namespace,
+  -misc-unused-parameters,
+  modernize-use-emplace,
+  modernize-use-equals-default,
+  modernize-use-nullptr,
+  modernize-use-override,
+  performance-*,
+  -performance-enum-size,
+  -performance-no-int-to-ptr,
+  readability-duplicate-include,
+  readability-misleading-indentation,
+  readability-redundant-declaration
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/bindings/.*'
+FormatStyle: none
+CheckOptions:
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'v8::Local;v8::MaybeLocal'
+...

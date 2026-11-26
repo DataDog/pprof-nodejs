@@ -66,7 +66,7 @@ static NAN_METHOD(CpedMapContains) {
 static NAN_METHOD(GetNativeThreadId) {
 #ifdef __APPLE__
   uint64_t native_id;
-  (void)pthread_threadid_np(NULL, &native_id);
+  (void)pthread_threadid_np(nullptr, &native_id);
 #elif defined(__linux__)
   pid_t native_id = syscall(SYS_gettid);
 #elif defined(_MSC_VER)
