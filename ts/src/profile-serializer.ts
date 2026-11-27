@@ -77,6 +77,8 @@ export type ColumnNumbers = 'drop' | 'pack' | 'emit';
 
 export const DEFAULT_COLUMN_NUMBERS: ColumnNumbers = 'drop';
 
+const EMPTY_LABEL_INPUT: Label[] = [];
+
 /**
  * Packs a frame's line and column into the single value carried by the pprof
  * Line.line field: the column in the high 32 bits, the line in the low 32 bits
@@ -161,15 +163,15 @@ export class PprofProfileBuilder {
  */
 function serialize(
   visit: (visitor: ProfileVisitor) => VisitResult,
-  lowCardinalityLabels: string[] = [],
-  columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
+  lowCardinalityLabels: string[],
+  columnNumbers: ColumnNumbers,
 ): Profile {
-  const builder = new PprofProfileBuilder({
+  const [visitor, build] = createPprofVisitor(
     lowCardinalityLabels,
     columnNumbers,
-  });
-  visit(builder.visitor());
-  return builder.build();
+  );
+  visit(visitor);
+  return build(true);
 }
 
 /** Returns a visitor that collects a pprof profile, and a function to build it. */
@@ -177,7 +179,7 @@ function createPprofVisitor(
   lowCardinalityLabels: string[],
   columnNumbers: ColumnNumbers,
   timestampLabel?: string,
-): [ProfileVisitor, () => Profile] {
+): [ProfileVisitor, (adoptArrays?: boolean) => Profile] {
   const stringTable = new StringTable();
   const timestampKey =
     timestampLabel === undefined
@@ -191,8 +193,8 @@ function createPprofVisitor(
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
   const labelCaches: Map<number | bigint, Label>[] = [];
-  for (const l of lowCardinalityLabels) {
-    labelCaches[stringTable.dedup(l)] = new Map<number | bigint, Label>();
+  for (const label of lowCardinalityLabels) {
+    labelCaches[stringTable.dedup(label)] = new Map<number | bigint, Label>();
   }
   let profile: ProfileInput = {};
   let hasMissingMapFiles = false;
@@ -227,31 +229,40 @@ function createPprofVisitor(
         // A timestamp is unique to its sample, so its Label isn't shared
         labels.push(new Label({key: timestampKey, num: sample.timestamp}));
       }
-      samples.push(
-        new Sample({
-          locationId: stacks[sample.stackId],
-          value: sample.values,
-          label: labels,
-        }),
-      );
+      // The codec copies input labels. Assign the prepared array directly.
+      const message = new Sample({
+        locationId: stacks[sample.stackId],
+        value: sample.values,
+        label: EMPTY_LABEL_INPUT,
+      });
+      message.label = labels;
+      samples.push(message);
     },
     end: result => {
       hasMissingMapFiles = result.hasMissingMapFiles;
     },
   };
 
-  const build = () => {
+  const build = (adoptArrays = false) => {
     const input: ProfileInput = {
       ...profile,
-      sample: samples,
-      location: locations,
-      function: functions,
       stringTable,
     };
     if (hasMissingMapFiles) {
       input.comment = [stringTable.dedup('dd:has-missing-map-files')];
     }
-    return new Profile(input);
+    if (!adoptArrays) {
+      input.sample = samples;
+      input.location = locations;
+      input.function = functions;
+      return new Profile(input);
+    }
+    // The one-shot serializer can give the codec ownership of these arrays.
+    const output = new Profile(input);
+    output.sample = samples;
+    output.location = locations;
+    output.function = functions;
+    return output;
   };
 
   return [visitor, build];
@@ -354,7 +365,7 @@ export function serializeTimeProfile(
   sourceMapper?: SourceMapper,
   recomputeSamplingInterval = false,
   generateLabels?: GenerateTimeLabelsFunction,
-  lowCardinalityLabels: string[] = [],
+  lowCardinalityLabels?: string[],
   columnNumbers: ColumnNumbers = DEFAULT_COLUMN_NUMBERS,
 ): Profile {
   const options: TimeProfileNormalizerOptions = {
@@ -365,7 +376,7 @@ export function serializeTimeProfile(
   };
   return serialize(
     visitor => visitTimeProfile(prof, visitor, options),
-    lowCardinalityLabels,
+    lowCardinalityLabels ?? [],
     columnNumbers,
   );
 }
