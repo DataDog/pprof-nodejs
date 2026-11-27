@@ -17,6 +17,8 @@
     "compile": "tsc -p .",
     "fix": "gts fix",
     "format": "clang-format --style file -i --glob='bindings/**/*.{h,hh,cpp,cc}'",
+    "compile-commands": "node-gyp configure -- -f compile_commands_json && node -e \"const fs=require('fs');fs.writeFileSync('build/compile_commands.json',fs.readFileSync('build/Release/compile_commands.json','utf8').replace(/ ?-mtls-dialect=gnu2/g,''))\"",
+    "lint:cpp": "npm run compile-commands && find bindings -name '*.cc' -not -path 'bindings/test/*' | xargs clang-tidy -p build --quiet",
     "lint": "jsgl --local . && gts check && clang-format --style file -n -Werror --glob='bindings/**/*.{h,hh,cpp,cc}'",
     "prepare": "npm run compile && npm run rebuild",
     "pretest:js-asan": "npm run compile && npm run build:asan",

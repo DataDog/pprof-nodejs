@@ -38,20 +38,20 @@ static void dumpAllocationProfile(FILE* file,
   auto initial_len = cur_stack.size();
   char buf[256];
 
-  snprintf(buf,
-           sizeof(buf),
-           "%s%s:%s:%d",
-           cur_stack.empty() ? "" : ";",
-           node->script_name.empty() ? "_" : node->script_name.c_str(),
-           node->name.empty() ? "(anonymous)" : node->name.c_str(),
-           node->line_number);
+  (void)snprintf(buf,
+                 sizeof(buf),
+                 "%s%s:%s:%d",
+                 cur_stack.empty() ? "" : ";",
+                 node->script_name.empty() ? "_" : node->script_name.c_str(),
+                 node->name.empty() ? "(anonymous)" : node->name.c_str(),
+                 node->line_number);
   cur_stack += buf;
   for (auto& allocation : node->allocations) {
-    fprintf(file,
-            "%s %u %zu\n",
-            cur_stack.c_str(),
-            allocation.count,
-            allocation.count * allocation.size);
+    (void)fprintf(file,
+                  "%s %u %zu\n",
+                  cur_stack.c_str(),
+                  allocation.count,
+                  allocation.count * allocation.size);
   }
   for (auto& child : node->children) {
     dumpAllocationProfile(file, child.get(), cur_stack);
@@ -65,7 +65,7 @@ static void dumpAllocationProfile(FILE* file, Node* node) {
 }
 
 static void dumpAllocationProfileAsJSON(FILE* file, Node* node) {
-  fprintf(
+  (void)fprintf(
       file,
       R"({"name":"%s","scriptName":"%s","scriptId":%d,"lineNumber":%d,"columnNumber":%d,"children":[)",
       node->name.c_str(),
@@ -77,23 +77,23 @@ static void dumpAllocationProfileAsJSON(FILE* file, Node* node) {
   bool first = true;
   for (auto& child : node->children) {
     if (!first) {
-      fputs(",", file);
+      (void)fputs(",", file);
     } else {
       first = false;
     }
     dumpAllocationProfileAsJSON(file, child.get());
   }
-  fprintf(file, R"(],"allocations":[)");
+  (void)fprintf(file, R"(],"allocations":[)");
   first = true;
   for (auto& allocation : node->allocations) {
-    fprintf(file,
-            R"(%s{"sizeBytes":%zu,"count":%d})",
-            first ? "" : ",",
-            allocation.size,
-            allocation.count);
+    (void)fprintf(file,
+                  R"(%s{"sizeBytes":%zu,"count":%d})",
+                  first ? "" : ",",
+                  allocation.size,
+                  allocation.count);
     first = false;
   }
-  fputs("]}", file);
+  (void)fputs("]}", file);
 }
 
 static void OnExit(uv_process_t* req, int64_t, int) {
@@ -119,7 +119,7 @@ static void CloseLoop(uv_loop_t& loop) {
   } while (r != 0);
 
   if (uv_loop_close(&loop)) {
-    fprintf(stderr, "Failed to close event loop\n");
+    (void)fprintf(stderr, "Failed to close event loop\n");
   }
 }
 
@@ -128,7 +128,8 @@ static int CreateTempFile(uv_loop_t& loop, std::string& filepath) {
   size_t sz = sizeof(buf);
   int r;
   if ((r = uv_os_tmpdir(buf, &sz)) != 0) {
-    fprintf(stderr, "Failed to retrieve temp directory: %s\n", uv_strerror(r));
+    (void)fprintf(
+        stderr, "Failed to retrieve temp directory: %s\n", uv_strerror(r));
     return -1;
   }
 
@@ -136,10 +137,10 @@ static int CreateTempFile(uv_loop_t& loop, std::string& filepath) {
   filepath = std::string{buf, sz} + "/heap_profile_XXXXXX";
   int fd = mkstemp(&filepath[0]);
   if (fd < 0) {
-    fprintf(stderr,
-            "Failed to create temp file %s : %s\n",
-            filepath.c_str(),
-            strerror(errno));
+    (void)fprintf(stderr,
+                  "Failed to create temp file %s : %s\n",
+                  filepath.c_str(),
+                  uv_strerror(uv_translate_sys_error(errno)));
     return -1;
   }
   return fd;
@@ -179,7 +180,8 @@ static void ExportProfile(HeapProfilerState& state) {
   int r;
 
   if ((r = uv_loop_init(&loop)) != 0) {
-    fprintf(stderr, "Failed to init new event loop: %s\n", uv_strerror(r));
+    (void)fprintf(
+        stderr, "Failed to init new event loop: %s\n", uv_strerror(r));
     return;
   }
 
@@ -194,8 +196,9 @@ static void ExportProfile(HeapProfilerState& state) {
   }
   FILE* file = fdopen(fd, "w");
   dumpAllocationProfileAsJSON(file, state.profile.get());
-  fclose(file);
+  (void)fclose(file);
   std::vector<char*> args;
+  args.reserve(state.export_command.size() + 2);
   for (auto& arg : state.export_command) {
     args.push_back(const_cast<char*>(arg.data()));
   }
@@ -219,16 +222,17 @@ static void ExportProfile(HeapProfilerState& state) {
   timer.data = &child_req;
   child_req.data = &timer;
 
-  fprintf(stderr, "Spawning export process:");
+  (void)fprintf(stderr, "Spawning export process:");
   for (auto arg : args) {
-    fprintf(stderr, " %s", arg ? arg : "\n");
+    (void)fprintf(stderr, " %s", arg ? arg : "\n");
   }
   if ((r = uv_spawn(&loop, &child_req, &options))) {
-    fprintf(stderr, "Failed to spawn export process: %s\n", uv_strerror(r));
+    (void)fprintf(
+        stderr, "Failed to spawn export process: %s\n", uv_strerror(r));
     return;
   }
   if ((r = uv_timer_init(&loop, &timer)) != 0) {
-    fprintf(stderr, "Failed to init timer: %s\n", uv_strerror(r));
+    (void)fprintf(stderr, "Failed to init timer: %s\n", uv_strerror(r));
     return;
   }
   if ((r = uv_timer_start(
@@ -239,7 +243,7 @@ static void ExportProfile(HeapProfilerState& state) {
            },
            timeoutMs,
            0))) {
-    fprintf(stderr, "Failed to start timer: %s\n", uv_strerror(r));
+    (void)fprintf(stderr, "Failed to start timer: %s\n", uv_strerror(r));
     return;
   }
   uv_run(&loop, UV_RUN_DEFAULT);
@@ -305,7 +309,7 @@ size_t NearHeapLimit(void* data,
     // Reentrant call: GetAllocationProfile() allocated its way back into us.
     // The in-progress capture still needs room to finish, so rescue it even
     // when the caller asked for no top-level extension at all.
-    constexpr size_t kReentrantRescueExtension = 10 * 1024 * 1024;
+    constexpr size_t kReentrantRescueExtension = size_t{10} * 1024 * 1024;
     return ExtendedHeapLimit(
         current_heap_limit,
         extension != 0 ? extension : kReentrantRescueExtension);
@@ -316,12 +320,12 @@ size_t NearHeapLimit(void* data,
   };
 
   ++state->current_heap_extension_count;
-  fprintf(stderr,
-          "NearHeapLimit(count=%d): current_heap_limit=%zu, "
-          "initial_heap_limit=%zu\n",
-          state->current_heap_extension_count,
-          current_heap_limit,
-          initial_heap_limit);
+  (void)fprintf(stderr,
+                "NearHeapLimit(count=%d): current_heap_limit=%zu, "
+                "initial_heap_limit=%zu\n",
+                state->current_heap_extension_count,
+                current_heap_limit,
+                initial_heap_limit);
 
   auto n = isolate->NumberOfTrackedHeapObjectTypes();
   v8::HeapObjectStatistics stats;
@@ -329,12 +333,13 @@ size_t NearHeapLimit(void* data,
   for (size_t i = 0; i < n; ++i) {
     if (isolate->GetHeapObjectStatisticsAtLastGC(&stats, i) &&
         stats.object_count() > 0) {
-      fprintf(stderr,
-              "HeapObjectStats: type=%s, subtype=%s, size=%zu, count=%zu\n",
-              stats.object_type(),
-              stats.object_sub_type(),
-              stats.object_size(),
-              stats.object_count());
+      (void)fprintf(
+          stderr,
+          "HeapObjectStats: type=%s, subtype=%s, size=%zu, count=%zu\n",
+          stats.object_type(),
+          stats.object_sub_type(),
+          stats.object_size(),
+          stats.object_count());
     }
   }
   // GetAllocationProfile returns null when V8's sampling heap profiler isn't
@@ -369,9 +374,9 @@ size_t NearHeapLimit(void* data,
     // Drop any profile retained from an earlier invocation: it is stale, and
     // nothing below is going to consume or replace it.
     state->profile.reset();
-    fprintf(stderr,
-            "NearHeapLimit: heap profiler is not enabled, no allocation "
-            "profile to report\n");
+    (void)fprintf(stderr,
+                  "NearHeapLimit: heap profiler is not enabled, no allocation "
+                  "profile to report\n");
   }
 
   if (!state->isMainThread) {
@@ -384,7 +389,7 @@ size_t NearHeapLimit(void* data,
     state->UninstallNearHeapLimitCallback();
     isolate->LowMemoryNotification();
     // use the same value as node plus 1
-    constexpr size_t kExtraHeapAllowance = 16 * 1024 * 1024;
+    constexpr size_t kExtraHeapAllowance = size_t{16} * 1024 * 1024;
     return current_heap_limit + kExtraHeapAllowance + 1;
   }
 

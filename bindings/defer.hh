@@ -31,6 +31,9 @@ class DeferHolder {
   DeferHolder& operator=(const DeferHolder&) = delete;
 
   template <typename T>
+  // DeferHolder is move-constructible and non-copyable; the forwarding
+  // reference constructor is intentional for forwarding callables.
+  // NOLINTNEXTLINE(bugprone-forwarding-reference-overload)
   explicit DeferHolder(T&& f) : _func(std::forward<T>(f)) {}
 
   ~DeferHolder() { reset(); }

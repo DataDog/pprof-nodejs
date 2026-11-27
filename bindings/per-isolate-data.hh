@@ -58,7 +58,7 @@ class PerIsolateData {
   std::array<size_t, kDictionaryTemplateCount> dictionary_template_arities{};
 #endif
 
-  PerIsolateData() {}
+  PerIsolateData() = default;
 
  public:
   static PerIsolateData* For(v8::Isolate* isolate);

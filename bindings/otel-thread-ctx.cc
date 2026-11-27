@@ -492,7 +492,7 @@ bool CtxWrap::EncodeAttrs(Isolate* isolate,
 
   // Reserve a conservative upper bound; reallocations are cheap but
   // unnecessary for the typical small attribute set.
-  out->reserve(out->size() + n * 4);
+  out->reserve(out->size() + static_cast<size_t>(n) * 4);
   for (uint32_t i = 0; i < n; ++i) {
     Local<Value> val_val;
     if (!attrs->Get(context, i).ToLocal(&val_val)) return false;
@@ -979,7 +979,9 @@ bool RecordSlotOffsetHolds(v8::Isolate* isolate,
       v8::internal::ValueHelper::ValueAsAddress(*probe) -
       v8::internal::kHeapObjectTag);
   void* at_offset;
-  memcpy(&at_offset, object + kRecordSlotOffset, sizeof(at_offset));
+  memcpy(static_cast<void*>(&at_offset),
+         object + kRecordSlotOffset,
+         sizeof(at_offset));
   return at_offset == &marker;
 #else
   // No ContinuationPreservedEmbedderData, so nothing to publish anyway.

@@ -112,7 +112,6 @@ class WallProfiler : public Nan::ObjectWrap {
   using ContextBuffer = std::vector<SampleContext>;
   ContextBuffer contexts_;
 
-  ~WallProfiler();
   // removeCleanupHook must be false when Dispose is called from within the
   // environment cleanup hook (CleanupHook). Node removes the hook itself after
   // invoking it and dereferences its internal hook record again afterwards, so
@@ -143,6 +142,7 @@ class WallProfiler : public Nan::ObjectWrap {
   inline bool useCPED() { return !cpedKey_.IsEmpty(); }
 
  public:
+  ~WallProfiler() override;
   /**
    * @param samplingPeriodMicros sampling interval, in microseconds
    * @param durationMicros the duration of sampling, in microseconds. This

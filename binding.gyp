@@ -82,7 +82,7 @@
             ["OS == 'linux'",
                 {
                 "cflags+":
-                    ["-Wno-deprecated-declarations"],
+                    ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-deprecated-declarations"],
                 "cflags_cc!": ["-std=gnu++14", "-std=gnu++1y", "-std=gnu++20" ],
                 "cflags_cc": ["-std=gnu++2a"],
                 "conditions": [
@@ -102,6 +102,9 @@
                     'MACOSX_DEPLOYMENT_TARGET': '11',
                     'CLANG_CXX_LANGUAGE_STANDARD': 'c++20',
                     'OTHER_CFLAGS+': [
+                        "-Wall",
+                        "-Wextra",
+                        "-Wno-unused-parameter", # V8/Node headers have many unused parameters
                         "-Wno-deprecated-declarations",
                         "-Wno-cast-function-type-mismatch", # clang17 now warns about casts between incompatible function types and v8 has some of those
                         "-Wno-unknown-warning-option", # "-Wcast-function-type-mismatch" is not a valid warning option for clang < 17
