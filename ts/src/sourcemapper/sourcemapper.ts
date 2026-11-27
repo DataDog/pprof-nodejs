@@ -446,25 +446,6 @@ export class SourceMapper {
   }
 
   /**
-   * Used to get the information about the transpiled file from a given input
-   * source file provided there isn't any ambiguity with associating the input
-   * path to exactly one output transpiled file.
-   *
-   * @param inputPath The (possibly relative) path to the original source file.
-   * @return The `MapInfoCompiled` object that describes the transpiled file
-   *  associated with the specified input path.  `null` is returned if either
-   *  zero files are associated with the input path or if more than one file
-   *  could possibly be associated with the given input path.
-   */
-  private getMappingInfo(inputPath: string): MapInfoCompiled | null {
-    const normalizedPath = path.normalize(inputPath);
-    if (this.infoMap.has(normalizedPath)) {
-      return this.infoMap.get(normalizedPath) as MapInfoCompiled;
-    }
-    return null;
-  }
-
-  /**
    * Used to determine if the source file specified by the given path has
    * a .map file and an output file associated with it.
    *
@@ -478,7 +459,7 @@ export class SourceMapper {
    *  relative to the process's current working directory.
    */
   hasMappingInfo(inputPath: string): boolean {
-    return this.getMappingInfo(inputPath) !== null;
+    return this.infoMap.has(path.normalize(inputPath));
   }
 
   /**
@@ -502,8 +483,8 @@ export class SourceMapper {
    */
   mappingInfo(location: GeneratedLocation): SourceLocation {
     const inputPath = path.normalize(location.file);
-    const entry = this.getMappingInfo(inputPath);
-    if (entry === null) {
+    const entry = this.infoMap.get(inputPath);
+    if (entry === undefined) {
       if (this.debug) {
         logger.debug(
           `Source map lookup failed: no map found for ${location.file} (normalized: ${inputPath})`,
@@ -515,10 +496,7 @@ export class SourceMapper {
       return location;
     }
 
-    const generatedPos = {
-      line: location.line,
-      column: location.column > 0 ? location.column - 1 : 0, // SourceMapConsumer expects column to be 0-based
-    };
+    const column = location.column > 0 ? location.column - 1 : 0;
 
     // TODO: Determine how to remove the explicit cast here.
     const consumer: sourceMap.SourceMapConsumer =
@@ -528,11 +506,15 @@ export class SourceMapper {
     // which only provides line numbers). Use LEAST_UPPER_BOUND to find the first
     // mapping on this line instead of failing because there's nothing at column 0.
     const bias =
-      generatedPos.column === 0
+      column === 0
         ? sourceMap.SourceMapConsumer.LEAST_UPPER_BOUND
         : sourceMap.SourceMapConsumer.GREATEST_LOWER_BOUND;
 
-    const pos = consumer.originalPositionFor({...generatedPos, bias});
+    const pos = consumer.originalPositionFor({
+      line: location.line,
+      column,
+      bias,
+    });
     if (pos.source === null) {
       if (this.debug) {
         logger.debug(
