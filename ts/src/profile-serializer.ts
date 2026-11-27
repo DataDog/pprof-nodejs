@@ -31,6 +31,7 @@ import {
   HeapProfileNormalizerOptions,
   ProfileVisitor,
   SampleLabel,
+  SampleLabelValue,
   SampleType,
   TimeProfileNormalizerOptions,
   visitHeapProfile,
@@ -189,12 +190,12 @@ function createPprofVisitor(
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-  const labelCaches: Map<number, Label>[] = [];
+  const labelCaches: Map<SampleLabelValue, Label>[] = [];
   const labelKeyIds =
     lowCardinalityLabels.length === 0 ? undefined : new Map<string, number>();
   for (const key of lowCardinalityLabels) {
     const keyId = stringTable.dedup(key);
-    labelCaches[keyId] = new Map<number, Label>();
+    labelCaches[keyId] = new Map<SampleLabelValue, Label>();
     labelKeyIds?.set(key, keyId);
   }
   let profile: ProfileInput = {};
@@ -316,20 +317,18 @@ function createPprofVisitor(
         keyIndex = stringTable.dedup(key);
         labelKeyIds?.set(key, keyIndex);
       }
-      const isString = typeof value === 'string';
-      const str = isString ? stringTable.dedup(value) : 0;
-      const num = isString ? 0 : value || 0;
+      // Empty strings and zero-valued labels encode the same fields.
+      const labelValue = value || 0;
       const cache = labelCaches[keyIndex];
-      const cached = cache?.get(str);
-      if (cached?.num === num) {
-        labels[i] = cached;
-      } else {
-        const label = new Label({key: keyIndex, str, num});
-        if (cache !== undefined && cached === undefined) {
-          cache.set(str, label);
-        }
-        labels[i] = label;
+      let label = cache?.get(labelValue);
+      if (label === undefined) {
+        const isString = typeof labelValue === 'string';
+        const str = isString ? stringTable.dedup(labelValue) : 0;
+        const num = isString ? 0 : labelValue;
+        label = new Label({key: keyIndex, str, num});
+        cache?.set(labelValue, label);
       }
+      labels[i] = label;
     }
     return labels;
   }
