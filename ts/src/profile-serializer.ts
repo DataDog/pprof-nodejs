@@ -135,7 +135,7 @@ export class PprofProfileBuilder {
 
   constructor(options: PprofSerializerOptions = {}) {
     [this.profileVisitor, this.buildProfile] = createPprofVisitor(
-      options.lowCardinalityLabels,
+      options.lowCardinalityLabels ?? [],
       options.columnNumbers ?? DEFAULT_COLUMN_NUMBERS,
       options.timestampLabel,
     );
@@ -163,7 +163,7 @@ export class PprofProfileBuilder {
  */
 function serialize(
   visit: (visitor: ProfileVisitor) => VisitResult,
-  lowCardinalityLabels: string[] | undefined,
+  lowCardinalityLabels: string[],
   columnNumbers: ColumnNumbers,
 ): Profile {
   const [visitor, build] = createPprofVisitor(
@@ -176,7 +176,7 @@ function serialize(
 
 /** Returns a visitor that collects a pprof profile, and a function to build it. */
 function createPprofVisitor(
-  lowCardinalityLabels: string[] | undefined,
+  lowCardinalityLabels: string[],
   columnNumbers: ColumnNumbers,
   timestampLabel?: string,
 ): [ProfileVisitor, (adoptArrays?: boolean) => Profile] {
@@ -193,10 +193,8 @@ function createPprofVisitor(
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
   const labelCaches: Map<number | bigint, Label>[] = [];
-  if (lowCardinalityLabels) {
-    for (const label of lowCardinalityLabels) {
-      labelCaches[stringTable.dedup(label)] = new Map<number | bigint, Label>();
-    }
+  for (const label of lowCardinalityLabels) {
+    labelCaches[stringTable.dedup(label)] = new Map<number | bigint, Label>();
   }
   let profile: ProfileInput = {};
   let hasMissingMapFiles = false;
@@ -231,6 +229,7 @@ function createPprofVisitor(
         // A timestamp is unique to its sample, so its Label isn't shared
         labels.push(new Label({key: timestampKey, num: sample.timestamp}));
       }
+      // The codec copies input labels. Assign the prepared array directly.
       const message = new Sample({
         locationId: stacks[sample.stackId],
         value: sample.values,
@@ -258,6 +257,7 @@ function createPprofVisitor(
       input.function = functions;
       return new Profile(input);
     }
+    // The one-shot serializer can give the codec ownership of these arrays.
     const output = new Profile(input);
     output.sample = samples;
     output.location = locations;
@@ -376,7 +376,7 @@ export function serializeTimeProfile(
   };
   return serialize(
     visitor => visitTimeProfile(prof, visitor, options),
-    lowCardinalityLabels,
+    lowCardinalityLabels ?? [],
     columnNumbers,
   );
 }
@@ -409,7 +409,7 @@ export function serializeHeapProfile(
   };
   return serialize(
     visitor => visitHeapProfile(prof, visitor, options),
-    undefined,
+    [],
     columnNumbers,
   );
 }
