@@ -189,13 +189,12 @@ function createPprofVisitor(
   const functionIdMap = new Map<string, number>();
   const packColumns = columnNumbers === 'pack';
   const emitColumns = columnNumbers === 'emit';
-  const labelCaches: Map<number, Label>[] = [];
-  const labelKeyIds =
-    lowCardinalityLabels.length === 0 ? undefined : new Map<string, number>();
+  let labelCaches:
+    | Map<string, {keyIndex: number; labels: Map<number, Label>}>
+    | undefined;
   for (const key of lowCardinalityLabels) {
-    const keyId = stringTable.dedup(key);
-    labelCaches[keyId] = new Map<number, Label>();
-    labelKeyIds?.set(key, keyId);
+    labelCaches ??= new Map();
+    labelCaches.set(key, {keyIndex: stringTable.dedup(key), labels: new Map()});
   }
   let profile: ProfileInput = {};
   let hasMissingMapFiles = false;
@@ -311,22 +310,18 @@ function createPprofVisitor(
     const labels: Label[] = new Array(sampleLabels.length);
     for (let i = 0; i < sampleLabels.length; i++) {
       const [key, value] = sampleLabels[i];
-      let keyIndex = labelKeyIds?.get(key);
-      if (keyIndex === undefined) {
-        keyIndex = stringTable.dedup(key);
-        labelKeyIds?.set(key, keyIndex);
-      }
+      const cache = labelCaches?.get(key);
+      const keyIndex = cache?.keyIndex ?? stringTable.dedup(key);
       const isString = typeof value === 'string';
       const str = isString ? stringTable.dedup(value) : 0;
       const num = isString ? 0 : value || 0;
-      const cache = labelCaches[keyIndex];
-      const cached = cache?.get(str);
+      const cached = cache?.labels.get(str);
       if (cached?.num === num) {
         labels[i] = cached;
       } else {
         const label = new Label({key: keyIndex, str, num});
         if (cache !== undefined && cached === undefined) {
-          cache.set(str, label);
+          cache.labels.set(str, label);
         }
         labels[i] = label;
       }

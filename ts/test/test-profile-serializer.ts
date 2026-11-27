@@ -362,6 +362,7 @@ describe('profile-serializer', () => {
         ]),
       );
       assert.strictEqual(labels[0][0], labels[3][0]);
+      assert.notStrictEqual(labels[1][0], labels[2][0]);
       assert.strictEqual(labels[4][0], labels[5][0]);
       assert.ok(labels.every(sample => sample[1] === labels[0][1]));
       assert.strictEqual(
