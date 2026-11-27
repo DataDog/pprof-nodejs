@@ -3,7 +3,7 @@
   "compilerOptions": {
     "rootDir": "ts",
     "outDir": "out",
-    "target": "es2020",
+    "target": "es2022",
     "esModuleInterop": true,
     "types": ["node", "mocha"],
   },
